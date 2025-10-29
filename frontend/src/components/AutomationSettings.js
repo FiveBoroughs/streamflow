@@ -13,8 +13,7 @@ import {
   Grid,
   RadioGroup,
   Radio,
-  FormControl,
-  FormLabel
+  FormControl
 } from '@mui/material';
 import { automationAPI, streamCheckerAPI } from '../services/api';
 

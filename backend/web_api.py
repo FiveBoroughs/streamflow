@@ -930,6 +930,19 @@ def update_stream_checker_config():
         if not data:
             return jsonify({"error": "No configuration data provided"}), 400
         
+        # Validate cron expression if provided
+        if 'global_check_schedule' in data and 'cron_expression' in data['global_check_schedule']:
+            cron_expr = data['global_check_schedule']['cron_expression']
+            if cron_expr:
+                try:
+                    from croniter import croniter
+                    if not croniter.is_valid(cron_expr):
+                        return jsonify({"error": f"Invalid cron expression: {cron_expr}"}), 400
+                except ImportError:
+                    logging.warning("croniter not installed, skipping cron validation")
+                except Exception as e:
+                    return jsonify({"error": f"Invalid cron expression: {str(e)}"}), 400
+        
         service = get_stream_checker_service()
         service.update_config(data)
         

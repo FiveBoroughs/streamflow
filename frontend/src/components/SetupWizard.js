@@ -29,8 +29,7 @@ import {
   DialogActions,
   RadioGroup,
   Radio,
-  FormControl,
-  FormLabel
+  FormControl
 } from '@mui/material';
 import {
   Add as AddIcon,
