@@ -334,17 +334,23 @@ def fetch_channel_streams(channel_id: int) -> Optional[List[Dict[str, Any]]]:
 
 
 def update_channel_streams(
-    channel_id: int, stream_ids: List[int]
+    channel_id: int, stream_ids: List[int], valid_stream_ids: Optional[set] = None,
+    allow_dead_streams: bool = False
 ) -> bool:
     """
     Update the streams for a given channel ID.
     
-    Filters out stream IDs that no longer exist in Dispatcharr to prevent
-    adding dead/removed streams back to channels.
+    Filters out stream IDs that no longer exist in Dispatcharr and dead streams
+    to prevent adding dead/removed streams back to channels.
     
     Parameters:
         channel_id (int): The ID of the channel to update.
         stream_ids (List[int]): List of stream IDs to assign.
+        valid_stream_ids (Optional[set]): Set of valid stream IDs. If None,
+            will fetch from API. Pass this to avoid redundant API calls when
+            updating multiple channels.
+        allow_dead_streams (bool): If True, allows dead streams (used during
+            global checks to give dead streams a second chance). Default False.
         
     Returns:
         bool: True if update successful, False otherwise.
@@ -353,15 +359,39 @@ def update_channel_streams(
         Exception: If the API request fails.
     """
     # Filter out stream IDs that no longer exist in Dispatcharr
-    valid_stream_ids = get_valid_stream_ids()
+    if valid_stream_ids is None:
+        valid_stream_ids = get_valid_stream_ids()
+    
     original_count = len(stream_ids)
     filtered_stream_ids = [sid for sid in stream_ids if sid in valid_stream_ids]
     
-    if len(filtered_stream_ids) < original_count:
-        removed_count = original_count - len(filtered_stream_ids)
+    non_existent_count = original_count - len(filtered_stream_ids)
+    if non_existent_count > 0:
         logging.warning(
-            f"Filtered out {removed_count} non-existent stream(s) for channel {channel_id}"
+            f"Filtered out {non_existent_count} non-existent stream(s) for channel {channel_id}"
         )
+    
+    # Filter out dead streams unless allow_dead_streams is True (e.g., during global checks)
+    if not allow_dead_streams:
+        # Get all streams to map IDs to URLs
+        all_streams = get_streams(log_result=False)
+        stream_id_to_url = {s['id']: s.get('url', '') for s in all_streams if isinstance(s, dict) and 'id' in s}
+        
+        # Get dead stream URLs
+        dead_urls = get_dead_stream_urls()
+        
+        # Filter out streams with dead URLs
+        before_dead_filter = len(filtered_stream_ids)
+        filtered_stream_ids = [
+            sid for sid in filtered_stream_ids
+            if stream_id_to_url.get(sid, '') not in dead_urls
+        ]
+        
+        dead_count = before_dead_filter - len(filtered_stream_ids)
+        if dead_count > 0:
+            logging.warning(
+                f"Filtered out {dead_count} dead stream(s) for channel {channel_id}"
+            )
     
     url = f"{_get_base_url()}/api/channels/channels/{channel_id}/"
     data = {"streams": filtered_stream_ids}
@@ -492,6 +522,27 @@ def get_valid_stream_ids() -> set:
         # which is safer than allowing potentially invalid IDs
         return set()
 
+
+def get_dead_stream_urls() -> set:
+    """
+    Get a set of URLs for streams marked as dead in the DeadStreamsTracker.
+    
+    This is used to filter out dead streams before updating channels, except
+    during global checks where dead streams are given a second chance.
+    
+    Returns:
+        set: Set of dead stream URLs.
+    """
+    try:
+        from dead_streams_tracker import DeadStreamsTracker
+        tracker = DeadStreamsTracker()
+        dead_streams = tracker.get_dead_streams()
+        return set(dead_streams.keys())
+    except Exception as e:
+        logging.warning(f"Could not load dead streams tracker: {e}")
+        # Return empty set if tracker not available
+        return set()
+
 def has_custom_streams() -> bool:
     """
     Efficiently check if any custom streams exist.
@@ -582,18 +633,24 @@ def create_channel_from_stream(
     return post_request(url, data)
 
 def add_streams_to_channel(
-    channel_id: int, stream_ids: List[int]
+    channel_id: int, stream_ids: List[int], valid_stream_ids: Optional[set] = None,
+    allow_dead_streams: bool = False
 ) -> int:
     """
     Add new streams to an existing channel.
     
     Fetches the current streams for the channel, adds new streams
     while avoiding duplicates, and updates the channel. Filters out
-    stream IDs that no longer exist in Dispatcharr.
+    stream IDs that no longer exist in Dispatcharr and dead streams.
     
     Parameters:
         channel_id (int): The ID of the channel to update.
         stream_ids (List[int]): List of stream IDs to add.
+        valid_stream_ids (Optional[set]): Set of valid stream IDs. If None,
+            will fetch from API. Pass this to avoid redundant API calls when
+            updating multiple channels.
+        allow_dead_streams (bool): If True, allows dead streams (used during
+            global checks to give dead streams a second chance). Default False.
         
     Returns:
         int: Number of new streams actually added.
@@ -612,23 +669,48 @@ def add_streams_to_channel(
     current_stream_ids = [s['id'] for s in current_streams]
     
     # Filter out stream IDs that no longer exist in Dispatcharr
-    valid_stream_ids = get_valid_stream_ids()
+    if valid_stream_ids is None:
+        valid_stream_ids = get_valid_stream_ids()
+    
     valid_new_stream_ids = [
         sid for sid in stream_ids
         if sid in valid_stream_ids and sid not in current_stream_ids
     ]
     
-    # Log if any stream IDs were filtered out
-    filtered_count = len([sid for sid in stream_ids if sid not in valid_stream_ids])
-    if filtered_count > 0:
+    # Log if any stream IDs were filtered out as non-existent
+    non_existent_count = len([sid for sid in stream_ids if sid not in valid_stream_ids])
+    if non_existent_count > 0:
         logging.warning(
-            f"Filtered out {filtered_count} non-existent stream(s) "
+            f"Filtered out {non_existent_count} non-existent stream(s) "
             f"before adding to channel {channel_id}"
         )
     
+    # Filter out dead streams unless allow_dead_streams is True
+    if not allow_dead_streams and valid_new_stream_ids:
+        # Get all streams to map IDs to URLs
+        all_streams = get_streams(log_result=False)
+        stream_id_to_url = {s['id']: s.get('url', '') for s in all_streams if isinstance(s, dict) and 'id' in s}
+        
+        # Get dead stream URLs
+        dead_urls = get_dead_stream_urls()
+        
+        # Filter out streams with dead URLs
+        before_dead_filter = len(valid_new_stream_ids)
+        valid_new_stream_ids = [
+            sid for sid in valid_new_stream_ids
+            if stream_id_to_url.get(sid, '') not in dead_urls
+        ]
+        
+        dead_count = before_dead_filter - len(valid_new_stream_ids)
+        if dead_count > 0:
+            logging.warning(
+                f"Filtered out {dead_count} dead stream(s) "
+                f"before adding to channel {channel_id}"
+            )
+    
     if valid_new_stream_ids:
         updated_streams = current_stream_ids + valid_new_stream_ids
-        update_channel_streams(channel_id, updated_streams)
+        update_channel_streams(channel_id, updated_streams, valid_stream_ids, allow_dead_streams)
         logging.info(
             f"Added {len(valid_new_stream_ids)} new streams to channel "
             f"{channel_id}"

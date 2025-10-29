@@ -231,6 +231,118 @@ class TestGetValidStreamIds(unittest.TestCase):
         self.assertEqual(result, set())
 
 
+class TestDeadStreamFiltering(unittest.TestCase):
+    """Test that dead streams are filtered out during update/assign operations."""
+    
+    @patch('api_utils.get_dead_stream_urls')
+    @patch('api_utils.patch_request')
+    @patch('api_utils.get_streams')
+    def test_update_channel_filters_dead_streams(self, mock_get_streams, mock_patch, mock_dead_urls):
+        """Test that update_channel_streams filters out dead streams by default."""
+        from api_utils import update_channel_streams
+        
+        # Mock valid streams
+        mock_get_streams.return_value = [
+            {'id': 1, 'name': 'Stream 1', 'url': 'http://example.com/stream1.m3u8'},
+            {'id': 2, 'name': 'Stream 2', 'url': 'http://example.com/stream2.m3u8'},
+            {'id': 3, 'name': 'Dead Stream', 'url': 'http://example.com/dead.m3u8'},
+        ]
+        
+        # Mock dead stream URLs
+        mock_dead_urls.return_value = {'http://example.com/dead.m3u8'}
+        
+        # Mock successful patch
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_patch.return_value = mock_response
+        
+        # Try to update with mix of live and dead streams
+        stream_ids = [1, 2, 3]
+        result = update_channel_streams(1, stream_ids)
+        
+        # Verify success
+        self.assertTrue(result)
+        
+        # Verify dead stream was filtered out
+        call_args = mock_patch.call_args
+        data = call_args[0][1]
+        self.assertEqual(data['streams'], [1, 2])  # Stream 3 should be filtered
+    
+    @patch('api_utils.get_dead_stream_urls')
+    @patch('api_utils.patch_request')
+    @patch('api_utils.get_streams')
+    def test_update_channel_allows_dead_streams_in_global_check(self, mock_get_streams, mock_patch, mock_dead_urls):
+        """Test that update_channel_streams allows dead streams during global checks."""
+        from api_utils import update_channel_streams
+        
+        # Mock valid streams
+        mock_get_streams.return_value = [
+            {'id': 1, 'name': 'Stream 1', 'url': 'http://example.com/stream1.m3u8'},
+            {'id': 2, 'name': 'Stream 2', 'url': 'http://example.com/stream2.m3u8'},
+            {'id': 3, 'name': 'Dead Stream', 'url': 'http://example.com/dead.m3u8'},
+        ]
+        
+        # Mock dead stream URLs
+        mock_dead_urls.return_value = {'http://example.com/dead.m3u8'}
+        
+        # Mock successful patch
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_patch.return_value = mock_response
+        
+        # Try to update with allow_dead_streams=True (global check)
+        stream_ids = [1, 2, 3]
+        result = update_channel_streams(1, stream_ids, allow_dead_streams=True)
+        
+        # Verify success
+        self.assertTrue(result)
+        
+        # Verify dead stream was NOT filtered out
+        call_args = mock_patch.call_args
+        data = call_args[0][1]
+        self.assertEqual(data['streams'], [1, 2, 3])  # Stream 3 should be included
+    
+    @patch('api_utils.get_dead_stream_urls')
+    @patch('api_utils.patch_request')
+    @patch('api_utils.get_streams')
+    @patch('api_utils.fetch_channel_streams')
+    def test_add_streams_filters_dead_streams(self, mock_fetch, mock_get_streams, mock_patch, mock_dead_urls):
+        """Test that add_streams_to_channel filters out dead streams by default."""
+        from api_utils import add_streams_to_channel
+        
+        # Mock current channel streams
+        mock_fetch.return_value = [
+            {'id': 1, 'name': 'Stream 1'}
+        ]
+        
+        # Mock valid streams
+        mock_get_streams.return_value = [
+            {'id': 1, 'name': 'Stream 1', 'url': 'http://example.com/stream1.m3u8'},
+            {'id': 2, 'name': 'Stream 2', 'url': 'http://example.com/stream2.m3u8'},
+            {'id': 3, 'name': 'Dead Stream', 'url': 'http://example.com/dead.m3u8'},
+        ]
+        
+        # Mock dead stream URLs
+        mock_dead_urls.return_value = {'http://example.com/dead.m3u8'}
+        
+        # Mock successful patch
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_patch.return_value = mock_response
+        
+        # Try to add mix of live and dead streams
+        stream_ids = [2, 3]
+        result = add_streams_to_channel(1, stream_ids)
+        
+        # Verify only 1 stream was added (not the dead one)
+        self.assertEqual(result, 1)
+        
+        # Verify dead stream was filtered out
+        call_args = mock_patch.call_args
+        data = call_args[0][1]
+        self.assertEqual(sorted(data['streams']), [1, 2])  # Stream 3 should be filtered
+
+
 if __name__ == '__main__':
     # Run tests with verbose output
     unittest.main(verbosity=2)
