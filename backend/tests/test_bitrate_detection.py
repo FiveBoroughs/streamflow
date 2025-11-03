@@ -171,12 +171,14 @@ Statistics: 18000000 bytes read; 0 seeks
     @patch('subprocess.run')
     def test_bitrate_timeout_handling(self, mock_run):
         """Test that timeout is handled gracefully."""
-        mock_run.side_effect = subprocess.TimeoutExpired(cmd='ffmpeg', timeout=50)
+        test_timeout = 10
+        expected_timeout = test_timeout + 30 + 10  # timeout + ffmpeg_duration + buffer
+        mock_run.side_effect = subprocess.TimeoutExpired(cmd='ffmpeg', timeout=expected_timeout)
         
         bitrate, frames, dropped, status, elapsed = stream_sorter._get_bitrate_and_frame_stats(
             'http://test.com/stream.m3u8',
             ffmpeg_duration=30,
-            timeout=10
+            timeout=test_timeout
         )
         
         self.assertEqual(bitrate, "N/A", "Bitrate should be N/A on timeout")
