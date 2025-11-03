@@ -339,7 +339,14 @@ def _check_interlaced_status(url, stream_name, idet_frames, timeout, user_agent=
         return "UNKNOWN (Error)"
 
 def _get_bitrate_and_frame_stats(url, ffmpeg_duration, timeout, user_agent='VLC/3.0.14'):
-    """Gets bitrate and frame statistics using ffmpeg."""
+    """Gets bitrate and frame statistics using ffmpeg.
+    
+    Uses multiple methods to detect bitrate:
+    1. Primary: Parse "Statistics:" line with "bytes read" (legacy method)
+    2. Fallback 1: Parse progress output lines (e.g., "size=12345kB time=00:00:30.00 bitrate=3333.3kbits/s")
+    3. Fallback 2: Calculate from total bytes transferred (any "bytes read" line)
+    4. Fallback 3: Extract from any line containing "bitrate=" pattern
+    """
     logging.debug(f"Analyzing bitrate and frame stats for {ffmpeg_duration}s...")
     command = [
         'ffmpeg', '-re', '-v', 'debug', '-user_agent', user_agent,
@@ -361,7 +368,10 @@ def _get_bitrate_and_frame_stats(url, ffmpeg_duration, timeout, user_agent='VLC/
         elapsed = time.time() - start
         output = result.stderr
         total_bytes = 0
+        progress_bitrate = None  # Track last progress bitrate separately
+        
         for line in output.splitlines():
+            # Method 1: Primary method - Statistics line with bytes read
             if "Statistics:" in line and "bytes read" in line:
                 try:
                     parts = line.split("bytes read")
@@ -369,9 +379,37 @@ def _get_bitrate_and_frame_stats(url, ffmpeg_duration, timeout, user_agent='VLC/
                     total_bytes = int(size_str)
                     if total_bytes > 0 and ffmpeg_duration > 0:
                         bitrate = (total_bytes * 8) / 1000 / ffmpeg_duration
-                        logging.debug(f"  → Calculated bitrate: {bitrate:.2f} kbps from {total_bytes} bytes")
+                        logging.debug(f"  → Calculated bitrate (method 1): {bitrate:.2f} kbps from {total_bytes} bytes")
                 except ValueError:
                     pass
+            
+            # Method 2: Parse progress output (e.g., "size=12345kB time=00:00:30.00 bitrate=3333.3kbits/s")
+            # Track latest progress bitrate as fallback, will use last one found
+            if "bitrate=" in line and "kbits/s" in line:
+                try:
+                    bitrate_match = re.search(r'bitrate=\s*(\d+\.?\d*)\s*kbits/s', line)
+                    if bitrate_match:
+                        # Store progress bitrate, will keep updating with later values
+                        progress_bitrate = float(bitrate_match.group(1))
+                        logging.debug(f"  → Found progress bitrate (method 2): {progress_bitrate:.2f} kbps")
+                except (ValueError, AttributeError):
+                    pass
+            
+            # Method 3: Alternative bytes read pattern (not requiring Statistics:)
+            if bitrate == "N/A" and "bytes read" in line and not "Statistics:" in line:
+                try:
+                    # Look for pattern like "12345 bytes read"
+                    bytes_match = re.search(r'(\d+)\s+bytes read', line)
+                    if bytes_match:
+                        total_bytes = int(bytes_match.group(1))
+                        if total_bytes > 0 and ffmpeg_duration > 0:
+                            calculated_bitrate = (total_bytes * 8) / 1000 / ffmpeg_duration
+                            logging.debug(f"  → Calculated bitrate (method 3): {calculated_bitrate:.2f} kbps from {total_bytes} bytes")
+                            bitrate = calculated_bitrate
+                except (ValueError, AttributeError):
+                    pass
+            
+            # Parse frame statistics
             if "Input stream #" in line and "frames decoded;" in line:
                 decoded_match = re.search(r'(\d+)\s*frames decoded', line)
                 errors_match = re.search(r'(\d+)\s*decode errors', line)
@@ -381,6 +419,17 @@ def _get_bitrate_and_frame_stats(url, ffmpeg_duration, timeout, user_agent='VLC/
                 if errors_match: 
                     frames_dropped = int(errors_match.group(1))
                     logging.debug(f"  → Decode errors: {frames_dropped}")
+        
+        # Use progress bitrate as final fallback if primary methods didn't find anything
+        if bitrate == "N/A" and progress_bitrate is not None:
+            bitrate = progress_bitrate
+            logging.debug(f"  → Using last progress bitrate as fallback: {bitrate:.2f} kbps")
+        
+        # Log if bitrate detection failed
+        if bitrate == "N/A":
+            logging.warning(f"  ⚠ Failed to detect bitrate from ffmpeg output (analyzed for {ffmpeg_duration}s)")
+            logging.debug(f"  → Searched {len(output.splitlines())} lines of output")
+        
         logging.debug(f"  → Analysis completed in {elapsed:.2f}s")
     except subprocess.TimeoutExpired:
         logging.warning(f"Timeout ({actual_timeout}s) while fetching bitrate/frames")
