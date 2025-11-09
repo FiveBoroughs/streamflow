@@ -28,6 +28,13 @@ from api_utils import (
     _get_base_url
 )
 
+# Import DeadStreamsTracker
+try:
+    from dead_streams_tracker import DeadStreamsTracker
+    DEAD_STREAMS_TRACKER_AVAILABLE = True
+except ImportError:
+    DEAD_STREAMS_TRACKER_AVAILABLE = False
+    logging.warning("DeadStreamsTracker not available. Dead stream filtering will be disabled.")
 
 
 # Custom logging filter to exclude HTTP-related logs
@@ -287,6 +294,15 @@ class AutomatedStreamManager:
         self.changelog = ChangelogManager()
         self.regex_matcher = RegexChannelMatcher()
         
+        # Initialize dead streams tracker
+        self.dead_streams_tracker = None
+        if DEAD_STREAMS_TRACKER_AVAILABLE:
+            try:
+                self.dead_streams_tracker = DeadStreamsTracker()
+                logging.info("Dead streams tracker initialized")
+            except Exception as e:
+                logging.warning(f"Failed to initialize dead streams tracker: {e}")
+        
         self.running = False
         self.last_playlist_update = None
     
@@ -361,10 +377,15 @@ class AutomatedStreamManager:
         else:
             logging.info("Automation configuration updated")
     
-    def refresh_playlists(self) -> bool:
-        """Refresh M3U playlists and track changes."""
+    def refresh_playlists(self, force: bool = False) -> bool:
+        """Refresh M3U playlists and track changes.
+        
+        Args:
+            force: If True, bypass the auto_playlist_update feature flag check.
+                   Used for manual/quick action triggers from the UI.
+        """
         try:
-            if not self.config.get("enabled_features", {}).get("auto_playlist_update", True):
+            if not force and not self.config.get("enabled_features", {}).get("auto_playlist_update", True):
                 logging.info("Playlist update is disabled in configuration")
                 return False
             
@@ -438,6 +459,18 @@ class AutomatedStreamManager:
             
             logging.info(f"M3U playlist refresh completed successfully. Added: {len(added_streams)}, Removed: {len(removed_streams)}")
             
+            # Clean up dead streams that are no longer in the playlist
+            if self.dead_streams_tracker:
+                try:
+                    current_stream_urls = {s.get('url', '') for s in streams_after if isinstance(s, dict) and s.get('url')}
+                    # Remove empty URLs from the set
+                    current_stream_urls.discard('')
+                    cleaned_count = self.dead_streams_tracker.cleanup_removed_streams(current_stream_urls)
+                    if cleaned_count > 0:
+                        logging.info(f"Dead streams cleanup: removed {cleaned_count} stream(s) no longer in playlist")
+                except Exception as cleanup_error:
+                    logging.error(f"Error during dead streams cleanup: {cleanup_error}")
+            
             # Mark channels for stream quality checking ONLY if streams were added or removed
             # This prevents unnecessary marking of all channels on every refresh
             if len(added_streams) > 0 or len(removed_streams) > 0:
@@ -493,9 +526,14 @@ class AutomatedStreamManager:
                 })
             return False
     
-    def discover_and_assign_streams(self) -> Dict[str, int]:
-        """Discover new streams and assign them to channels based on regex patterns."""
-        if not self.config.get("enabled_features", {}).get("auto_stream_discovery", True):
+    def discover_and_assign_streams(self, force: bool = False) -> Dict[str, int]:
+        """Discover new streams and assign them to channels based on regex patterns.
+        
+        Args:
+            force: If True, bypass the auto_stream_discovery feature flag check.
+                   Used for manual/quick action triggers from the UI.
+        """
+        if not force and not self.config.get("enabled_features", {}).get("auto_stream_discovery", True):
             logging.info("Stream discovery is disabled in configuration")
             return {}
         
@@ -618,6 +656,13 @@ class AutomatedStreamManager:
                 stream_id = stream.get('id')
                 
                 if not stream_name or not stream_id:
+                    continue
+                
+                # Skip streams marked as dead in the tracker
+                # Dead streams should not be added to channels during subsequent matches
+                stream_url = stream.get('url', '')
+                if self.dead_streams_tracker and self.dead_streams_tracker.is_dead(stream_url):
+                    logging.debug(f"Skipping dead stream {stream_id}: {stream_name} (URL: {stream_url})")
                     continue
                 
                 # Find matching channels

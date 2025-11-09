@@ -39,6 +39,9 @@ from api_utils import (
     patch_request
 )
 
+# Import dead streams tracker
+from dead_streams_tracker import DeadStreamsTracker
+
 # Import changelog manager
 try:
     from automated_stream_manager import ChangelogManager
@@ -89,10 +92,11 @@ class StreamCheckConfig:
         'pipeline_mode': 'pipeline_1_5',  # Pipeline mode: 'disabled', 'pipeline_1', 'pipeline_1_5', 'pipeline_2', 'pipeline_2_5', 'pipeline_3'
         'global_check_schedule': {
             'enabled': True,
-            'frequency': 'daily',  # 'daily' or 'monthly'
-            'hour': 3,  # 3 AM for off-peak checking
-            'minute': 0,
-            'day_of_month': 1  # Day of month for monthly checks (1-31)
+            'cron_expression': '0 3 * * *',  # Cron expression: default is daily at 3:00 AM
+            'frequency': 'daily',  # DEPRECATED: kept for backward compatibility - 'daily' or 'monthly'
+            'hour': 3,  # DEPRECATED: kept for backward compatibility - 3 AM for off-peak checking
+            'minute': 0,  # DEPRECATED: kept for backward compatibility
+            'day_of_month': 1  # DEPRECATED: kept for backward compatibility - Day of month for monthly checks (1-31)
         },
         'stream_analysis': {
             'ffmpeg_duration': 30,  # seconds to analyze each stream
@@ -715,6 +719,7 @@ class StreamCheckerService:
             max_size=self.config.get('queue.max_size', 1000)
         )
         self.progress = StreamCheckerProgress()
+        self.dead_streams_tracker = DeadStreamsTracker()
         
         # Initialize changelog manager
         self.changelog = None
@@ -868,13 +873,15 @@ class StreamCheckerService:
     def _check_global_schedule(self):
         """Check if it's time for a scheduled global action.
         
+        Uses cron expression to determine when to run the global action.
+        
         On fresh start (no previous check recorded):
-        - Only runs if current time is within ±10 minutes of scheduled time
+        - Only runs if current time is within ±10 minutes of the next scheduled time
         - Otherwise waits for the scheduled time to arrive
         
         On subsequent checks (previous check exists):
-        - Runs once per day/month after scheduled time has passed
-        - Prevents duplicate runs on the same day
+        - Runs if the next scheduled time has passed since the last check
+        - Prevents duplicate runs by tracking the last check time
         """
         if not self.config.get('global_check_schedule.enabled', True):
             logging.debug("Global check schedule is disabled")
@@ -890,56 +897,80 @@ class StreamCheckerService:
             return
         
         now = datetime.now()
-        scheduled_hour = self.config.get('global_check_schedule.hour', 3)
-        scheduled_minute = self.config.get('global_check_schedule.minute', 0)
-        frequency = self.config.get('global_check_schedule.frequency', 'daily')
+        
+        # Get cron expression, with backward compatibility for old config format
+        cron_expression = self.config.get('global_check_schedule.cron_expression')
+        if not cron_expression:
+            # Backward compatibility: convert old format to cron
+            cron_expression = self._convert_legacy_schedule_to_cron()
+        
+        try:
+            from croniter import croniter
+        except ImportError:
+            logging.error("croniter library not installed. Please install it with: pip install croniter")
+            return
+        
+        # Validate cron expression
+        if not croniter.is_valid(cron_expression):
+            logging.error(f"Invalid cron expression: {cron_expression}")
+            return
         
         last_global = self.update_tracker.get_last_global_check()
         
-        # Calculate scheduled time for today
-        scheduled_time_today = now.replace(hour=scheduled_hour, minute=scheduled_minute, second=0, microsecond=0)
+        # Calculate next scheduled time from now
+        cron = croniter(cron_expression, now)
+        next_scheduled_time = cron.get_next(datetime)
+        
+        # Calculate previous scheduled time (going back from now)
+        cron_prev = croniter(cron_expression, now)
+        prev_scheduled_time = cron_prev.get_prev(datetime)
         
         # On fresh start (no previous check), only run if within the scheduled time window (±10 minutes)
         # Otherwise, do nothing and wait for the scheduled time to arrive
         if last_global is None:
-            time_diff_minutes = abs((now - scheduled_time_today).total_seconds() / 60)
+            time_diff_minutes = abs((now - prev_scheduled_time).total_seconds() / 60)
             if time_diff_minutes <= 10:
                 # We're within the scheduled window on fresh start, run the check
-                logging.info(f"Starting scheduled {frequency} global action (mode: {pipeline_mode})")
+                logging.info(f"Starting scheduled global action (mode: {pipeline_mode}, cron: {cron_expression})")
                 self._perform_global_action()
                 self.update_tracker.mark_global_check()
             else:
                 # Fresh start but not within scheduled window, do nothing and wait
                 # The scheduler will check again later when the scheduled time arrives
-                logging.debug(f"Fresh start outside scheduled window (±10 min of {scheduled_hour:02d}:{scheduled_minute:02d}), waiting for scheduled time")
+                logging.debug(f"Fresh start outside scheduled window (±10 min of {prev_scheduled_time.strftime('%Y-%m-%d %H:%M')}), waiting for scheduled time")
             return
         
-        # Determine if we should run based on frequency and last check time
-        should_run = False
+        # Parse last check time
+        last_check_time = datetime.fromisoformat(last_global)
+        
+        # Check if we've passed the previous scheduled time since the last check
+        # This prevents running multiple times between scheduled intervals
+        if prev_scheduled_time > last_check_time:
+            # We've passed a scheduled time since the last check, so we should run
+            logging.info(f"Starting scheduled global action (mode: {pipeline_mode}, cron: {cron_expression})")
+            self._perform_global_action()
+            # Mark that global check has been initiated to prevent duplicate queueing
+            self.update_tracker.mark_global_check()
+    
+    def _convert_legacy_schedule_to_cron(self):
+        """Convert legacy schedule format (hour/minute/frequency) to cron expression.
+        
+        This provides backward compatibility for existing configurations.
+        """
+        frequency = self.config.get('global_check_schedule.frequency', 'daily')
+        hour = self.config.get('global_check_schedule.hour', 3)
+        minute = self.config.get('global_check_schedule.minute', 0)
         
         if frequency == 'monthly':
-            scheduled_day = self.config.get('global_check_schedule.day_of_month', 1)
-            # Check if it's the correct day of the month
-            if now.day == scheduled_day:
-                last_check_time = datetime.fromisoformat(last_global)
-                # Check if last run was in a different month or more than 30 days ago
-                if last_check_time.month != now.month or last_check_time.year != now.year or (now - last_check_time).days >= 30:
-                    should_run = True
-        else:  # daily
-            last_check_time = datetime.fromisoformat(last_global)
-            # Check if last run was on a different day (not today)
-            if last_check_time.date() != now.date():
-                should_run = True
+            day_of_month = self.config.get('global_check_schedule.day_of_month', 1)
+            # Monthly on specific day: minute hour day * *
+            cron_expression = f"{minute} {hour} {day_of_month} * *"
+        else:
+            # Daily: minute hour * * *
+            cron_expression = f"{minute} {hour} * * *"
         
-        # Only run if we're past the scheduled time today and haven't run yet
-        if should_run:
-            # Run if current time is past scheduled time
-            if now >= scheduled_time_today:
-                # Perform global action based on pipeline mode
-                logging.info(f"Starting scheduled {frequency} global action (mode: {pipeline_mode})")
-                self._perform_global_action()
-                # Mark that global check has been initiated to prevent duplicate queueing
-                self.update_tracker.mark_global_check()
+        logging.info(f"Converted legacy schedule to cron: {cron_expression}")
+        return cron_expression
     
     def _perform_global_action(self):
         """Perform a complete global action: Update M3U, Match streams, and Check all channels.
@@ -1043,6 +1074,45 @@ class StreamCheckerService:
                 logging.info(f"Queued {total_added}/{len(channel_ids)} channels for global check (force_check={force_check})")
         except Exception as e:
             logging.error(f"Failed to queue all channels: {e}")
+    
+    def _is_stream_dead(self, stream_data: Dict) -> bool:
+        """Check if a stream should be considered dead based on analysis results.
+        
+        A stream is dead if:
+        - Resolution is '0x0' or contains 0 in width or height
+        - Bitrate is 0 or None
+        
+        Args:
+            stream_data: Analyzed stream data dictionary
+            
+        Returns:
+            bool: True if stream is dead, False otherwise
+        """
+        # Check resolution
+        resolution = stream_data.get('resolution', '')
+        if resolution and resolution != 'N/A':
+            resolution_str = str(resolution)
+            # Check if resolution is exactly 0x0 or starts/ends with 0
+            if resolution_str == '0x0':
+                return True
+            # Check if width or height is 0 (e.g., "0x1080" or "1920x0")
+            if 'x' in resolution_str:
+                try:
+                    parts = resolution_str.split('x')
+                    if len(parts) == 2:
+                        width, height = int(parts[0]), int(parts[1])
+                        if width == 0 or height == 0:
+                            return True
+                except (ValueError, IndexError):
+                    pass
+        
+        # Check bitrate
+        bitrate = stream_data.get('bitrate_kbps', 0)
+        if bitrate in [0, None, 'N/A'] or (isinstance(bitrate, (int, float)) and bitrate == 0):
+            return True
+        
+        return False
+    
     
     def _update_stream_stats(self, stream_data: Dict) -> bool:
         """Update stream stats for a single stream on the server."""
@@ -1191,6 +1261,8 @@ class StreamCheckerService:
             
             # Analyze new/unchecked streams
             analyzed_streams = []
+            dead_stream_ids = []
+            revived_stream_ids = []
             total_streams = len(streams_to_check)
             
             for idx, stream in enumerate(streams_to_check, 1):
@@ -1229,6 +1301,27 @@ class StreamCheckerService:
                 
                 # Update stream stats on dispatcharr with ffmpeg-extracted data
                 self._update_stream_stats(analyzed)
+                
+                # Check if stream is dead (resolution=0 or bitrate=0)
+                is_dead = self._is_stream_dead(analyzed)
+                stream_url = stream.get('url', '')
+                stream_name = stream.get('name', 'Unknown')
+                was_dead = self.dead_streams_tracker.is_dead(stream_url)
+                
+                if is_dead and not was_dead:
+                    # Mark as dead in tracker
+                    if self.dead_streams_tracker.mark_as_dead(stream_url, stream['id'], stream_name):
+                        dead_stream_ids.append(stream['id'])
+                        logging.warning(f"Stream {stream['id']} detected as DEAD: {stream_name}")
+                    else:
+                        logging.error(f"Failed to mark stream {stream['id']} as DEAD, will not remove from channel")
+                elif not is_dead and was_dead:
+                    # Stream was revived!
+                    if self.dead_streams_tracker.mark_as_alive(stream_url):
+                        revived_stream_ids.append(stream['id'])
+                        logging.info(f"Stream {stream['id']} REVIVED: {stream_name}")
+                    else:
+                        logging.error(f"Failed to mark stream {stream['id']} as alive")
                 
                 # Calculate score
                 score = self._calculate_stream_score(analyzed)
@@ -1269,6 +1362,27 @@ class StreamCheckerService:
                         'bitrate_kbps': stream_stats.get('ffmpeg_output_bitrate', 0),
                         'status': 'OK'  # Assume OK for previously checked streams
                     }
+                    
+                    # Check if this cached stream is dead and add to dead_stream_ids
+                    stream_url = stream.get('url', '')
+                    stream_name = stream.get('name', 'Unknown')
+                    is_dead = self._is_stream_dead(analyzed)
+                    was_dead = self.dead_streams_tracker.is_dead(stream_url)
+                    
+                    # If stream is dead (either was already marked or is detected as dead), track it
+                    if is_dead or was_dead:
+                        # Only add to dead_stream_ids if either:
+                        # 1. Stream was already marked (safe to remove)
+                        # 2. Stream is newly detected as dead AND marking succeeds
+                        if was_dead:
+                            dead_stream_ids.append(stream['id'])
+                        elif not was_dead:
+                            # If it wasn't marked but is dead, mark it now
+                            if self.dead_streams_tracker.mark_as_dead(stream_url, stream['id'], stream_name):
+                                dead_stream_ids.append(stream['id'])
+                                logging.warning(f"Cached stream {stream['id']} detected as DEAD: {stream_name}")
+                            else:
+                                logging.error(f"Failed to mark cached stream {stream['id']} as DEAD, will not remove from channel")
                     
                     # Recalculate score from cached data
                     score = self._calculate_stream_score(analyzed)
@@ -1313,6 +1427,22 @@ class StreamCheckerService:
             )
             analyzed_streams.sort(key=lambda x: x.get('score', 0), reverse=True)
             
+            # Remove dead streams from the channel (unless it's a force check/global check)
+            # During global checks, we want to give dead streams a chance to be revived
+            if dead_stream_ids and not force_check:
+                logging.warning(f"🔴 Removing {len(dead_stream_ids)} dead streams from channel {channel_name}")
+                # Log which streams are being removed
+                for stream_id in dead_stream_ids:
+                    dead_stream = next((s for s in analyzed_streams if s['stream_id'] == stream_id), None)
+                    if dead_stream:
+                        logging.info(f"  - Removing dead stream {stream_id}: {dead_stream.get('stream_name', 'Unknown')}")
+                analyzed_streams = [s for s in analyzed_streams if s['stream_id'] not in dead_stream_ids]
+            elif dead_stream_ids and force_check:
+                logging.info(f"Global check mode: keeping {len(dead_stream_ids)} dead streams to check for revival")
+            
+            if revived_stream_ids:
+                logging.info(f"{len(revived_stream_ids)} streams were revived in channel {channel_name}")
+            
             # Update channel with reordered streams
             self.progress.update(
                 channel_id=channel_id,
@@ -1324,7 +1454,8 @@ class StreamCheckerService:
                 step_detail='Applying new stream order to channel'
             )
             reordered_ids = [s['stream_id'] for s in analyzed_streams]
-            update_channel_streams(channel_id, reordered_ids)
+            # Allow dead streams during force_check (global checks) to give them a second chance
+            update_channel_streams(channel_id, reordered_ids, allow_dead_streams=force_check)
             
             # Verify the update was applied correctly
             self.progress.update(
@@ -1423,6 +1554,10 @@ class StreamCheckerService:
     
     def _calculate_stream_score(self, stream_data: Dict) -> float:
         """Calculate a quality score for a stream based on analysis."""
+        # Dead streams always get a score of 0
+        if self._is_stream_dead(stream_data):
+            return 0.0
+        
         weights = self.config.get('scoring.weights', {})
         score = 0.0
         
@@ -1514,6 +1649,7 @@ class StreamCheckerService:
             'progress': progress,
             'last_global_check': self.update_tracker.get_last_global_check(),
             'config': {
+                'pipeline_mode': self.config.get('pipeline_mode'),
                 'check_interval': self.config.get('check_interval'),
                 'global_check_schedule': self.config.get('global_check_schedule'),
                 'queue_settings': self.config.get('queue')

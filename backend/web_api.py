@@ -20,6 +20,14 @@ from automated_stream_manager import AutomatedStreamManager, RegexChannelMatcher
 from api_utils import fetch_data_from_url, _get_base_url
 from stream_checker_service import get_stream_checker_service
 
+# Import croniter for cron expression validation
+try:
+    from croniter import croniter
+    CRONITER_AVAILABLE = True
+except ImportError:
+    CRONITER_AVAILABLE = False
+    logging.warning("croniter not installed - cron expression validation will be disabled")
+
 
 
 # Custom logging filter to exclude HTTP-related logs
@@ -526,10 +534,11 @@ def get_changelog():
 
 @app.route('/api/discover-streams', methods=['POST'])
 def discover_streams():
-    """Trigger stream discovery and assignment."""
+    """Trigger stream discovery and assignment (manual Quick Action)."""
     try:
         manager = get_automation_manager()
-        assignments = manager.discover_and_assign_streams()
+        # Use force=True to bypass feature flags for manual Quick Actions
+        assignments = manager.discover_and_assign_streams(force=True)
         return jsonify({
             "message": "Stream discovery completed",
             "assignments": assignments,
@@ -541,13 +550,14 @@ def discover_streams():
 
 @app.route('/api/refresh-playlist', methods=['POST'])
 def refresh_playlist():
-    """Trigger M3U playlist refresh."""
+    """Trigger M3U playlist refresh (manual Quick Action)."""
     try:
         data = request.get_json() or {}
         account_id = data.get('account_id')
         
         manager = get_automation_manager()
-        success = manager.refresh_playlists()
+        # Use force=True to bypass feature flags for manual Quick Actions
+        success = manager.refresh_playlists(force=True)
         
         if success:
             return jsonify({"message": "Playlist refresh completed successfully"})
@@ -929,6 +939,21 @@ def update_stream_checker_config():
         data = request.get_json()
         if not data:
             return jsonify({"error": "No configuration data provided"}), 400
+        
+        # Validate cron expression if provided
+        if 'global_check_schedule' in data and 'cron_expression' in data['global_check_schedule']:
+            cron_expr = data['global_check_schedule']['cron_expression']
+            if cron_expr:
+                if CRONITER_AVAILABLE:
+                    try:
+                        if not croniter.is_valid(cron_expr):
+                            return jsonify({"error": f"Invalid cron expression: {cron_expr}"}), 400
+                    except Exception as e:
+                        # Log the full error but only return a generic message to the user
+                        logging.error(f"Cron expression validation error: {e}")
+                        return jsonify({"error": "Invalid cron expression format"}), 400
+                else:
+                    logging.warning("croniter not available - cron expression validation skipped")
         
         service = get_stream_checker_service()
         service.update_config(data)
