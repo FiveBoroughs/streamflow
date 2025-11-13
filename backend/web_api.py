@@ -26,37 +26,14 @@ try:
     CRONITER_AVAILABLE = True
 except ImportError:
     CRONITER_AVAILABLE = False
-    logging.warning("croniter not installed - cron expression validation will be disabled")
+    logger.warning("croniter not installed - cron expression validation will be disabled")
 
 
 
-# Custom logging filter to exclude HTTP-related logs
-class HTTPLogFilter(logging.Filter):
-    """Filter out HTTP-related log messages."""
-    def filter(self, record):
-        # Exclude messages containing HTTP request/response indicators
-        message = record.getMessage().lower()
-        http_indicators = [
-            'http request',
-            'http response',
-            'status code',
-            'get /',
-            'post /',
-            'put /',
-            'delete /',
-            'patch /',
-            '" with',
-            '- - [',  # Common HTTP access log format
-            'werkzeug',
-        ]
-        return not any(indicator in message for indicator in http_indicators)
+# Setup centralized logging
+from logging_config import setup_logging, log_function_call, log_function_return, log_exception
 
-# Setup logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-# Apply HTTP filter to all handlers
-for handler in logging.root.handlers:
-    handler.addFilter(HTTPLogFilter())
+logger = setup_logging(__name__)
 
 # Configuration directory - persisted via Docker volume
 CONFIG_DIR = Path(os.environ.get('CONFIG_DIR', '/app/data'))
@@ -111,7 +88,7 @@ def check_wizard_complete():
         
         return True
     except Exception as e:
-        logging.warning(f"Error checking wizard completion status: {e}")
+        logger.warning(f"Error checking wizard completion status: {e}")
         return False
 
 
@@ -151,7 +128,7 @@ def get_automation_status():
         status = manager.get_status()
         return jsonify(status)
     except Exception as e:
-        logging.error(f"Error getting automation status: {e}")
+        logger.error(f"Error getting automation status: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/automation/start', methods=['POST'])
@@ -162,7 +139,7 @@ def start_automation():
         manager.start_automation()
         return jsonify({"message": "Automation started successfully", "status": "running"})
     except Exception as e:
-        logging.error(f"Error starting automation: {e}")
+        logger.error(f"Error starting automation: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/automation/stop', methods=['POST'])
@@ -173,7 +150,7 @@ def stop_automation():
         manager.stop_automation()
         return jsonify({"message": "Automation stopped successfully", "status": "stopped"})
     except Exception as e:
-        logging.error(f"Error stopping automation: {e}")
+        logger.error(f"Error stopping automation: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/automation/cycle', methods=['POST'])
@@ -184,7 +161,7 @@ def run_automation_cycle():
         manager.run_automation_cycle()
         return jsonify({"message": "Automation cycle completed successfully"})
     except Exception as e:
-        logging.error(f"Error running automation cycle: {e}")
+        logger.error(f"Error running automation cycle: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/automation/config', methods=['GET'])
@@ -194,7 +171,7 @@ def get_automation_config():
         manager = get_automation_manager()
         return jsonify(manager.config)
     except Exception as e:
-        logging.error(f"Error getting automation config: {e}")
+        logger.error(f"Error getting automation config: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/automation/config', methods=['PUT'])
@@ -209,7 +186,7 @@ def update_automation_config():
         manager.update_config(data)
         return jsonify({"message": "Configuration updated successfully", "config": manager.config})
     except Exception as e:
-        logging.error(f"Error updating automation config: {e}")
+        logger.error(f"Error updating automation config: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/channels', methods=['GET'])
@@ -224,7 +201,7 @@ def get_channels():
         
         return jsonify(channels)
     except Exception as e:
-        logging.error(f"Error fetching channels: {e}")
+        logger.error(f"Error fetching channels: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/channels/groups', methods=['GET'])
@@ -239,7 +216,7 @@ def get_channel_groups():
         
         return jsonify(groups)
     except Exception as e:
-        logging.error(f"Error fetching channel groups: {e}")
+        logger.error(f"Error fetching channel groups: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/channels/logos/<logo_id>', methods=['GET'])
@@ -254,7 +231,7 @@ def get_channel_logo(logo_id):
         
         return jsonify(logo)
     except Exception as e:
-        logging.error(f"Error fetching logo: {e}")
+        logger.error(f"Error fetching logo: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/regex-patterns', methods=['GET'])
@@ -265,7 +242,7 @@ def get_regex_patterns():
         patterns = matcher.get_patterns()
         return jsonify(patterns)
     except Exception as e:
-        logging.error(f"Error getting regex patterns: {e}")
+        logger.error(f"Error getting regex patterns: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/regex-patterns', methods=['POST'])
@@ -291,10 +268,10 @@ def add_regex_pattern():
         return jsonify({"message": "Pattern added/updated successfully"})
     except ValueError as e:
         # Validation errors (e.g., invalid regex) should return 400
-        logging.warning(f"Validation error adding regex pattern: {e}")
+        logger.warning(f"Validation error adding regex pattern: {e}")
         return jsonify({"error": str(e)}), 400
     except Exception as e:
-        logging.error(f"Error adding regex pattern: {e}")
+        logger.error(f"Error adding regex pattern: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/regex-patterns/<channel_id>', methods=['DELETE'])
@@ -311,7 +288,7 @@ def delete_regex_pattern(channel_id):
         else:
             return jsonify({"error": "Pattern not found"}), 404
     except Exception as e:
-        logging.error(f"Error deleting regex pattern: {e}")
+        logger.error(f"Error deleting regex pattern: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/regex-patterns/import', methods=['POST'])
@@ -356,14 +333,14 @@ def import_regex_patterns():
         matcher.reload_patterns()
         
         pattern_count = len(data['patterns'])
-        logging.info(f"Imported {pattern_count} regex patterns successfully")
+        logger.info(f"Imported {pattern_count} regex patterns successfully")
         
         return jsonify({
             "message": f"Successfully imported {pattern_count} patterns",
             "pattern_count": pattern_count
         })
     except Exception as e:
-        logging.error(f"Error importing regex patterns: {e}")
+        logger.error(f"Error importing regex patterns: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/test-regex', methods=['POST'])
@@ -403,7 +380,7 @@ def test_regex_pattern():
         except re.error as e:
             return jsonify({"error": f"Invalid regex pattern: {str(e)}"}), 400
     except Exception as e:
-        logging.error(f"Error testing regex pattern: {e}")
+        logger.error(f"Error testing regex pattern: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/test-regex-live', methods=['POST'])
@@ -476,7 +453,7 @@ def test_regex_pattern_live():
                             matched_pattern = pattern
                             break  # Only need one match
                     except re.error as e:
-                        logging.warning(f"Invalid regex pattern '{pattern}': {e}")
+                        logger.warning(f"Invalid regex pattern '{pattern}': {e}")
                         continue
                 
                 if matched and len(matched_streams) < max_matches_per_pattern:
@@ -501,7 +478,7 @@ def test_regex_pattern_live():
         })
         
     except Exception as e:
-        logging.error(f"Error testing regex patterns live: {e}")
+        logger.error(f"Error testing regex patterns live: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/changelog', methods=['GET'])
@@ -521,7 +498,7 @@ def get_changelog():
             if checker.changelog:
                 stream_checker_changelog = checker.changelog.get_recent_entries(days)
         except Exception as e:
-            logging.warning(f"Could not get stream checker changelog: {e}")
+            logger.warning(f"Could not get stream checker changelog: {e}")
         
         # Merge and sort by timestamp (newest first)
         merged_changelog = automation_changelog + stream_checker_changelog
@@ -529,7 +506,7 @@ def get_changelog():
         
         return jsonify(merged_changelog)
     except Exception as e:
-        logging.error(f"Error getting changelog: {e}")
+        logger.error(f"Error getting changelog: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/discover-streams', methods=['POST'])
@@ -545,7 +522,7 @@ def discover_streams():
             "total_assigned": sum(assignments.values())
         })
     except Exception as e:
-        logging.error(f"Error discovering streams: {e}")
+        logger.error(f"Error discovering streams: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/refresh-playlist', methods=['POST'])
@@ -564,7 +541,7 @@ def refresh_playlist():
         else:
             return jsonify({"error": "Playlist refresh failed"}), 500
     except Exception as e:
-        logging.error(f"Error refreshing playlist: {e}")
+        logger.error(f"Error refreshing playlist: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/m3u-accounts', methods=['GET'])
@@ -595,7 +572,7 @@ def get_m3u_accounts_endpoint():
         
         return jsonify(accounts)
     except Exception as e:
-        logging.error(f"Error fetching M3U accounts: {e}")
+        logger.error(f"Error fetching M3U accounts: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/setup-wizard', methods=['GET'])
@@ -648,7 +625,7 @@ def get_setup_wizard_status():
         
         return jsonify(status)
     except Exception as e:
-        logging.error(f"Error getting setup wizard status: {e}")
+        logger.error(f"Error getting setup wizard status: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/setup-wizard/create-sample-patterns', methods=['POST'])
@@ -683,7 +660,7 @@ def create_sample_patterns():
         
         return jsonify({"message": "Sample patterns created successfully"})
     except Exception as e:
-        logging.error(f"Error creating sample patterns: {e}")
+        logger.error(f"Error creating sample patterns: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/dispatcharr/config', methods=['GET'])
@@ -698,7 +675,7 @@ def get_dispatcharr_config():
         }
         return jsonify(config)
     except Exception as e:
-        logging.error(f"Error getting Dispatcharr config: {e}")
+        logger.error(f"Error getting Dispatcharr config: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/dispatcharr/config', methods=['PUT'])
@@ -738,7 +715,7 @@ def update_dispatcharr_config():
         
         return jsonify({"message": "Dispatcharr configuration updated successfully"})
     except Exception as e:
-        logging.error(f"Error updating Dispatcharr config: {e}")
+        logger.error(f"Error updating Dispatcharr config: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/dispatcharr/test-connection', methods=['POST'])
@@ -829,7 +806,7 @@ def test_dispatcharr_connection():
             })
             
     except Exception as e:
-        logging.error(f"Error testing Dispatcharr connection: {e}")
+        logger.error(f"Error testing Dispatcharr connection: {e}")
         return jsonify({"error": str(e)}), 500
 
 # ===== Stream Checker Endpoints =====
@@ -842,7 +819,7 @@ def get_stream_checker_status():
         status = service.get_status()
         return jsonify(status)
     except Exception as e:
-        logging.error(f"Error getting stream checker status: {e}")
+        logger.error(f"Error getting stream checker status: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/stream-checker/start', methods=['POST'])
@@ -853,7 +830,7 @@ def start_stream_checker():
         service.start()
         return jsonify({"message": "Stream checker started successfully", "status": "running"})
     except Exception as e:
-        logging.error(f"Error starting stream checker: {e}")
+        logger.error(f"Error starting stream checker: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/stream-checker/stop', methods=['POST'])
@@ -864,7 +841,7 @@ def stop_stream_checker():
         service.stop()
         return jsonify({"message": "Stream checker stopped successfully", "status": "stopped"})
     except Exception as e:
-        logging.error(f"Error stopping stream checker: {e}")
+        logger.error(f"Error stopping stream checker: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/stream-checker/queue', methods=['GET'])
@@ -875,7 +852,7 @@ def get_stream_checker_queue():
         status = service.get_status()
         return jsonify(status.get('queue', {}))
     except Exception as e:
-        logging.error(f"Error getting stream checker queue: {e}")
+        logger.error(f"Error getting stream checker queue: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/stream-checker/queue/add', methods=['POST'])
@@ -908,7 +885,7 @@ def add_to_stream_checker_queue():
             return jsonify({"error": "Must provide channel_id or channel_ids"}), 400
     
     except Exception as e:
-        logging.error(f"Error adding to stream checker queue: {e}")
+        logger.error(f"Error adding to stream checker queue: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/stream-checker/queue/clear', methods=['POST'])
@@ -919,7 +896,7 @@ def clear_stream_checker_queue():
         service.clear_queue()
         return jsonify({"message": "Queue cleared successfully"})
     except Exception as e:
-        logging.error(f"Error clearing stream checker queue: {e}")
+        logger.error(f"Error clearing stream checker queue: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/stream-checker/config', methods=['GET'])
@@ -929,7 +906,7 @@ def get_stream_checker_config():
         service = get_stream_checker_service()
         return jsonify(service.config.config)
     except Exception as e:
-        logging.error(f"Error getting stream checker config: {e}")
+        logger.error(f"Error getting stream checker config: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/stream-checker/config', methods=['PUT'])
@@ -950,10 +927,10 @@ def update_stream_checker_config():
                             return jsonify({"error": f"Invalid cron expression: {cron_expr}"}), 400
                     except Exception as e:
                         # Log the full error but only return a generic message to the user
-                        logging.error(f"Cron expression validation error: {e}")
+                        logger.error(f"Cron expression validation error: {e}")
                         return jsonify({"error": "Invalid cron expression format"}), 400
                 else:
-                    logging.warning("croniter not available - cron expression validation skipped")
+                    logger.warning("croniter not available - cron expression validation skipped")
         
         service = get_stream_checker_service()
         service.update_config(data)
@@ -967,22 +944,22 @@ def update_stream_checker_config():
                 # Stop services if pipeline is disabled
                 if service.running:
                     service.stop()
-                    logging.info("Stream checker service stopped (pipeline disabled)")
+                    logger.info("Stream checker service stopped (pipeline disabled)")
                 if manager.running:
                     manager.stop_automation()
-                    logging.info("Automation service stopped (pipeline disabled)")
+                    logger.info("Automation service stopped (pipeline disabled)")
             else:
                 # Start services if pipeline is active and they're not already running
                 if not service.running:
                     service.start()
-                    logging.info(f"Stream checker service auto-started after config update (mode: {pipeline_mode})")
+                    logger.info(f"Stream checker service auto-started after config update (mode: {pipeline_mode})")
                 if not manager.running:
                     manager.start_automation()
-                    logging.info(f"Automation service auto-started after config update (mode: {pipeline_mode})")
+                    logger.info(f"Automation service auto-started after config update (mode: {pipeline_mode})")
         
         return jsonify({"message": "Configuration updated successfully", "config": service.config.config})
     except Exception as e:
-        logging.error(f"Error updating stream checker config: {e}")
+        logger.error(f"Error updating stream checker config: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/stream-checker/progress', methods=['GET'])
@@ -993,7 +970,7 @@ def get_stream_checker_progress():
         status = service.get_status()
         return jsonify(status.get('progress', {}))
     except Exception as e:
-        logging.error(f"Error getting stream checker progress: {e}")
+        logger.error(f"Error getting stream checker progress: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/stream-checker/check-channel', methods=['POST'])
@@ -1015,7 +992,7 @@ def check_specific_channel():
             return jsonify({"error": "Failed to queue channel"}), 500
     
     except Exception as e:
-        logging.error(f"Error checking specific channel: {e}")
+        logger.error(f"Error checking specific channel: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/stream-checker/mark-updated', methods=['POST'])
@@ -1042,7 +1019,7 @@ def mark_channels_updated():
             return jsonify({"error": "Must provide channel_id or channel_ids"}), 400
     
     except Exception as e:
-        logging.error(f"Error marking channels updated: {e}")
+        logger.error(f"Error marking channels updated: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/stream-checker/queue-all', methods=['POST'])
@@ -1080,7 +1057,7 @@ def queue_all_channels():
         })
     
     except Exception as e:
-        logging.error(f"Error queueing all channels: {e}")
+        logger.error(f"Error queueing all channels: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/stream-checker/global-action', methods=['POST'])
@@ -1110,7 +1087,7 @@ def trigger_global_action():
             return jsonify({"error": "Failed to trigger global action"}), 500
     
     except Exception as e:
-        logging.error(f"Error triggering global action: {e}")
+        logger.error(f"Error triggering global action: {e}")
         return jsonify({"error": str(e)}), 500
 
 # Serve React app for all frontend routes (catch-all - must be last!)
@@ -1137,45 +1114,45 @@ if __name__ == '__main__':
     
     args = parser.parse_args()
     
-    logging.info(f"Starting StreamFlow for Dispatcharr Web API on {args.host}:{args.port}")
+    logger.info(f"Starting StreamFlow for Dispatcharr Web API on {args.host}:{args.port}")
     
     # Auto-start stream checker service if enabled and pipeline mode is not disabled AND wizard is complete
     try:
         # Check if wizard has been completed
         if not check_wizard_complete():
-            logging.info("Stream checker service will not start - setup wizard has not been completed")
+            logger.info("Stream checker service will not start - setup wizard has not been completed")
         else:
             service = get_stream_checker_service()
             pipeline_mode = service.config.get('pipeline_mode', 'pipeline_1_5')
             
             if pipeline_mode == 'disabled':
-                logging.info("Stream checker service is disabled via pipeline mode")
+                logger.info("Stream checker service is disabled via pipeline mode")
             elif service.config.get('enabled', True):
                 service.start()
-                logging.info(f"Stream checker service auto-started (mode: {pipeline_mode})")
+                logger.info(f"Stream checker service auto-started (mode: {pipeline_mode})")
             else:
-                logging.info("Stream checker service is disabled in configuration")
+                logger.info("Stream checker service is disabled in configuration")
     except Exception as e:
-        logging.error(f"Failed to auto-start stream checker service: {e}")
+        logger.error(f"Failed to auto-start stream checker service: {e}")
     
     # Auto-start automation service if pipeline mode is not disabled AND wizard is complete
     # When any pipeline other than disabled is selected, automation should auto-start
     try:
         # Check if wizard has been completed
         if not check_wizard_complete():
-            logging.info("Automation service will not start - setup wizard has not been completed")
+            logger.info("Automation service will not start - setup wizard has not been completed")
         else:
             manager = get_automation_manager()
             service = get_stream_checker_service()
             pipeline_mode = service.config.get('pipeline_mode', 'pipeline_1_5')
             
             if pipeline_mode == 'disabled':
-                logging.info("Automation service is disabled via pipeline mode")
+                logger.info("Automation service is disabled via pipeline mode")
             else:
                 # Auto-start automation for any active pipeline
                 manager.start_automation()
-                logging.info(f"Automation service auto-started (mode: {pipeline_mode})")
+                logger.info(f"Automation service auto-started (mode: {pipeline_mode})")
     except Exception as e:
-        logging.error(f"Failed to auto-start automation service: {e}")
+        logger.error(f"Failed to auto-start automation service: {e}")
     
     app.run(host=args.host, port=args.port, debug=args.debug)

@@ -7,12 +7,16 @@ Stream URLs are used instead of names because multiple streams can have the same
 """
 
 import json
-import logging
 import os
 import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Dict
+
+from logging_config import setup_logging, log_function_call, log_function_return, log_exception
+
+# Setup logging for this module
+logger = setup_logging(__name__)
 
 # Configuration directory
 CONFIG_DIR = Path(os.environ.get('CONFIG_DIR', '/app/data'))
@@ -45,7 +49,7 @@ class DeadStreamsTracker:
                 with open(self.tracker_file, 'r') as f:
                     return json.load(f)
             except (json.JSONDecodeError, FileNotFoundError) as e:
-                logging.warning(f"Could not load dead streams from {self.tracker_file}: {e}")
+                logger.warning(f"Could not load dead streams from {self.tracker_file}: {e}")
         return {}
     
     def _save_dead_streams(self):
@@ -58,7 +62,7 @@ class DeadStreamsTracker:
             with open(self.tracker_file, 'w') as f:
                 json.dump(self.dead_streams, f, indent=2)
         except Exception as e:
-            logging.error(f"Failed to save dead streams: {e}")
+            logger.error(f"Failed to save dead streams: {e}")
     
     def mark_as_dead(self, stream_url: str, stream_id: int, stream_name: str) -> bool:
         """Mark a stream as dead.
@@ -80,10 +84,10 @@ class DeadStreamsTracker:
                     'url': stream_url
                 }
                 self._save_dead_streams()
-            logging.warning(f"🔴 MARKED STREAM AS DEAD: {stream_name} (URL: {stream_url})")
+            logger.warning(f"🔴 MARKED STREAM AS DEAD: {stream_name} (URL: {stream_url})")
             return True
         except Exception as e:
-            logging.error(f"❌ Error marking stream as dead: {e}")
+            logger.error(f"❌ Error marking stream as dead: {e}")
             return False
     
     def mark_as_alive(self, stream_url: str) -> bool:
@@ -100,13 +104,13 @@ class DeadStreamsTracker:
                 if stream_url in self.dead_streams:
                     stream_info = self.dead_streams.pop(stream_url)
                     self._save_dead_streams()
-                    logging.info(f"🟢 REVIVED STREAM: {stream_info.get('stream_name', 'Unknown')} (URL: {stream_url})")
+                    logger.info(f"🟢 REVIVED STREAM: {stream_info.get('stream_name', 'Unknown')} (URL: {stream_url})")
                     return True
                 else:
-                    logging.debug(f"Stream not in dead list: {stream_url}")
+                    logger.debug(f"Stream not in dead list: {stream_url}")
                     return True
         except Exception as e:
-            logging.error(f"❌ Error marking stream as alive: {e}")
+            logger.error(f"❌ Error marking stream as alive: {e}")
             return False
     
     def is_dead(self, stream_url: str) -> bool:
@@ -152,14 +156,14 @@ class DeadStreamsTracker:
                 for url in dead_urls_to_remove:
                     stream_info = self.dead_streams.pop(url)
                     removed_count += 1
-                    logging.info(f"🗑️ Removed dead stream from tracking (no longer in playlist): {stream_info.get('stream_name', 'Unknown')} (URL: {url})")
+                    logger.info(f"🗑️ Removed dead stream from tracking (no longer in playlist): {stream_info.get('stream_name', 'Unknown')} (URL: {url})")
                 
                 # Save if we removed any
                 if removed_count > 0:
                     self._save_dead_streams()
-                    logging.info(f"Cleaned up {removed_count} dead stream(s) that are no longer in playlist")
+                    logger.info(f"Cleaned up {removed_count} dead stream(s) that are no longer in playlist")
             
             return removed_count
         except Exception as e:
-            logging.error(f"❌ Error cleaning up removed streams: {e}")
+            logger.error(f"❌ Error cleaning up removed streams: {e}")
             return 0

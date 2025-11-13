@@ -7,12 +7,20 @@ for communicating with the Dispatcharr API endpoints.
 
 import os
 import json
-import logging
 import sys
+import time
 from typing import Dict, List, Optional, Any, Tuple
 import requests
 from pathlib import Path
 from dotenv import load_dotenv, set_key
+
+from logging_config import (
+    setup_logging, log_function_call, log_function_return,
+    log_exception, log_api_request, log_api_response
+)
+
+# Setup logging for this module
+logger = setup_logging(__name__)
 
 env_path = Path('.') / '.env'
 
@@ -20,6 +28,7 @@ env_path = Path('.') / '.env'
 # This allows fallback to .env file while supporting env vars
 if env_path.exists():
     load_dotenv(dotenv_path=env_path)
+    logger.debug(f"Loaded environment from {env_path}")
 
 
 def _get_base_url() -> Optional[str]:
@@ -41,11 +50,14 @@ def _validate_token(token: str) -> bool:
     Returns:
         bool: True if token is valid, False otherwise
     """
+    log_function_call(logger, "_validate_token", token="<redacted>")
     base_url = _get_base_url()
     if not base_url or not token:
+        logger.debug("Validation failed: missing base_url or token")
         return False
     
     try:
+        start_time = time.time()
         # Make a lightweight API call to validate token
         test_url = f"{base_url}/api/channels/channels/"
         headers = {
@@ -53,9 +65,16 @@ def _validate_token(token: str) -> bool:
             "Accept": "application/json",
             "Content-Type": "application/json"
         }
+        log_api_request(logger, "GET", test_url, params={'page_size': 1})
         resp = requests.get(test_url, headers=headers, timeout=5, params={'page_size': 1})
-        return resp.status_code == 200
-    except Exception:
+        elapsed = time.time() - start_time
+        log_api_response(logger, "GET", test_url, resp.status_code, elapsed)
+        
+        result = resp.status_code == 200
+        log_function_return(logger, "_validate_token", result, elapsed)
+        return result
+    except Exception as e:
+        log_exception(logger, e, "_validate_token")
         return False
 
 def login() -> bool:
@@ -69,54 +88,64 @@ def login() -> bool:
     Returns:
         bool: True if login successful, False otherwise.
     """
+    log_function_call(logger, "login")
     username = os.getenv("DISPATCHARR_USER")
     password = os.getenv("DISPATCHARR_PASS")
     base_url = _get_base_url()
 
     if not all([username, password, base_url]):
-        logging.error(
+        logger.error(
             "DISPATCHARR_USER, DISPATCHARR_PASS, and "
             "DISPATCHARR_BASE_URL must be set in the .env file."
         )
         return False
 
     login_url = f"{base_url}/api/accounts/token/"
-    logging.info(f"Attempting to log in to {base_url}...")
+    logger.info(f"Attempting to log in to {base_url}...")
 
     try:
+        start_time = time.time()
+        log_api_request(logger, "POST", login_url, json={"username": username, "password": "***"})
         resp = requests.post(
             login_url,
             headers={"Content-Type": "application/json"},
             json={"username": username, "password": password}
         )
+        elapsed = time.time() - start_time
+        log_api_response(logger, "POST", login_url, resp.status_code, elapsed)
+        
         resp.raise_for_status()
         data = resp.json()
         token = data.get("access") or data.get("token")
 
         if token:
+            logger.debug(f"Received token (length: {len(token)})")
             # Save token to .env if exists, else store in memory
             if env_path.exists():
                 set_key(env_path, "DISPATCHARR_TOKEN", token)
-                logging.info("Login successful. Token saved.")
+                logger.info("Login successful. Token saved.")
             else:
                 # Token needs refresh on restart when no .env file
                 os.environ["DISPATCHARR_TOKEN"] = token
-                logging.info(
+                logger.info(
                     "Login successful. Token stored in memory."
                 )
+            log_function_return(logger, "login", True, elapsed)
             return True
         else:
-            logging.error(
+            logger.error(
                 "Login failed: No access token found in response."
             )
+            logger.debug(f"Response data: {data}")
             return False
     except requests.exceptions.RequestException as e:
-        logging.error(f"Login failed: {e}")
+        log_exception(logger, e, "login")
         if hasattr(e, 'response') and e.response is not None:
-            logging.error(f"Response content: {e.response.text}")
+            logger.error(f"Response content: {e.response.text}")
         return False
-    except json.JSONDecodeError:
-        logging.error(
+    except json.JSONDecodeError as e:
+        log_exception(logger, e, "login - JSON decode")
+        logger.error(
             "Login failed: Invalid JSON response from server."
         )
         return False
@@ -134,11 +163,12 @@ def _get_auth_headers() -> Dict[str, str]:
     Raises:
         SystemExit: If login fails or token cannot be retrieved.
     """
+    log_function_call(logger, "_get_auth_headers")
     current_token = os.getenv("DISPATCHARR_TOKEN")
     
     # If token exists, validate it before using
     if current_token and _validate_token(current_token):
-        logging.debug("Using existing valid token")
+        logger.debug("Using existing valid token")
         return {
             "Authorization": f"Bearer {current_token}",
             "Accept": "application/json",
@@ -147,26 +177,28 @@ def _get_auth_headers() -> Dict[str, str]:
     
     # Token is missing or invalid, need to login
     if current_token:
-        logging.info("Existing token is invalid. Attempting to log in...")
+        logger.info("Existing token is invalid. Attempting to log in...")
     else:
-        logging.info("DISPATCHARR_TOKEN not found. Attempting to log in...")
+        logger.info("DISPATCHARR_TOKEN not found. Attempting to log in...")
     
     if login():
         # Reload from .env file only if it exists
         if env_path.exists():
             load_dotenv(dotenv_path=env_path, override=True)
+            logger.debug("Reloaded environment variables after login")
         current_token = os.getenv("DISPATCHARR_TOKEN")
         if not current_token:
-            logging.error(
+            logger.error(
                 "Login succeeded, but token not found. Aborting."
             )
             sys.exit(1)
     else:
-        logging.error(
+        logger.error(
             "Login failed. Check credentials. Aborting."
         )
         sys.exit(1)
 
+    log_function_return(logger, "_get_auth_headers", "<headers with token>")
     return {
         "Authorization": f"Bearer {current_token}",
         "Accept": "application/json",
@@ -208,24 +240,50 @@ def fetch_data_from_url(url: str) -> Optional[Any]:
     Returns:
         Optional[Any]: JSON response data if successful, None otherwise.
     """
+    log_function_call(logger, "fetch_data_from_url", url=url[:80] if len(url) > 80 else url)
+    start_time = time.time()
+    
     try:
+        log_api_request(logger, "GET", url)
         resp = requests.get(url, headers=_get_auth_headers())
+        elapsed = time.time() - start_time
+        log_api_response(logger, "GET", url, resp.status_code, elapsed)
+        
         resp.raise_for_status()
-        return resp.json()
+        data = resp.json()
+        
+        # Log summary of response data
+        if isinstance(data, dict):
+            logger.debug(f"Response contains dict with {len(data)} keys")
+        elif isinstance(data, list):
+            logger.debug(f"Response contains list with {len(data)} items")
+        
+        log_function_return(logger, "fetch_data_from_url", f"<data: {type(data).__name__}>", elapsed)
+        return data
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 401:
+            logger.debug("Got 401 response, attempting token refresh")
             if _refresh_token():
-                logging.info("Retrying request with new token...")
+                logger.info("Retrying request with new token...")
+                retry_start = time.time()
+                log_api_request(logger, "GET", url)
                 resp = requests.get(url, headers=_get_auth_headers())
+                retry_elapsed = time.time() - retry_start
+                log_api_response(logger, "GET", url, resp.status_code, retry_elapsed)
+                
                 resp.raise_for_status()
-                return resp.json()
+                data = resp.json()
+                total_elapsed = time.time() - start_time
+                log_function_return(logger, "fetch_data_from_url", f"<data: {type(data).__name__}>", total_elapsed)
+                return data
             else:
+                logger.error("Token refresh failed")
                 return None
         else:
-            logging.error(f"Error fetching data from {url}: {e}")
+            log_exception(logger, e, f"fetch_data_from_url ({url})")
             return None
     except requests.exceptions.RequestException as e:
-        logging.error(f"Error fetching data from {url}: {e}")
+        log_exception(logger, e, f"fetch_data_from_url ({url})")
         return None
 
 def patch_request(url: str, payload: Dict[str, Any]) -> requests.Response:

@@ -48,36 +48,12 @@ try:
     CHANGELOG_AVAILABLE = True
 except ImportError:
     CHANGELOG_AVAILABLE = False
-    logging.warning("ChangelogManager not available. Stream check changelog will be disabled.")
+    logger.warning("ChangelogManager not available. Stream check changelog will be disabled.")
 
-# Custom logging filter to exclude HTTP-related logs
-class HTTPLogFilter(logging.Filter):
-    """Filter out HTTP-related log messages."""
-    def filter(self, record):
-        message = record.getMessage().lower()
-        http_indicators = [
-            'http request',
-            'http response',
-            'status code',
-            'get /',
-            'post /',
-            'put /',
-            'delete /',
-            'patch /',
-            '" with',
-            '- - [',
-            'werkzeug',
-        ]
-        return not any(indicator in message for indicator in http_indicators)
+# Setup centralized logging
+from logging_config import setup_logging, log_function_call, log_function_return, log_exception, log_state_change
 
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - [%(funcName)s] - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
-for handler in logging.root.handlers:
-    handler.addFilter(HTTPLogFilter())
+logger = setup_logging(__name__)
 
 # Configuration directory
 CONFIG_DIR = Path(os.environ.get('CONFIG_DIR', '/app/data'))
@@ -159,7 +135,7 @@ class StreamCheckConfig:
                     config.update(loaded)
                     return config
             except (json.JSONDecodeError, FileNotFoundError) as e:
-                logging.warning(
+                logger.warning(
                     f"Could not load config from "
                     f"{self.config_file}: {e}, using defaults"
                 )
@@ -207,7 +183,7 @@ class StreamCheckConfig:
         
         deep_update(self.config, updates)
         self._save_config()
-        logging.info("Stream checker configuration updated")
+        logger.info("Stream checker configuration updated")
     
     def get(self, key: str, default: Any = None) -> Any:
         """
@@ -251,7 +227,7 @@ class ChannelUpdateTracker:
                 with open(self.tracker_file, 'r') as f:
                     return json.load(f)
             except (json.JSONDecodeError, FileNotFoundError):
-                logging.warning(f"Could not load updates from {self.tracker_file}, creating new")
+                logger.warning(f"Could not load updates from {self.tracker_file}, creating new")
         return {'channels': {}, 'last_global_check': None}
     
     def _save_updates(self):
@@ -261,7 +237,7 @@ class ChannelUpdateTracker:
             with open(self.tracker_file, 'w') as f:
                 json.dump(self.updates, f, indent=2)
         except Exception as e:
-            logging.error(f"Failed to save channel updates: {e}")
+            logger.error(f"Failed to save channel updates: {e}")
     
     def mark_channel_updated(self, channel_id: int, timestamp: str = None, stream_count: int = None):
         """Mark a channel as having received an update.
@@ -350,7 +326,7 @@ class ChannelUpdateTracker:
             if marked_count > 0:
                 self._save_updates()
         
-        logging.info(f"Marked {marked_count} channels as updated")
+        logger.info(f"Marked {marked_count} channels as updated")
     
     def get_channels_needing_check(self) -> List[int]:
         """Get list of channel IDs that need checking (read-only, doesn't clear flag).
@@ -393,7 +369,7 @@ class ChannelUpdateTracker:
             
             if channels:
                 self._save_updates()
-                logging.debug(f"Atomically retrieved and cleared {len(channels)} channels needing check")
+                logger.debug(f"Atomically retrieved and cleared {len(channels)} channels needing check")
             
             return channels
     
@@ -538,10 +514,10 @@ class StreamCheckQueue:
                     self.queued.add(channel_id)
                     self.stats['total_queued'] += 1
                     self.stats['queue_size'] = self.queue.qsize()
-                    logging.debug(f"Added channel {channel_id} to queue (priority: {priority})")
+                    logger.debug(f"Added channel {channel_id} to queue (priority: {priority})")
                     return True
                 except queue.Full:
-                    logging.warning(f"Queue is full, cannot add channel {channel_id}")
+                    logger.warning(f"Queue is full, cannot add channel {channel_id}")
                     return False
         return False
     
@@ -551,7 +527,7 @@ class StreamCheckQueue:
         for channel_id in channel_ids:
             if self.add_channel(channel_id, priority):
                 added += 1
-        logging.info(f"Added {added}/{len(channel_ids)} channels to checking queue")
+        logger.info(f"Added {added}/{len(channel_ids)} channels to checking queue")
         return added
     
     def remove_from_completed(self, channel_id: int):
@@ -563,7 +539,7 @@ class StreamCheckQueue:
         with self.lock:
             if channel_id in self.completed:
                 self.completed.discard(channel_id)
-                logging.debug(f"Removed channel {channel_id} from completed set")
+                logger.debug(f"Removed channel {channel_id} from completed set")
                 return True
         return False
     
@@ -589,7 +565,7 @@ class StreamCheckQueue:
             self.stats['total_completed'] += 1
             if self.stats['current_channel'] == channel_id:
                 self.stats['current_channel'] = None
-            logging.debug(f"Marked channel {channel_id} as completed")
+            logger.debug(f"Marked channel {channel_id} as completed")
     
     def mark_failed(self, channel_id: int, error: str):
         """Mark a channel check as failed."""
@@ -603,7 +579,7 @@ class StreamCheckQueue:
             self.stats['total_failed'] += 1
             if self.stats['current_channel'] == channel_id:
                 self.stats['current_channel'] = None
-            logging.warning(f"Marked channel {channel_id} as failed: {error}")
+            logger.warning(f"Marked channel {channel_id} as failed: {error}")
     
     def get_status(self) -> Dict:
         """Get current queue status."""
@@ -639,7 +615,7 @@ class StreamCheckQueue:
                 'current_channel': None,
                 'queue_size': 0
             }
-        logging.info("Queue cleared")
+        logger.info("Queue cleared")
 
 
 class StreamCheckerProgress:
@@ -686,7 +662,7 @@ class StreamCheckerProgress:
                     f.flush()
                     os.fsync(f.fileno())
             except Exception as e:
-                logging.warning(f"Failed to write progress file: {e}")
+                logger.warning(f"Failed to write progress file: {e}")
     
     def clear(self):
         """Clear progress tracking."""
@@ -695,7 +671,7 @@ class StreamCheckerProgress:
                 try:
                     self.progress_file.unlink()
                 except Exception as e:
-                    logging.warning(f"Failed to delete progress file: {e}")
+                    logger.warning(f"Failed to delete progress file: {e}")
     
     def get(self) -> Optional[Dict]:
         """Get current progress."""
@@ -726,9 +702,9 @@ class StreamCheckerService:
         if CHANGELOG_AVAILABLE:
             try:
                 self.changelog = ChangelogManager(changelog_file=CONFIG_DIR / "stream_checker_changelog.json")
-                logging.info("Stream checker changelog manager initialized")
+                logger.info("Stream checker changelog manager initialized")
             except Exception as e:
-                logging.warning(f"Failed to initialize changelog manager: {e}")
+                logger.warning(f"Failed to initialize changelog manager: {e}")
         
         self.running = False
         self.checking = False
@@ -743,13 +719,13 @@ class StreamCheckerService:
         # Event for immediate config change notification
         self.config_changed = threading.Event()
         
-        logging.info("Stream Checker Service initialized")
+        logger.info("Stream Checker Service initialized")
     
     def start(self):
         """Start the stream checker service."""
         with self.lock:
             if self.running:
-                logging.warning("Stream checker service is already running")
+                logger.warning("Stream checker service is already running")
                 return
             
             self.running = True
@@ -762,17 +738,17 @@ class StreamCheckerService:
             self.scheduler_thread = threading.Thread(target=self._scheduler_loop, daemon=True)
             self.scheduler_thread.start()
             
-            logging.info("Stream checker service started")
+            logger.info("Stream checker service started")
     
     def stop(self):
         """Stop the stream checker service."""
         with self.lock:
             if not self.running:
-                logging.warning("Stream checker service is not running")
+                logger.warning("Stream checker service is not running")
                 return
             
             self.running = False
-            logging.info("Stream checker service stopping...")
+            logger.info("Stream checker service stopping...")
         
         # Wait for threads to finish
         if self.worker_thread and self.worker_thread.is_alive():
@@ -781,11 +757,11 @@ class StreamCheckerService:
             self.scheduler_thread.join(timeout=5)
         
         self.progress.clear()
-        logging.info("Stream checker service stopped")
+        logger.info("Stream checker service stopped")
     
     def _worker_loop(self):
         """Main worker loop for processing the check queue."""
-        logging.info("Stream checker worker started")
+        logger.info("Stream checker worker started")
         
         while self.running:
             try:
@@ -797,13 +773,13 @@ class StreamCheckerService:
                 self._check_channel(channel_id)
                 
             except Exception as e:
-                logging.error(f"Error in worker loop: {e}", exc_info=True)
+                logger.error(f"Error in worker loop: {e}", exc_info=True)
         
-        logging.info("Stream checker worker stopped")
+        logger.info("Stream checker worker stopped")
     
     def _scheduler_loop(self):
         """Scheduler loop for M3U update-triggered and scheduled checks."""
-        logging.info("Stream checker scheduler started")
+        logger.info("Stream checker scheduler started")
         
         while self.running:
             try:
@@ -817,7 +793,7 @@ class StreamCheckerService:
                     # (not a config change wake-up) AND no global action is in progress
                     if not self.config_changed.is_set():
                         if self.global_action_in_progress:
-                            logging.info("Skipping channel queueing - global action in progress")
+                            logger.info("Skipping channel queueing - global action in progress")
                         else:
                             # Call _queue_updated_channels() directly - it handles pipeline mode checking internally
                             self._queue_updated_channels()
@@ -825,7 +801,7 @@ class StreamCheckerService:
                 # Check if config was changed
                 if self.config_changed.is_set():
                     self.config_changed.clear()
-                    logging.info("Configuration change detected, applying new settings immediately")
+                    logger.info("Configuration change detected, applying new settings immediately")
                 
                 # Check if it's time for a global check (checked on every iteration)
                 # This will set global_action_in_progress if a global action is triggered
@@ -833,9 +809,9 @@ class StreamCheckerService:
                     self._check_global_schedule()
                 
             except Exception as e:
-                logging.error(f"Error in scheduler loop: {e}", exc_info=True)
+                logger.error(f"Error in scheduler loop: {e}", exc_info=True)
         
-        logging.info("Stream checker scheduler stopped")
+        logger.info("Stream checker scheduler stopped")
     
     def _queue_updated_channels(self):
         """Queue channels that have received M3U updates.
@@ -850,7 +826,7 @@ class StreamCheckerService:
         
         # Disabled and Pipelines 2, 2.5, and 3 don't check on update
         if pipeline_mode in ['disabled', 'pipeline_2', 'pipeline_2_5', 'pipeline_3']:
-            logging.info(f"Skipping channel queueing - {pipeline_mode} mode does not check on update")
+            logger.info(f"Skipping channel queueing - {pipeline_mode} mode does not check on update")
             return
         
         max_channels = self.config.get('queue.max_channels_per_run', 50)
@@ -866,9 +842,9 @@ class StreamCheckerService:
                 self.check_queue.remove_from_completed(channel_id)
             
             added = self.check_queue.add_channels(channels_to_queue, priority=10)
-            logging.info(f"Queued {added}/{len(channels_to_queue)} updated channels for checking (mode: {pipeline_mode})")
+            logger.info(f"Queued {added}/{len(channels_to_queue)} updated channels for checking (mode: {pipeline_mode})")
         else:
-            logging.debug(f"No channels need checking (mode: {pipeline_mode})")
+            logger.debug(f"No channels need checking (mode: {pipeline_mode})")
     
     def _check_global_schedule(self):
         """Check if it's time for a scheduled global action.
@@ -884,7 +860,7 @@ class StreamCheckerService:
         - Prevents duplicate runs by tracking the last check time
         """
         if not self.config.get('global_check_schedule.enabled', True):
-            logging.debug("Global check schedule is disabled")
+            logger.debug("Global check schedule is disabled")
             return
         
         # Get pipeline mode
@@ -893,7 +869,7 @@ class StreamCheckerService:
         # Only pipelines with .5 suffix and pipeline_3 have scheduled global actions
         # Disabled mode skips all automation
         if pipeline_mode not in ['pipeline_1_5', 'pipeline_2_5', 'pipeline_3']:
-            logging.debug(f"Skipping global schedule check - {pipeline_mode} mode does not have scheduled global actions")
+            logger.debug(f"Skipping global schedule check - {pipeline_mode} mode does not have scheduled global actions")
             return
         
         now = datetime.now()
@@ -907,12 +883,12 @@ class StreamCheckerService:
         try:
             from croniter import croniter
         except ImportError:
-            logging.error("croniter library not installed. Please install it with: pip install croniter")
+            logger.error("croniter library not installed. Please install it with: pip install croniter")
             return
         
         # Validate cron expression
         if not croniter.is_valid(cron_expression):
-            logging.error(f"Invalid cron expression: {cron_expression}")
+            logger.error(f"Invalid cron expression: {cron_expression}")
             return
         
         last_global = self.update_tracker.get_last_global_check()
@@ -931,13 +907,13 @@ class StreamCheckerService:
             time_diff_minutes = abs((now - prev_scheduled_time).total_seconds() / 60)
             if time_diff_minutes <= 10:
                 # We're within the scheduled window on fresh start, run the check
-                logging.info(f"Starting scheduled global action (mode: {pipeline_mode}, cron: {cron_expression})")
+                logger.info(f"Starting scheduled global action (mode: {pipeline_mode}, cron: {cron_expression})")
                 self._perform_global_action()
                 self.update_tracker.mark_global_check()
             else:
                 # Fresh start but not within scheduled window, do nothing and wait
                 # The scheduler will check again later when the scheduled time arrives
-                logging.debug(f"Fresh start outside scheduled window (±10 min of {prev_scheduled_time.strftime('%Y-%m-%d %H:%M')}), waiting for scheduled time")
+                logger.debug(f"Fresh start outside scheduled window (±10 min of {prev_scheduled_time.strftime('%Y-%m-%d %H:%M')}), waiting for scheduled time")
             return
         
         # Parse last check time
@@ -947,7 +923,7 @@ class StreamCheckerService:
         # This prevents running multiple times between scheduled intervals
         if prev_scheduled_time > last_check_time:
             # We've passed a scheduled time since the last check, so we should run
-            logging.info(f"Starting scheduled global action (mode: {pipeline_mode}, cron: {cron_expression})")
+            logger.info(f"Starting scheduled global action (mode: {pipeline_mode}, cron: {cron_expression})")
             self._perform_global_action()
             # Mark that global check has been initiated to prevent duplicate queueing
             self.update_tracker.mark_global_check()
@@ -969,7 +945,7 @@ class StreamCheckerService:
             # Daily: minute hour * * *
             cron_expression = f"{minute} {hour} * * *"
         
-        logging.info(f"Converted legacy schedule to cron: {cron_expression}")
+        logger.info(f"Converted legacy schedule to cron: {cron_expression}")
         return cron_expression
     
     def _perform_global_action(self):
@@ -985,51 +961,51 @@ class StreamCheckerService:
         try:
             # Set global action flag to prevent concurrent operations
             self.global_action_in_progress = True
-            logging.info("=" * 80)
-            logging.info("STARTING GLOBAL ACTION")
-            logging.info("Regular automation paused during global action")
-            logging.info("=" * 80)
+            logger.info("=" * 80)
+            logger.info("STARTING GLOBAL ACTION")
+            logger.info("Regular automation paused during global action")
+            logger.info("=" * 80)
             
             automation_manager = None
             
             # Step 1: Update M3U playlists
-            logging.info("Step 1/3: Updating M3U playlists...")
+            logger.info("Step 1/3: Updating M3U playlists...")
             try:
                 from automated_stream_manager import AutomatedStreamManager
                 automation_manager = AutomatedStreamManager()
                 update_success = automation_manager.refresh_playlists()
                 if update_success:
-                    logging.info("✓ M3U playlists updated successfully")
+                    logger.info("✓ M3U playlists updated successfully")
                 else:
-                    logging.warning("⚠ M3U playlist update had issues")
+                    logger.warning("⚠ M3U playlist update had issues")
             except Exception as e:
-                logging.error(f"✗ Failed to update M3U playlists: {e}")
+                logger.error(f"✗ Failed to update M3U playlists: {e}")
             
             # Step 2: Match and assign streams
-            logging.info("Step 2/3: Matching and assigning streams...")
+            logger.info("Step 2/3: Matching and assigning streams...")
             try:
                 if automation_manager is not None:
                     assignments = automation_manager.discover_and_assign_streams()
                     if assignments:
-                        logging.info(f"✓ Assigned streams to {len(assignments)} channels")
+                        logger.info(f"✓ Assigned streams to {len(assignments)} channels")
                     else:
-                        logging.info("✓ No new stream assignments")
+                        logger.info("✓ No new stream assignments")
                 else:
-                    logging.warning("⚠ Skipping stream matching - automation manager not available")
+                    logger.warning("⚠ Skipping stream matching - automation manager not available")
             except Exception as e:
-                logging.error(f"✗ Failed to match streams: {e}")
+                logger.error(f"✗ Failed to match streams: {e}")
             
             # Step 3: Check all channels (force check to bypass immunity)
-            logging.info("Step 3/3: Queueing all channels for checking...")
+            logger.info("Step 3/3: Queueing all channels for checking...")
             self._queue_all_channels(force_check=True)
             
-            logging.info("=" * 80)
-            logging.info("GLOBAL ACTION INITIATED SUCCESSFULLY")
-            logging.info("Regular automation will resume")
-            logging.info("=" * 80)
+            logger.info("=" * 80)
+            logger.info("GLOBAL ACTION INITIATED SUCCESSFULLY")
+            logger.info("Regular automation will resume")
+            logger.info("=" * 80)
             
         except Exception as e:
-            logging.error(f"Error performing global action: {e}", exc_info=True)
+            logger.error(f"Error performing global action: {e}", exc_info=True)
         finally:
             # Always clear the flag, even if there was an error
             self.global_action_in_progress = False
@@ -1071,9 +1047,9 @@ class StreamCheckerService:
                     added = self.check_queue.add_channels(batch, priority=5)
                     total_added += added
                 
-                logging.info(f"Queued {total_added}/{len(channel_ids)} channels for global check (force_check={force_check})")
+                logger.info(f"Queued {total_added}/{len(channel_ids)} channels for global check (force_check={force_check})")
         except Exception as e:
-            logging.error(f"Failed to queue all channels: {e}")
+            logger.error(f"Failed to queue all channels: {e}")
     
     def _is_stream_dead(self, stream_data: Dict) -> bool:
         """Check if a stream should be considered dead based on analysis results.
@@ -1118,12 +1094,12 @@ class StreamCheckerService:
         """Update stream stats for a single stream on the server."""
         base_url = _get_base_url()
         if not base_url:
-            logging.error("DISPATCHARR_BASE_URL not set.")
+            logger.error("DISPATCHARR_BASE_URL not set.")
             return False
         
         stream_id = stream_data.get("stream_id")
         if not stream_id:
-            logging.warning("No stream_id in stream data. Skipping stats update.")
+            logger.warning("No stream_id in stream data. Skipping stats update.")
             return False
         
         # Construct the stream stats payload from the analyzed stream data
@@ -1139,7 +1115,7 @@ class StreamCheckerService:
         stream_stats_payload = {k: v for k, v in stream_stats_payload.items() if v not in [None, "N/A"]}
         
         if not stream_stats_payload:
-            logging.debug(f"No data to update for stream {stream_id}. Skipping.")
+            logger.debug(f"No data to update for stream {stream_id}. Skipping.")
             return False
         
         # Construct the URL for the specific stream
@@ -1149,7 +1125,7 @@ class StreamCheckerService:
             # Fetch the existing stream data to get the current stream_stats
             existing_stream_data = fetch_data_from_url(stream_url)
             if not existing_stream_data:
-                logging.warning(f"Could not fetch existing data for stream {stream_id}. Skipping stats update.")
+                logger.warning(f"Could not fetch existing data for stream {stream_id}. Skipping stats update.")
                 return False
             
             # Get the existing stream_stats or an empty dict
@@ -1165,20 +1141,20 @@ class StreamCheckerService:
             
             # Send the PATCH request with the updated stream_stats
             patch_payload = {"stream_stats": updated_stats}
-            logging.info(f"Updating stream {stream_id} stats with: {stream_stats_payload}")
+            logger.info(f"Updating stream {stream_id} stats with: {stream_stats_payload}")
             patch_request(stream_url, patch_payload)
             return True
         
         except Exception as e:
-            logging.error(f"Error updating stats for stream {stream_id}: {e}")
+            logger.error(f"Error updating stats for stream {stream_id}: {e}")
             return False
     
     def _check_channel(self, channel_id: int):
         """Check and reorder streams for a specific channel."""
         self.checking = True
-        logging.info(f"=" * 80)
-        logging.info(f"Checking channel {channel_id}")
-        logging.info(f"=" * 80)
+        logger.info(f"=" * 80)
+        logger.info(f"Checking channel {channel_id}")
+        logger.info(f"=" * 80)
         
         try:
             # Get channel information
@@ -1212,12 +1188,12 @@ class StreamCheckerService:
             
             streams = fetch_channel_streams(channel_id)
             if not streams or len(streams) == 0:
-                logging.info(f"No streams found for channel {channel_name}")
+                logger.info(f"No streams found for channel {channel_name}")
                 self.check_queue.mark_completed(channel_id)
                 self.update_tracker.mark_channel_checked(channel_id)
                 return
             
-            logging.info(f"Found {len(streams)} streams for channel {channel_name}")
+            logger.info(f"Found {len(streams)} streams for channel {channel_name}")
             
             # Check if this is a force check (bypasses 2-hour immunity)
             force_check = self.update_tracker.should_force_check(channel_id)
@@ -1231,7 +1207,7 @@ class StreamCheckerService:
             if force_check:
                 streams_to_check = streams
                 streams_already_checked = []
-                logging.info(f"Force check enabled: analyzing all {len(streams)} streams (bypassing 2-hour immunity)")
+                logger.info(f"Force check enabled: analyzing all {len(streams)} streams (bypassing 2-hour immunity)")
                 # Clear the force check flag after acknowledging it
                 self.update_tracker.clear_force_check(channel_id)
             else:
@@ -1239,9 +1215,9 @@ class StreamCheckerService:
                 streams_already_checked = [s for s in streams if s['id'] in checked_stream_ids]
                 
                 if streams_to_check:
-                    logging.info(f"Found {len(streams_to_check)} new/unchecked streams (out of {len(streams)} total)")
+                    logger.info(f"Found {len(streams_to_check)} new/unchecked streams (out of {len(streams)} total)")
                 else:
-                    logging.info(f"All {len(streams)} streams have been recently checked, using cached scores")
+                    logger.info(f"All {len(streams)} streams have been recently checked, using cached scores")
             
             # Import stream analysis functions from dispatcharr-stream-sorter
             # Note: The file has a dash in the name, so we need to import it specially
@@ -1312,23 +1288,23 @@ class StreamCheckerService:
                     # Mark as dead in tracker
                     if self.dead_streams_tracker.mark_as_dead(stream_url, stream['id'], stream_name):
                         dead_stream_ids.append(stream['id'])
-                        logging.warning(f"Stream {stream['id']} detected as DEAD: {stream_name}")
+                        logger.warning(f"Stream {stream['id']} detected as DEAD: {stream_name}")
                     else:
-                        logging.error(f"Failed to mark stream {stream['id']} as DEAD, will not remove from channel")
+                        logger.error(f"Failed to mark stream {stream['id']} as DEAD, will not remove from channel")
                 elif not is_dead and was_dead:
                     # Stream was revived!
                     if self.dead_streams_tracker.mark_as_alive(stream_url):
                         revived_stream_ids.append(stream['id'])
-                        logging.info(f"Stream {stream['id']} REVIVED: {stream_name}")
+                        logger.info(f"Stream {stream['id']} REVIVED: {stream_name}")
                     else:
-                        logging.error(f"Failed to mark stream {stream['id']} as alive")
+                        logger.error(f"Failed to mark stream {stream['id']} as alive")
                 
                 # Calculate score
                 score = self._calculate_stream_score(analyzed)
                 analyzed['score'] = score
                 analyzed_streams.append(analyzed)
                 
-                logging.info(f"Stream {idx}/{total_streams}: {stream.get('name')} - Score: {score:.2f}")
+                logger.info(f"Stream {idx}/{total_streams}: {stream.get('name')} - Score: {score:.2f}")
             
             # For already-checked streams, retrieve their cached data from API
             for stream in streams_already_checked:
@@ -1380,18 +1356,18 @@ class StreamCheckerService:
                             # If it wasn't marked but is dead, mark it now
                             if self.dead_streams_tracker.mark_as_dead(stream_url, stream['id'], stream_name):
                                 dead_stream_ids.append(stream['id'])
-                                logging.warning(f"Cached stream {stream['id']} detected as DEAD: {stream_name}")
+                                logger.warning(f"Cached stream {stream['id']} detected as DEAD: {stream_name}")
                             else:
-                                logging.error(f"Failed to mark cached stream {stream['id']} as DEAD, will not remove from channel")
+                                logger.error(f"Failed to mark cached stream {stream['id']} as DEAD, will not remove from channel")
                     
                     # Recalculate score from cached data
                     score = self._calculate_stream_score(analyzed)
                     analyzed['score'] = score
                     analyzed_streams.append(analyzed)
-                    logging.debug(f"Using cached data for stream {stream['id']}: {stream.get('name')} - Score: {score:.2f}")
+                    logger.debug(f"Using cached data for stream {stream['id']}: {stream.get('name')} - Score: {score:.2f}")
                 else:
                     # If we can't fetch cached data, analyze this stream
-                    logging.warning(f"Could not fetch cached data for stream {stream['id']}, will analyze")
+                    logger.warning(f"Could not fetch cached data for stream {stream['id']}, will analyze")
                     stream_row = {
                         'channel_id': channel_id,
                         'channel_name': channel_name,
@@ -1430,18 +1406,18 @@ class StreamCheckerService:
             # Remove dead streams from the channel (unless it's a force check/global check)
             # During global checks, we want to give dead streams a chance to be revived
             if dead_stream_ids and not force_check:
-                logging.warning(f"🔴 Removing {len(dead_stream_ids)} dead streams from channel {channel_name}")
+                logger.warning(f"🔴 Removing {len(dead_stream_ids)} dead streams from channel {channel_name}")
                 # Log which streams are being removed
                 for stream_id in dead_stream_ids:
                     dead_stream = next((s for s in analyzed_streams if s['stream_id'] == stream_id), None)
                     if dead_stream:
-                        logging.info(f"  - Removing dead stream {stream_id}: {dead_stream.get('stream_name', 'Unknown')}")
+                        logger.info(f"  - Removing dead stream {stream_id}: {dead_stream.get('stream_name', 'Unknown')}")
                 analyzed_streams = [s for s in analyzed_streams if s['stream_id'] not in dead_stream_ids]
             elif dead_stream_ids and force_check:
-                logging.info(f"Global check mode: keeping {len(dead_stream_ids)} dead streams to check for revival")
+                logger.info(f"Global check mode: keeping {len(dead_stream_ids)} dead streams to check for revival")
             
             if revived_stream_ids:
-                logging.info(f"{len(revived_stream_ids)} streams were revived in channel {channel_name}")
+                logger.info(f"{len(revived_stream_ids)} streams were revived in channel {channel_name}")
             
             # Update channel with reordered streams
             self.progress.update(
@@ -1472,14 +1448,14 @@ class StreamCheckerService:
             if updated_channel_data:
                 updated_stream_ids = updated_channel_data.get('streams', [])
                 if updated_stream_ids == reordered_ids:
-                    logging.info(f"✓ Verified: Channel {channel_name} streams reordered correctly")
+                    logger.info(f"✓ Verified: Channel {channel_name} streams reordered correctly")
                 else:
-                    logging.warning(f"⚠ Verification failed: Stream order mismatch for channel {channel_name}")
-                    logging.warning(f"Expected: {reordered_ids[:5]}... Got: {updated_stream_ids[:5]}...")
+                    logger.warning(f"⚠ Verification failed: Stream order mismatch for channel {channel_name}")
+                    logger.warning(f"Expected: {reordered_ids[:5]}... Got: {updated_stream_ids[:5]}...")
             else:
-                logging.warning(f"⚠ Could not verify stream update for channel {channel_name}")
+                logger.warning(f"⚠ Could not verify stream update for channel {channel_name}")
             
-            logging.info(f"✓ Channel {channel_name} checked and streams reordered")
+            logger.info(f"✓ Channel {channel_name} checked and streams reordered")
             
             # Add changelog entry with stream stats
             if self.changelog:
@@ -1513,9 +1489,9 @@ class StreamCheckerService:
                     }
                     
                     self.changelog.add_entry('stream_check', changelog_details)
-                    logging.info(f"Changelog entry added for channel {channel_name}")
+                    logger.info(f"Changelog entry added for channel {channel_name}")
                 except Exception as e:
-                    logging.warning(f"Failed to add changelog entry: {e}")
+                    logger.warning(f"Failed to add changelog entry: {e}")
             
             # Mark as completed with stream count and checked stream IDs
             self.check_queue.mark_completed(channel_id)
@@ -1526,7 +1502,7 @@ class StreamCheckerService:
             )
             
         except Exception as e:
-            logging.error(f"Error checking channel {channel_id}: {e}", exc_info=True)
+            logger.error(f"Error checking channel {channel_id}: {e}", exc_info=True)
             self.check_queue.mark_failed(channel_id, str(e))
             
             # Add changelog entry for failed check
@@ -1546,7 +1522,7 @@ class StreamCheckerService:
                     }
                     self.changelog.add_entry('stream_check', changelog_details)
                 except Exception as changelog_error:
-                    logging.warning(f"Failed to add changelog entry for failed check: {changelog_error}")
+                    logger.warning(f"Failed to add changelog entry for failed check: {changelog_error}")
         
         finally:
             self.checking = False
@@ -1667,7 +1643,7 @@ class StreamCheckerService:
     def clear_queue(self):
         """Clear the checking queue."""
         self.check_queue.clear()
-        logging.info("Checking queue cleared")
+        logger.info("Checking queue cleared")
     
     def trigger_check_updated_channels(self):
         """Trigger immediate check of channels with M3U updates.
@@ -1677,10 +1653,10 @@ class StreamCheckerService:
         scheduled check interval.
         """
         if self.running:
-            logging.info("Triggering immediate check for updated channels")
+            logger.info("Triggering immediate check for updated channels")
             self.check_trigger.set()
         else:
-            logging.warning("Cannot trigger check - service is not running")
+            logger.warning("Cannot trigger check - service is not running")
     
     def update_config(self, updates: Dict):
         """Update service configuration and apply changes immediately."""
@@ -1696,7 +1672,7 @@ class StreamCheckerService:
                 sanitized = 'VLC/3.0.14'  # Default fallback
             updates['stream_analysis']['user_agent'] = sanitized
             if sanitized != user_agent:
-                logging.warning(f"User agent sanitized from '{user_agent}' to '{sanitized}'")
+                logger.warning(f"User agent sanitized from '{user_agent}' to '{sanitized}'")
         
         # Log what's being updated
         config_changes = []
@@ -1734,9 +1710,9 @@ class StreamCheckerService:
         
         # Log the changes
         if config_changes:
-            logging.info(f"Configuration updated: {'; '.join(config_changes)}")
+            logger.info(f"Configuration updated: {'; '.join(config_changes)}")
         else:
-            logging.info("Configuration updated")
+            logger.info("Configuration updated")
         
         # Signal that config has changed for immediate application
         if self.running:
@@ -1744,12 +1720,12 @@ class StreamCheckerService:
             # Wake up the scheduler immediately by setting the trigger
             # The scheduler will check config_changed and skip channel queueing
             self.check_trigger.set()
-            logging.info("Configuration changes will be applied immediately")
+            logger.info("Configuration changes will be applied immediately")
         
         # Reload queue max size if changed
         if 'queue' in updates and 'max_size' in updates['queue']:
             # Can't resize existing queue, but will apply on next restart
-            logging.info("Queue max size updated, will apply on next restart")
+            logger.info("Queue max size updated, will apply on next restart")
     
     def trigger_global_action(self):
         """Manually trigger a global action (Update, Match, Check all channels).
@@ -1758,16 +1734,16 @@ class StreamCheckerService:
         regardless of the scheduled time.
         """
         if not self.running:
-            logging.warning("Cannot trigger global action - service is not running")
+            logger.warning("Cannot trigger global action - service is not running")
             return False
         
-        logging.info("Manual global action triggered")
+        logger.info("Manual global action triggered")
         try:
             self._perform_global_action()
             self.update_tracker.mark_global_check()
             return True
         except Exception as e:
-            logging.error(f"Failed to trigger global action: {e}")
+            logger.error(f"Failed to trigger global action: {e}")
             return False
 
 
