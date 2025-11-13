@@ -14,7 +14,7 @@ import os
 # Add backend to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from web_api import HTTPLogFilter
+from logging_config import HTTPLogFilter
 
 
 class TestHTTPLogFilter(unittest.TestCase):
