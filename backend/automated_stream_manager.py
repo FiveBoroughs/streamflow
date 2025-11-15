@@ -28,6 +28,11 @@ from api_utils import (
     _get_base_url
 )
 
+# Setup centralized logging
+from logging_config import setup_logging, log_function_call, log_function_return, log_exception, log_state_change
+
+logger = setup_logging(__name__)
+
 # Import DeadStreamsTracker
 try:
     from dead_streams_tracker import DeadStreamsTracker
@@ -35,12 +40,6 @@ try:
 except ImportError:
     DEAD_STREAMS_TRACKER_AVAILABLE = False
     logger.warning("DeadStreamsTracker not available. Dead stream filtering will be disabled.")
-
-
-# Setup centralized logging
-from logging_config import setup_logging, log_function_call, log_function_return, log_exception, log_state_change
-
-logger = setup_logging(__name__)
 
 # Configuration directory - persisted via Docker volume
 CONFIG_DIR = Path(os.environ.get('CONFIG_DIR', '/app/data'))
