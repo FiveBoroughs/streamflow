@@ -284,6 +284,7 @@ class AutomatedStreamManager:
         
         self.running = False
         self.last_playlist_update = None
+        self.automation_start_time = None
     
     def _load_config(self) -> Dict:
         """Load automation configuration."""
@@ -806,6 +807,7 @@ class AutomatedStreamManager:
         
         log_state_change(logger, "automation_manager", "stopped", "starting")
         self.running = True
+        self.automation_start_time = datetime.now()
         logger.info("Starting automated stream management...")
         
         def automation_loop():
@@ -838,6 +840,7 @@ class AutomatedStreamManager:
             return
         
         self.running = False
+        self.automation_start_time = None
         logger.info("Stopping automated stream management...")
         
         if hasattr(self, 'automation_thread'):
@@ -853,9 +856,9 @@ class AutomatedStreamManager:
             if self.last_playlist_update:
                 # Calculate when the next update should occur based on last update + interval
                 next_update = self.last_playlist_update + timedelta(minutes=self.config.get("playlist_update_interval_minutes", 5))
-            else:
-                # If automation is running but no last update, next update is now
-                next_update = datetime.now()
+            elif self.automation_start_time:
+                # If automation is running but no last update, calculate from start time
+                next_update = self.automation_start_time + timedelta(minutes=self.config.get("playlist_update_interval_minutes", 5))
         
         return {
             "running": self.running,
