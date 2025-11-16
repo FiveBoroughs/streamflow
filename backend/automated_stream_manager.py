@@ -847,12 +847,20 @@ class AutomatedStreamManager:
     
     def get_status(self) -> Dict:
         """Get current status of the automation system."""
+        # Calculate next update time properly
+        next_update = None
+        if self.running:
+            if self.last_playlist_update:
+                # Calculate when the next update should occur based on last update + interval
+                next_update = self.last_playlist_update + timedelta(minutes=self.config.get("playlist_update_interval_minutes", 5))
+            else:
+                # If automation is running but no last update, next update is now
+                next_update = datetime.now()
+        
         return {
             "running": self.running,
             "last_playlist_update": self.last_playlist_update.isoformat() if self.last_playlist_update else None,
-            "next_playlist_update": (
-                self.last_playlist_update + timedelta(minutes=self.config.get("playlist_update_interval_minutes", 5))
-            ).isoformat() if self.last_playlist_update else "immediate",
+            "next_playlist_update": next_update.isoformat() if next_update else None,
             "config": self.config,
             "recent_changelog": self.changelog.get_recent_entries(7)
         }
