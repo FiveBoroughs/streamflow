@@ -30,7 +30,7 @@ import {
   CheckCircle as CheckCircleIcon,
   Error as ErrorIcon
 } from '@mui/icons-material';
-import { changelogAPI } from '../services/api';
+import { changelogAPI, deadStreamsAPI } from '../services/api';
 import axios from 'axios';
 
 function Changelog() {
@@ -41,6 +41,7 @@ function Changelog() {
   const [channelLogos, setChannelLogos] = useState({});
   const [expandedEntries, setExpandedEntries] = useState({});
   const [page, setPage] = useState(1);
+  const [deadStreamsStats, setDeadStreamsStats] = useState(null);
   const itemsPerPage = 10;
 
   const fetchChannelLogos = useCallback(async (channelIds, existingLogos = {}) => {
@@ -107,6 +108,14 @@ function Changelog() {
       setPage(1); // Reset to first page when loading new data
       const response = await changelogAPI.getChangelog(days);
       setChangelog(response.data);
+      
+      // Load dead streams statistics
+      try {
+        const deadStreamsResponse = await deadStreamsAPI.getDeadStreams();
+        setDeadStreamsStats(deadStreamsResponse.data);
+      } catch (err) {
+        console.warn('Failed to load dead streams stats:', err);
+      }
       
       // Load cached logos first
       let cachedLogos = {};
@@ -446,9 +455,31 @@ function Changelog() {
               </Typography>
               
               {details.total_streams && (
-                <Typography variant="body2" color="text.secondary" gutterBottom>
-                  Total Streams: {details.total_streams} | Analyzed: {details.streams_analyzed || details.total_streams}
-                </Typography>
+                <Box sx={{ mt: 1 }}>
+                  <Typography variant="body2" color="text.secondary">
+                    Total Streams: {details.total_streams} | Analyzed: {details.streams_analyzed || details.total_streams}
+                  </Typography>
+                  {details.dead_streams_detected > 0 && (
+                    <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
+                      <Chip 
+                        label={`${details.dead_streams_detected} Dead Stream${details.dead_streams_detected !== 1 ? 's' : ''} Detected`}
+                        color="error"
+                        size="small"
+                        icon={<ErrorIcon />}
+                      />
+                    </Stack>
+                  )}
+                  {details.streams_revived > 0 && (
+                    <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
+                      <Chip 
+                        label={`${details.streams_revived} Stream${details.streams_revived !== 1 ? 's' : ''} Revived`}
+                        color="success"
+                        size="small"
+                        icon={<CheckCircleIcon />}
+                      />
+                    </Stack>
+                  )}
+                </Box>
               )}
               
               {details.error && (
@@ -621,6 +652,30 @@ function Changelog() {
           </Box>
         </CardContent>
       </Card>
+
+      {deadStreamsStats && deadStreamsStats.total_dead_streams > 0 && (
+        <Card sx={{ mb: 3, bgcolor: 'error.dark', borderLeft: '4px solid', borderColor: 'error.main' }}>
+          <CardContent>
+            <Box display="flex" alignItems="center" gap={2}>
+              <ErrorIcon sx={{ fontSize: 40, color: 'error.light' }} />
+              <Box flex={1}>
+                <Typography variant="h6" color="error.light" fontWeight="bold">
+                  Dead Streams Alert
+                </Typography>
+                <Typography variant="body2" color="error.light">
+                  {deadStreamsStats.total_dead_streams} stream{deadStreamsStats.total_dead_streams !== 1 ? 's are' : ' is'} currently marked as dead
+                </Typography>
+              </Box>
+              <Chip 
+                label={`${deadStreamsStats.total_dead_streams} Dead`}
+                color="error"
+                size="large"
+                sx={{ fontWeight: 'bold', fontSize: '1rem', px: 2 }}
+              />
+            </Box>
+          </CardContent>
+        </Card>
+      )}
 
       {changelog.length === 0 ? (
         <Alert severity="info">

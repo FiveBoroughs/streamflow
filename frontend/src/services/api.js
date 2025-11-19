@@ -85,6 +85,10 @@ export const changelogAPI = {
   getChangelog: (days = 7) => api.get(`/changelog?days=${days}`),
 };
 
+export const deadStreamsAPI = {
+  getDeadStreams: () => api.get('/dead-streams'),
+};
+
 export const setupAPI = {
   getStatus: () => api.get('/setup-wizard'),
 };

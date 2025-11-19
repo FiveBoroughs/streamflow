@@ -28,39 +28,18 @@ from api_utils import (
     _get_base_url
 )
 
+# Setup centralized logging
+from logging_config import setup_logging, log_function_call, log_function_return, log_exception, log_state_change
+
+logger = setup_logging(__name__)
+
 # Import DeadStreamsTracker
 try:
     from dead_streams_tracker import DeadStreamsTracker
     DEAD_STREAMS_TRACKER_AVAILABLE = True
 except ImportError:
     DEAD_STREAMS_TRACKER_AVAILABLE = False
-    logging.warning("DeadStreamsTracker not available. Dead stream filtering will be disabled.")
-
-
-# Custom logging filter to exclude HTTP-related logs
-class HTTPLogFilter(logging.Filter):
-    """Filter out HTTP-related log messages."""
-    def filter(self, record):
-        message = record.getMessage().lower()
-        http_indicators = [
-            'http request',
-            'http response',
-            'status code',
-            'get /',
-            'post /',
-            'put /',
-            'delete /',
-            'patch /',
-            '" with',
-            '- - [',
-            'werkzeug',
-        ]
-        return not any(indicator in message for indicator in http_indicators)
-
-# Setup logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-for handler in logging.root.handlers:
-    handler.addFilter(HTTPLogFilter())
+    logger.warning("DeadStreamsTracker not available. Dead stream filtering will be disabled.")
 
 # Configuration directory - persisted via Docker volume
 CONFIG_DIR = Path(os.environ.get('CONFIG_DIR', '/app/data'))
@@ -81,7 +60,7 @@ class ChangelogManager:
                 with open(self.changelog_file, 'r') as f:
                     return json.load(f)
             except (json.JSONDecodeError, FileNotFoundError):
-                logging.warning(f"Could not load {self.changelog_file}, creating new changelog")
+                logger.warning(f"Could not load {self.changelog_file}, creating new changelog")
         return []
     
     def add_entry(self, action: str, details: Dict, timestamp: Optional[str] = None):
@@ -97,7 +76,7 @@ class ChangelogManager:
         
         self.changelog.append(entry)
         self._save_changelog()
-        logging.info(f"Changelog entry added: {action}")
+        logger.info(f"Changelog entry added: {action}")
     
     def _save_changelog(self):
         """Save changelog to file."""
@@ -166,7 +145,7 @@ class RegexChannelMatcher:
                 with open(self.config_file, 'r') as f:
                     return json.load(f)
             except (json.JSONDecodeError, FileNotFoundError):
-                logging.warning(f"Could not load {self.config_file}, creating default config")
+                logger.warning(f"Could not load {self.config_file}, creating default config")
         
         # Create default configuration
         default_config = {
@@ -238,7 +217,7 @@ class RegexChannelMatcher:
             "enabled": enabled
         }
         self._save_patterns(self.channel_patterns)
-        logging.info(f"Added/updated pattern for channel {channel_id}: {name}")
+        logger.info(f"Added/updated pattern for channel {channel_id}: {name}")
     
     def reload_patterns(self):
         """Reload patterns from the config file.
@@ -247,7 +226,7 @@ class RegexChannelMatcher:
         and we need to ensure we're using the latest patterns.
         """
         self.channel_patterns = self._load_patterns()
-        logging.debug("Reloaded regex patterns from config file")
+        logger.debug("Reloaded regex patterns from config file")
     
     def match_stream_to_channels(self, stream_name: str) -> List[str]:
         """Match a stream name to channel IDs based on regex patterns."""
@@ -271,10 +250,10 @@ class RegexChannelMatcher:
                 try:
                     if re.search(search_pattern, search_name):
                         matches.append(channel_id)
-                        logging.debug(f"Stream '{stream_name}' matched channel {channel_id} with pattern '{pattern}'")
+                        logger.debug(f"Stream '{stream_name}' matched channel {channel_id} with pattern '{pattern}'")
                         break  # Only match once per channel
                 except re.error as e:
-                    logging.error(f"Invalid regex pattern '{pattern}' for channel {channel_id}: {e}")
+                    logger.error(f"Invalid regex pattern '{pattern}' for channel {channel_id}: {e}")
         
         return matches
     
@@ -299,12 +278,13 @@ class AutomatedStreamManager:
         if DEAD_STREAMS_TRACKER_AVAILABLE:
             try:
                 self.dead_streams_tracker = DeadStreamsTracker()
-                logging.info("Dead streams tracker initialized")
+                logger.info("Dead streams tracker initialized")
             except Exception as e:
-                logging.warning(f"Failed to initialize dead streams tracker: {e}")
+                logger.warning(f"Failed to initialize dead streams tracker: {e}")
         
         self.running = False
         self.last_playlist_update = None
+        self.automation_start_time = None
     
     def _load_config(self) -> Dict:
         """Load automation configuration."""
@@ -313,7 +293,7 @@ class AutomatedStreamManager:
                 with open(self.config_file, 'r') as f:
                     return json.load(f)
             except (json.JSONDecodeError, FileNotFoundError):
-                logging.warning(f"Could not load {self.config_file}, creating default config")
+                logger.warning(f"Could not load {self.config_file}, creating default config")
         
         # Default configuration
         default_config = {
@@ -372,10 +352,10 @@ class AutomatedStreamManager:
         
         # Log the changes
         if config_changes:
-            logging.info(f"Automation configuration updated: {'; '.join(config_changes)}")
-            logging.info("Changes will take effect on next scheduled operation")
+            logger.info(f"Automation configuration updated: {'; '.join(config_changes)}")
+            logger.info("Changes will take effect on next scheduled operation")
         else:
-            logging.info("Automation configuration updated")
+            logger.info("Automation configuration updated")
     
     def refresh_playlists(self, force: bool = False) -> bool:
         """Refresh M3U playlists and track changes.
@@ -386,10 +366,10 @@ class AutomatedStreamManager:
         """
         try:
             if not force and not self.config.get("enabled_features", {}).get("auto_playlist_update", True):
-                logging.info("Playlist update is disabled in configuration")
+                logger.info("Playlist update is disabled in configuration")
                 return False
             
-            logging.info("Starting M3U playlist refresh...")
+            logger.info("Starting M3U playlist refresh...")
             
             # Get streams before refresh
             from api_utils import get_streams
@@ -414,22 +394,22 @@ class AutomatedStreamManager:
                     non_custom_ids = [acc.get('id') for acc in non_custom_accounts if acc.get('id') is not None]
                     accounts_to_refresh = [acc_id for acc_id in enabled_accounts if acc_id in non_custom_ids]
                     for account_id in accounts_to_refresh:
-                        logging.info(f"Refreshing M3U account {account_id}")
+                        logger.info(f"Refreshing M3U account {account_id}")
                         refresh_m3u_playlists(account_id=account_id)
                     if len(enabled_accounts) != len(accounts_to_refresh):
-                        logging.info(f"Skipped {len(enabled_accounts) - len(accounts_to_refresh)} account(s) (custom or invalid)")
+                        logger.info(f"Skipped {len(enabled_accounts) - len(accounts_to_refresh)} account(s) (custom or invalid)")
                 else:
                     # Refresh all non-custom accounts
                     for account in non_custom_accounts:
                         account_id = account.get('id')
                         if account_id is not None:
-                            logging.info(f"Refreshing M3U account {account_id}")
+                            logger.info(f"Refreshing M3U account {account_id}")
                             refresh_m3u_playlists(account_id=account_id)
                     if len(all_accounts) != len(non_custom_accounts):
-                        logging.info(f"Skipped {len(all_accounts) - len(non_custom_accounts)} 'custom' account(s)")
+                        logger.info(f"Skipped {len(all_accounts) - len(non_custom_accounts)} 'custom' account(s)")
             else:
                 # Fallback: if we can't get accounts, refresh all (legacy behavior)
-                logging.warning("Could not fetch M3U accounts, refreshing all as fallback")
+                logger.warning("Could not fetch M3U accounts, refreshing all as fallback")
                 refresh_m3u_playlists()
             
             # Get streams after refresh - log this one since it shows the final result
@@ -457,7 +437,7 @@ class AutomatedStreamManager:
                     "removed_count": len(removed_streams)
                 })
             
-            logging.info(f"M3U playlist refresh completed successfully. Added: {len(added_streams)}, Removed: {len(removed_streams)}")
+            logger.info(f"M3U playlist refresh completed successfully. Added: {len(added_streams)}, Removed: {len(removed_streams)}")
             
             # Clean up dead streams that are no longer in the playlist
             if self.dead_streams_tracker:
@@ -467,9 +447,9 @@ class AutomatedStreamManager:
                     current_stream_urls.discard('')
                     cleaned_count = self.dead_streams_tracker.cleanup_removed_streams(current_stream_urls)
                     if cleaned_count > 0:
-                        logging.info(f"Dead streams cleanup: removed {cleaned_count} stream(s) no longer in playlist")
+                        logger.info(f"Dead streams cleanup: removed {cleaned_count} stream(s) no longer in playlist")
                 except Exception as cleanup_error:
-                    logging.error(f"Error during dead streams cleanup: {cleanup_error}")
+                    logger.error(f"Error during dead streams cleanup: {cleanup_error}")
             
             # Mark channels for stream quality checking ONLY if streams were added or removed
             # This prevents unnecessary marking of all channels on every refresh
@@ -502,20 +482,20 @@ class AutomatedStreamManager:
                             from stream_checker_service import get_stream_checker_service
                             stream_checker = get_stream_checker_service()
                             stream_checker.update_tracker.mark_channels_updated(channel_ids, stream_counts=stream_counts)
-                            logging.info(f"Marked {len(channel_ids)} channels for stream quality checking")
+                            logger.info(f"Marked {len(channel_ids)} channels for stream quality checking")
                             # Trigger immediate check instead of waiting for scheduled interval
                             stream_checker.trigger_check_updated_channels()
                         except Exception as sc_error:
-                            logging.debug(f"Stream checker not available or error marking channels: {sc_error}")
+                            logger.debug(f"Stream checker not available or error marking channels: {sc_error}")
                 except Exception as ch_error:
-                    logging.debug(f"Could not mark channels for stream checking: {ch_error}")
+                    logger.debug(f"Could not mark channels for stream checking: {ch_error}")
             else:
-                logging.info("No stream changes detected, skipping channel marking")
+                logger.info("No stream changes detected, skipping channel marking")
             
             return True
             
         except Exception as e:
-            logging.error(f"Failed to refresh M3U playlists: {e}")
+            logger.error(f"Failed to refresh M3U playlists: {e}")
             
             
             if self.config.get("enabled_features", {}).get("changelog_tracking", True):
@@ -534,24 +514,24 @@ class AutomatedStreamManager:
                    Used for manual/quick action triggers from the UI.
         """
         if not force and not self.config.get("enabled_features", {}).get("auto_stream_discovery", True):
-            logging.info("Stream discovery is disabled in configuration")
+            logger.info("Stream discovery is disabled in configuration")
             return {}
         
         try:
             # Reload patterns to ensure we have the latest changes
             self.regex_matcher.reload_patterns()
             
-            logging.info("Starting stream discovery and assignment...")
+            logger.info("Starting stream discovery and assignment...")
             
             # Get all available streams (don't log, we already logged during refresh)
             all_streams = get_streams(log_result=False)
             if not all_streams:
-                logging.warning("No streams found")
+                logger.warning("No streams found")
                 return {}
             
             # Validate that all_streams is a list
             if not isinstance(all_streams, list):
-                logging.error(f"Invalid streams response format: expected list, got {type(all_streams).__name__}")
+                logger.error(f"Invalid streams response format: expected list, got {type(all_streams).__name__}")
                 return {}
             
             # Filter streams by enabled M3U accounts
@@ -591,26 +571,26 @@ class AutomatedStreamManager:
                 
                 streams_filtered_count = len(all_streams) - len(filtered_streams)
                 if streams_filtered_count > 0:
-                    logging.info(f"Filtered out {streams_filtered_count} streams from disabled/inactive M3U accounts")
+                    logger.info(f"Filtered out {streams_filtered_count} streams from disabled/inactive M3U accounts")
                 
                 all_streams = filtered_streams
                 
                 if not all_streams:
-                    logging.info("No streams found after filtering by enabled M3U accounts")
+                    logger.info("No streams found after filtering by enabled M3U accounts")
                     return {}
             else:
-                logging.warning("Could not fetch M3U accounts, using all streams")
+                logger.warning("Could not fetch M3U accounts, using all streams")
             
             # Get all channels
             base_url = _get_base_url()
             all_channels = fetch_data_from_url(f"{base_url}/api/channels/channels/")
             if not all_channels:
-                logging.warning("No channels found")
+                logger.warning("No channels found")
                 return {}
             
             # Validate that all_channels is a list
             if not isinstance(all_channels, list):
-                logging.error(f"Invalid channels response format: expected list, got {type(all_channels).__name__}")
+                logger.error(f"Invalid channels response format: expected list, got {type(all_channels).__name__}")
                 return {}
             
             # Create a map of existing channel streams
@@ -619,7 +599,7 @@ class AutomatedStreamManager:
             for channel in all_channels:
                 # Validate that channel is a dictionary
                 if not isinstance(channel, dict) or 'id' not in channel:
-                    logging.warning(f"Invalid channel format encountered: {type(channel).__name__} - {channel}")
+                    logger.warning(f"Invalid channel format encountered: {type(channel).__name__} - {channel}")
                     continue
                     
                 channel_id = str(channel['id'])
@@ -633,10 +613,10 @@ class AutomatedStreamManager:
                             if isinstance(s, dict) and 'id' in s:
                                 valid_stream_ids.add(s['id'])
                             else:
-                                logging.warning(f"Invalid stream format in channel {channel_id}: {type(s).__name__} - {s}")
+                                logger.warning(f"Invalid stream format in channel {channel_id}: {type(s).__name__} - {s}")
                         channel_streams[channel_id] = valid_stream_ids
                     else:
-                        logging.warning(f"Invalid streams format for channel {channel_id}: expected list, got {type(streams).__name__}")
+                        logger.warning(f"Invalid streams format for channel {channel_id}: expected list, got {type(streams).__name__}")
                         channel_streams[channel_id] = set()
                 else:
                     channel_streams[channel_id] = set()
@@ -649,7 +629,7 @@ class AutomatedStreamManager:
             for stream in all_streams:
                 # Validate that stream is a dictionary before accessing attributes
                 if not isinstance(stream, dict):
-                    logging.warning(f"Invalid stream format encountered: {type(stream).__name__} - {stream}")
+                    logger.warning(f"Invalid stream format encountered: {type(stream).__name__} - {stream}")
                     continue
                     
                 stream_name = stream.get('name', '')
@@ -662,7 +642,7 @@ class AutomatedStreamManager:
                 # Dead streams should not be added to channels during subsequent matches
                 stream_url = stream.get('url', '')
                 if self.dead_streams_tracker and self.dead_streams_tracker.is_dead(stream_url):
-                    logging.debug(f"Skipping dead stream {stream_id}: {stream_name} (URL: {stream_url})")
+                    logger.debug(f"Skipping dead stream {stream_id}: {stream_name} (URL: {stream_url})")
                     continue
                 
                 # Find matching channels
@@ -700,13 +680,13 @@ class AutomatedStreamManager:
                                     added_stream_ids = expected_stream_ids & updated_stream_ids
                                     
                                     if len(added_stream_ids) == added_count:
-                                        logging.info(f"✓ Verified: {added_count} streams successfully added to channel {channel_id} ({channel_names.get(channel_id, f'Channel {channel_id}')})")
+                                        logger.info(f"✓ Verified: {added_count} streams successfully added to channel {channel_id} ({channel_names.get(channel_id, f'Channel {channel_id}')})")
                                     else:
-                                        logging.warning(f"⚠ Verification mismatch for channel {channel_id}: expected {added_count} streams, found {len(added_stream_ids)} in channel")
+                                        logger.warning(f"⚠ Verification mismatch for channel {channel_id}: expected {added_count} streams, found {len(added_stream_ids)} in channel")
                                 else:
-                                    logging.warning(f"⚠ Could not verify stream addition for channel {channel_id}: invalid response")
+                                    logger.warning(f"⚠ Could not verify stream addition for channel {channel_id}: invalid response")
                             except Exception as verify_error:
-                                logging.warning(f"⚠ Could not verify stream addition for channel {channel_id}: {verify_error}")
+                                logger.warning(f"⚠ Could not verify stream addition for channel {channel_id}: {verify_error}")
                         
                         # Prepare detailed assignment info
                         channel_assignment = {
@@ -719,7 +699,7 @@ class AutomatedStreamManager:
                         
                         
                     except Exception as e:
-                        logging.error(f"Failed to assign streams to channel {channel_id}: {e}")
+                        logger.error(f"Failed to assign streams to channel {channel_id}: {e}")
             
             # Add comprehensive changelog entry
             total_assigned = sum(assignment_count.values())
@@ -737,7 +717,7 @@ class AutomatedStreamManager:
                     "timestamp": datetime.now().isoformat()
                 })
             
-            logging.info(f"Stream discovery completed. Assigned {total_assigned} new streams across {len(assignment_count)} channels")
+            logger.info(f"Stream discovery completed. Assigned {total_assigned} new streams across {len(assignment_count)} channels")
             
             # Mark channels that received new streams for stream quality checking
             if total_assigned > 0 and assignment_count:
@@ -763,18 +743,18 @@ class AutomatedStreamManager:
                             from stream_checker_service import get_stream_checker_service
                             stream_checker = get_stream_checker_service()
                             stream_checker.update_tracker.mark_channels_updated(channel_ids_to_mark, stream_counts=stream_counts)
-                            logging.info(f"Marked {len(channel_ids_to_mark)} channels with new streams for stream quality checking")
+                            logger.info(f"Marked {len(channel_ids_to_mark)} channels with new streams for stream quality checking")
                             # Trigger immediate check instead of waiting for scheduled interval
                             stream_checker.trigger_check_updated_channels()
                         except Exception as sc_error:
-                            logging.debug(f"Stream checker not available or error marking channels: {sc_error}")
+                            logger.debug(f"Stream checker not available or error marking channels: {sc_error}")
                 except Exception as mark_error:
-                    logging.debug(f"Could not mark channels for stream checking after discovery: {mark_error}")
+                    logger.debug(f"Could not mark channels for stream checking after discovery: {mark_error}")
             
             return assignment_count
             
         except Exception as e:
-            logging.error(f"Stream discovery failed: {e}")
+            logger.error(f"Stream discovery failed: {e}")
             if self.config.get("enabled_features", {}).get("changelog_tracking", True):
                 self.changelog.add_entry("stream_discovery", {
                     "success": False,
@@ -797,16 +777,16 @@ class AutomatedStreamManager:
             from stream_checker_service import get_stream_checker_service
             stream_checker = get_stream_checker_service()
             if stream_checker.global_action_in_progress:
-                logging.debug("Skipping automation cycle - global action in progress")
+                logger.debug("Skipping automation cycle - global action in progress")
                 return
         except Exception as e:
-            logging.debug(f"Could not check global action status: {e}")
+            logger.debug(f"Could not check global action status: {e}")
         
         # Only log and run if it's actually time to update
         if not self.should_run_playlist_update():
             return  # Skip silently until it's time
         
-        logging.info("Starting automation cycle...")
+        logger.info("Starting automation cycle...")
         
         # 1. Update playlists
         success = self.refresh_playlists()
@@ -817,53 +797,73 @@ class AutomatedStreamManager:
             # 2. Discover and assign new streams
             assignments = self.discover_and_assign_streams()
         
-        logging.info("Automation cycle completed")
+        logger.info("Automation cycle completed")
     def start_automation(self):
         """Start the automated stream management process."""
+        log_function_call(logger, "start_automation")
         if self.running:
-            logging.warning("Automation is already running")
+            logger.warning("Automation is already running")
             return
         
+        log_state_change(logger, "automation_manager", "stopped", "starting")
         self.running = True
-        logging.info("Starting automated stream management...")
+        self.automation_start_time = datetime.now()
+        logger.info("Starting automated stream management...")
         
         def automation_loop():
+            logger.debug("Automation loop thread started")
             while self.running:
                 try:
+                    logger.debug("Running automation cycle...")
                     self.run_automation_cycle()
+                    logger.debug("Automation cycle completed, sleeping for 60 seconds")
                     
                     # Sleep for a minute before checking again
                     time.sleep(60)
                     
                 except Exception as e:
-                    logging.error(f"Error in automation loop: {e}")
+                    log_exception(logger, e, "automation loop")
+                    logger.error(f"Error in automation loop: {e}")
                     time.sleep(60)  # Continue after error
+            logger.debug("Automation loop thread exiting")
         
         self.automation_thread = threading.Thread(target=automation_loop, daemon=True)
         self.automation_thread.start()
+        logger.debug(f"Automation thread started (id: {self.automation_thread.ident})")
+        log_state_change(logger, "automation_manager", "starting", "running")
+        log_function_return(logger, "start_automation")
     
     def stop_automation(self):
         """Stop the automated stream management process."""
         if not self.running:
-            logging.warning("Automation is not running")
+            logger.warning("Automation is not running")
             return
         
         self.running = False
-        logging.info("Stopping automated stream management...")
+        self.automation_start_time = None
+        logger.info("Stopping automated stream management...")
         
         if hasattr(self, 'automation_thread'):
             self.automation_thread.join(timeout=5)
         
-        logging.info("Automated stream management stopped")
+        logger.info("Automated stream management stopped")
     
     def get_status(self) -> Dict:
         """Get current status of the automation system."""
+        # Calculate next update time properly
+        next_update = None
+        if self.running:
+            if self.last_playlist_update:
+                # Calculate when the next update should occur based on last update + interval
+                next_update = self.last_playlist_update + timedelta(minutes=self.config.get("playlist_update_interval_minutes", 5))
+            elif self.automation_start_time:
+                # If automation is running but no last update, calculate from start time
+                next_update = self.automation_start_time + timedelta(minutes=self.config.get("playlist_update_interval_minutes", 5))
+        
         return {
             "running": self.running,
             "last_playlist_update": self.last_playlist_update.isoformat() if self.last_playlist_update else None,
-            "next_playlist_update": (
-                self.last_playlist_update + timedelta(minutes=self.config.get("playlist_update_interval_minutes", 5))
-            ).isoformat() if self.last_playlist_update else "immediate",
+            "next_playlist_update": next_update.isoformat() if next_update else None,
             "config": self.config,
             "recent_changelog": self.changelog.get_recent_entries(7)
         }

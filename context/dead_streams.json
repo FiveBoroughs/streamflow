@@ -1,0 +1,254 @@
+{
+  "http://acexy:8080/ace/getstream?id=ea03cc51980996ba6f2da49e30eee1de8a66ae54": {
+    "stream_id": 7109,
+    "stream_name": "LIGA DE CAMPEONES 2 FHD --> NEW ERA II",
+    "marked_dead_at": "2025-11-04T18:53:37.054964",
+    "url": "http://acexy:8080/ace/getstream?id=ea03cc51980996ba6f2da49e30eee1de8a66ae54"
+  },
+  "http://acexy:8080/ace/getstream?id=4b18a3b32df5960ed950fa907f8d509b1ad2a188": {
+    "stream_id": 7108,
+    "stream_name": "LIGA DE CAMPEONES 2 FHD --> NEW ERA II",
+    "marked_dead_at": "2025-11-04T18:54:32.982321",
+    "url": "http://acexy:8080/ace/getstream?id=4b18a3b32df5960ed950fa907f8d509b1ad2a188"
+  },
+  "http://acexy:8080/ace/getstream?id=afbf1ef8812e7b0a0977fa3a0a2d3a6d3cbd6c6f": {
+    "stream_id": 7100,
+    "stream_name": "LIGA DE CAMPEONES FHD --> NEW ERA II",
+    "marked_dead_at": "2025-11-04T19:02:52.538230",
+    "url": "http://acexy:8080/ace/getstream?id=afbf1ef8812e7b0a0977fa3a0a2d3a6d3cbd6c6f"
+  },
+  "http://acexy:8080/ace/getstream?id=c3da6c4f91d9d10ade00318a869435e19f204d0e": {
+    "stream_id": 7174,
+    "stream_name": "EUROSPORT 1 FHD --> ELCANO",
+    "marked_dead_at": "2025-11-04T19:16:39.296817",
+    "url": "http://acexy:8080/ace/getstream?id=c3da6c4f91d9d10ade00318a869435e19f204d0e"
+  },
+  "http://acexy:8080/ace/getstream?id=6dc4ac4eeae18e9daec433b01db82435cf84c57c": {
+    "stream_id": 7270,
+    "stream_name": "MOVISTAR DEPORTES 5 FHD --> NEW ERA VI",
+    "marked_dead_at": "2025-11-04T19:20:16.692266",
+    "url": "http://acexy:8080/ace/getstream?id=6dc4ac4eeae18e9daec433b01db82435cf84c57c"
+  },
+  "http://acexy:8080/ace/getstream?id=7b361369a40046ad3011086f9d4ae2982fb4d5aa": {
+    "stream_id": 7271,
+    "stream_name": "MOVISTAR DEPORTES 5 FHD --> ELCANO",
+    "marked_dead_at": "2025-11-04T19:21:12.962116",
+    "url": "http://acexy:8080/ace/getstream?id=7b361369a40046ad3011086f9d4ae2982fb4d5aa"
+  },
+  "http://acexy:8080/ace/getstream?id=b5f3cc5cd66c98bae9d65df43ecee6c02d18aebd": {
+    "stream_id": 7153,
+    "stream_name": "DAZN F1 FHD --> NEW ERA II",
+    "marked_dead_at": "2025-11-04T20:26:30.770457",
+    "url": "http://acexy:8080/ace/getstream?id=b5f3cc5cd66c98bae9d65df43ecee6c02d18aebd"
+  },
+  "http://acexy:8080/ace/getstream?id=eb884f77ce8815cf1028c4d85e8b092c27ea1693": {
+    "stream_id": 7143,
+    "stream_name": "DAZN 4 FHD --> NEW ERA VI",
+    "marked_dead_at": "2025-11-04T20:37:33.991527",
+    "url": "http://acexy:8080/ace/getstream?id=eb884f77ce8815cf1028c4d85e8b092c27ea1693"
+  },
+  "http://acexy:8080/ace/getstream?id=bf95bbb0de43953a783163201f236f59fcfb1529": {
+    "stream_id": 7700,
+    "stream_name": "DAZN LA LIGA 2 FHD --> NEW LOOP",
+    "marked_dead_at": "2025-11-04T21:15:20.352943",
+    "url": "http://acexy:8080/ace/getstream?id=bf95bbb0de43953a783163201f236f59fcfb1529"
+  },
+  "http://acexy:8080/ace/getstream?id=382b14499e3d76e557d449d2e5bbc4e4bd63bd39": {
+    "stream_id": 7094,
+    "stream_name": "M+ LALIGA 3 SD --> ELCANO",
+    "marked_dead_at": "2025-11-04T21:26:39.853699",
+    "url": "http://acexy:8080/ace/getstream?id=382b14499e3d76e557d449d2e5bbc4e4bd63bd39"
+  },
+  "http://acexy:8080/ace/getstream?id=547ab7146a86d6119c9332c011669544720124e3": {
+    "stream_id": 7785,
+    "stream_name": "EUROSPORT 1 HD --> NEW LOOP",
+    "marked_dead_at": "2025-11-04T21:38:26.917307",
+    "url": "http://acexy:8080/ace/getstream?id=547ab7146a86d6119c9332c011669544720124e3"
+  },
+  "http://acexy:8080/ace/getstream?id=58a4c880ab18486d914751db32a12760e74b75a4": {
+    "stream_id": 7702,
+    "stream_name": "MOVISTAR DEPORTES 4 FHD --> NEW ERA",
+    "marked_dead_at": "2025-11-06T03:49:00.413590",
+    "url": "http://acexy:8080/ace/getstream?id=58a4c880ab18486d914751db32a12760e74b75a4"
+  },
+  "http://acexy:8080/ace/getstream?id=d4ff041287a43e3114d411d671c4b4e92e21f31e": {
+    "stream_id": 7814,
+    "stream_name": "M+ LALIGA --> NEW LOOP",
+    "marked_dead_at": "2025-11-06T18:24:59.412516",
+    "url": "http://acexy:8080/ace/getstream?id=d4ff041287a43e3114d411d671c4b4e92e21f31e"
+  },
+  "http://acexy:8080/ace/getstream?id=37825883ed185365e3194a79207347f6c7bd5ba5": {
+    "stream_id": 7265,
+    "stream_name": "MOVISTAR DEPORTES 4 FHD --> NEW ERA VI",
+    "marked_dead_at": "2025-11-07T03:53:59.458751",
+    "url": "http://acexy:8080/ace/getstream?id=37825883ed185365e3194a79207347f6c7bd5ba5"
+  },
+  "http://acexy:8080/ace/getstream?id=3692ea4cdda97eb0062ed5d656ebd61f149ebd0b": {
+    "stream_id": 7250,
+    "stream_name": "MOVISTAR DEPORTES FHD --> NEW ERA VI",
+    "marked_dead_at": "2025-11-07T04:06:15.141939",
+    "url": "http://acexy:8080/ace/getstream?id=3692ea4cdda97eb0062ed5d656ebd61f149ebd0b"
+  },
+  "http://acexy:8080/ace/getstream?id=82b4f249788f93b8f9ce968803662d7cd4f1b8cc": {
+    "stream_id": 7626,
+    "stream_name": "DAZN F1 FHD --> NEW ERA",
+    "marked_dead_at": "2025-11-07T04:09:16.077982",
+    "url": "http://acexy:8080/ace/getstream?id=82b4f249788f93b8f9ce968803662d7cd4f1b8cc"
+  },
+  "http://acexy:8080/ace/getstream?id=c8ad94585fbe13cfc9074c2b5e23fb6344e0f66d": {
+    "stream_id": 7720,
+    "stream_name": "DAZN F1 4K --> NEW ERA",
+    "marked_dead_at": "2025-11-07T04:14:08.896083",
+    "url": "http://acexy:8080/ace/getstream?id=c8ad94585fbe13cfc9074c2b5e23fb6344e0f66d"
+  },
+  "http://acexy:8080/ace/getstream?id=4141892f5df7d6474bf0279895ce02b7336c9928": {
+    "stream_id": 7123,
+    "stream_name": "DAZN 1 FHD --> NEW ERA",
+    "marked_dead_at": "2025-11-07T04:28:37.597703",
+    "url": "http://acexy:8080/ace/getstream?id=4141892f5df7d6474bf0279895ce02b7336c9928"
+  },
+  "http://acexy:8080/ace/getstream?id=d2ddf9802ccfdc456f872eea4d24596880a638a0": {
+    "stream_id": 7083,
+    "stream_name": "M+ LALIGA FHD --> NEW ERA VI",
+    "marked_dead_at": "2025-11-07T04:53:22.505908",
+    "url": "http://acexy:8080/ace/getstream?id=d2ddf9802ccfdc456f872eea4d24596880a638a0"
+  },
+  "http://acexy:8080/ace/getstream?id=332d8fdeb9c51385230b8c9448e047ccc4a6355d": {
+    "stream_id": 7829,
+    "stream_name": "MOVISTAR DEPORTES FHD --> NEW ERA",
+    "marked_dead_at": "2025-11-08T04:04:57.603271",
+    "url": "http://acexy:8080/ace/getstream?id=332d8fdeb9c51385230b8c9448e047ccc4a6355d"
+  },
+  "http://acexy:8080/ace/getstream?id=b6ffbbc72a5b6b579faf79ebac229af7a25b933b": {
+    "stream_id": 7060,
+    "stream_name": "MOVISTAR PLUS FHD --> NEW ERA",
+    "marked_dead_at": "2025-11-08T15:10:18.619474",
+    "url": "http://acexy:8080/ace/getstream?id=b6ffbbc72a5b6b579faf79ebac229af7a25b933b"
+  },
+  "http://acexy:8080/ace/getstream?id=1dece791d28be6a5af78537ac4864ec01fa0a6d8": {
+    "stream_id": 7773,
+    "stream_name": "LIGA DE CAMPEONES 3 FHD --> NEW ERA",
+    "marked_dead_at": "2025-11-08T15:23:00.019646",
+    "url": "http://acexy:8080/ace/getstream?id=1dece791d28be6a5af78537ac4864ec01fa0a6d8"
+  },
+  "http://acexy:8080/ace/getstream?id=753d4b1f7c4ef43238b5cf23b05572b550a44eee": {
+    "stream_id": 7701,
+    "stream_name": "MOVISTAR DEPORTES 3 FHD --> NEW ERA",
+    "marked_dead_at": "2025-11-09T03:53:07.346640",
+    "url": "http://acexy:8080/ace/getstream?id=753d4b1f7c4ef43238b5cf23b05572b550a44eee"
+  },
+  "http://acexy:8080/ace/getstream?id=6422e8bc34282871634c81947be093c04ad1bb29": {
+    "stream_id": 7603,
+    "stream_name": "DAZN F1 FHD --> NEW ERA",
+    "marked_dead_at": "2025-11-09T04:06:02.617996",
+    "url": "http://acexy:8080/ace/getstream?id=6422e8bc34282871634c81947be093c04ad1bb29"
+  },
+  "http://acexy:8080/ace/getstream?id=3f5b7e2f883fe4b4b973e198d147a513d5c7c32a": {
+    "stream_id": 7155,
+    "stream_name": "DAZN F1 FHD --> NEW ERA VI",
+    "marked_dead_at": "2025-11-10T04:01:58.971159",
+    "url": "http://acexy:8080/ace/getstream?id=3f5b7e2f883fe4b4b973e198d147a513d5c7c32a"
+  },
+  "http://acexy:8080/ace/getstream?id=678a1e93fbfbd499c329886bfdda780e73ac1786": {
+    "stream_id": 7714,
+    "stream_name": "LIGA DE CAMPEONES 4K --> NEW ERA",
+    "marked_dead_at": "2025-11-11T03:24:14.494194",
+    "url": "http://acexy:8080/ace/getstream?id=678a1e93fbfbd499c329886bfdda780e73ac1786"
+  },
+  "http://acexy:8080/ace/getstream?id=d5cf2dfa4fb4165ce58bf9db815088c28fec7711": {
+    "stream_id": 7605,
+    "stream_name": "DAZN F1 FHD --> NEW ERA",
+    "marked_dead_at": "2025-11-12T04:08:50.159527",
+    "url": "http://acexy:8080/ace/getstream?id=d5cf2dfa4fb4165ce58bf9db815088c28fec7711"
+  },
+  "http://acexy:8080/ace/getstream?id=1ab443f5b4beb6d586f19e8b25b9f9646cf2ab78": {
+    "stream_id": 7063,
+    "stream_name": "MOVISTAR PLUS FHD --> ELCANO",
+    "marked_dead_at": "2025-11-13T03:04:52.250919",
+    "url": "http://acexy:8080/ace/getstream?id=1ab443f5b4beb6d586f19e8b25b9f9646cf2ab78"
+  },
+  "http://acexy:8080/ace/getstream?id=f3eea003e23f94dc2d527306de9dd386e3ebf4ba": {
+    "stream_id": 7102,
+    "stream_name": "LIGA DE CAMPEONES FHD --> NEW ERA VI",
+    "marked_dead_at": "2025-11-13T03:22:22.730903",
+    "url": "http://acexy:8080/ace/getstream?id=f3eea003e23f94dc2d527306de9dd386e3ebf4ba"
+  },
+  "http://acexy:8080/ace/getstream?id=0585e09bb8ac9720e4c11934f1b184e309291551": {
+    "stream_id": 7179,
+    "stream_name": "EUROSPORT 2 FHD --> ELCANO",
+    "marked_dead_at": "2025-11-13T03:32:49.508401",
+    "url": "http://acexy:8080/ace/getstream?id=0585e09bb8ac9720e4c11934f1b184e309291551"
+  },
+  "http://acexy:8080/ace/getstream?id=b40e1de2dcbd7c665f54877b14c830ed67b32a96": {
+    "stream_id": 7266,
+    "stream_name": "MOVISTAR DEPORTES 4 FHD --> ELCANO",
+    "marked_dead_at": "2025-11-13T03:42:38.625258",
+    "url": "http://acexy:8080/ace/getstream?id=b40e1de2dcbd7c665f54877b14c830ed67b32a96"
+  },
+  "http://acexy:8080/ace/getstream?id=ebca4a63ce3bfda7b272964a1acc5227218184a4": {
+    "stream_id": 7251,
+    "stream_name": "MOVISTAR DEPORTES FHD --> ELCANO",
+    "marked_dead_at": "2025-11-13T03:55:51.034480",
+    "url": "http://acexy:8080/ace/getstream?id=ebca4a63ce3bfda7b272964a1acc5227218184a4"
+  },
+  "http://acexy:8080/ace/getstream?id=bcf9dc38f92e90a71b87bd54b3bac91b76d09a69": {
+    "stream_id": 7157,
+    "stream_name": "DAZN F1 FHD --> ELCANO",
+    "marked_dead_at": "2025-11-13T04:04:12.995089",
+    "url": "http://acexy:8080/ace/getstream?id=bcf9dc38f92e90a71b87bd54b3bac91b76d09a69"
+  },
+  "http://acexy:8080/ace/getstream?id=d641cd0fca0f467b3130754a091e2f4d22e68eb1": {
+    "stream_id": 7717,
+    "stream_name": "DAZN 3 FHD --> NEW ERA",
+    "marked_dead_at": "2025-11-13T04:10:55.064850",
+    "url": "http://acexy:8080/ace/getstream?id=d641cd0fca0f467b3130754a091e2f4d22e68eb1"
+  },
+  "http://acexy:8080/ace/getstream?id=70f22be1286ef224b5e4e9451d9a42468152cda4": {
+    "stream_id": 7164,
+    "stream_name": "HYPERMOTION FHD --> NEW ERA VI",
+    "marked_dead_at": "2025-11-13T04:22:09.027390",
+    "url": "http://acexy:8080/ace/getstream?id=70f22be1286ef224b5e4e9451d9a42468152cda4"
+  },
+  "http://acexy:8080/ace/getstream?id=4b528d10eaad747ddf52251206177573ee3e9f74": {
+    "stream_id": 7086,
+    "stream_name": "M+ LALIGA FHD --> ELCANO",
+    "marked_dead_at": "2025-11-13T04:33:28.636830",
+    "url": "http://acexy:8080/ace/getstream?id=4b528d10eaad747ddf52251206177573ee3e9f74"
+  },
+  "http://acexy:8080/ace/getstream?id=0e5d8c9724fa9163f49096b70484e315251eb785": {
+    "stream_id": 7287,
+    "stream_name": "MOVISTAR VAMOS SD --> ELCANO",
+    "marked_dead_at": "2025-11-15T03:06:46.722655",
+    "url": "http://acexy:8080/ace/getstream?id=0e5d8c9724fa9163f49096b70484e315251eb785"
+  },
+  "http://acexy:8080/ace/getstream?id=b028202ff335911db3118bceac027df3e8ef6c32": {
+    "stream_id": 7106,
+    "stream_name": "LIGA DE CAMPEONES SD --> ELCANO",
+    "marked_dead_at": "2025-11-15T03:18:50.214960",
+    "url": "http://acexy:8080/ace/getstream?id=b028202ff335911db3118bceac027df3e8ef6c32"
+  },
+  "http://acexy:8080/ace/getstream?id=5c910d614894635153a7d42de98cc2e4a958a53f": {
+    "stream_id": 7180,
+    "stream_name": "EUROSPORT 2 SD --> ELCANO",
+    "marked_dead_at": "2025-11-15T03:23:13.144733",
+    "url": "http://acexy:8080/ace/getstream?id=5c910d614894635153a7d42de98cc2e4a958a53f"
+  },
+  "http://acexy:8080/ace/getstream?id=2fd410c5d89e7a627cd3785685b7915b8e4bd534": {
+    "stream_id": 7261,
+    "stream_name": "MOVISTAR DEPORTES 3 SD --> ELCANO",
+    "marked_dead_at": "2025-11-15T03:32:02.604668",
+    "url": "http://acexy:8080/ace/getstream?id=2fd410c5d89e7a627cd3785685b7915b8e4bd534"
+  },
+  "http://acexy:8080/ace/getstream?id=ad42faa399df66dcd62a1cbc9d1c99ed4512d3b8": {
+    "stream_id": 7091,
+    "stream_name": "M+ LALIGA 2 SD --> ELCANO",
+    "marked_dead_at": "2025-11-15T04:03:06.948445",
+    "url": "http://acexy:8080/ace/getstream?id=ad42faa399df66dcd62a1cbc9d1c99ed4512d3b8"
+  },
+  "http://acexy:8080/ace/getstream?id=d830c1dc3b74e74f79cbb823804cf2037857e78a": {
+    "stream_id": 7175,
+    "stream_name": "EUROSPORT 1 SD --> ELCANO",
+    "marked_dead_at": "2025-11-15T23:33:42.961645",
+    "url": "http://acexy:8080/ace/getstream?id=d830c1dc3b74e74f79cbb823804cf2037857e78a"
+  }
+}

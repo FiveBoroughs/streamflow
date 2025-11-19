@@ -80,6 +80,7 @@ docs/
 - [Deployment Guide](docs/DEPLOYMENT.md) - Installation and deployment instructions
 - [API Documentation](docs/API.md) - REST API endpoints and usage
 - [Features](docs/FEATURES.md) - Detailed feature descriptions
+- [Debug Mode Guide](docs/DEBUG_MODE.md) - Troubleshooting with enhanced logging
 
 ## Requirements
 

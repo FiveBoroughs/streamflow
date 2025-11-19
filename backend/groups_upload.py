@@ -6,7 +6,6 @@ creating new groups and updating existing ones as needed.
 """
 
 import csv
-import logging
 import os
 import sys
 from typing import Dict, Any, Optional
@@ -14,11 +13,10 @@ import requests
 from dotenv import load_dotenv, set_key
 from pathlib import Path
 
+from logging_config import setup_logging, log_function_call, log_function_return, log_exception
+
 # --- Setup ---
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
+logger = setup_logging(__name__)
 env_path = Path('.') / '.env'
 load_dotenv(dotenv_path=env_path)
 
@@ -45,19 +43,19 @@ def _get_auth_headers() -> Dict[str, str]:
     """
     current_token = os.getenv("DISPATCHARR_TOKEN")
     if not current_token:
-        logging.info(
+        logger.info(
             "DISPATCHARR_TOKEN not found. Attempting to log in..."
         )
         if login():
             load_dotenv(dotenv_path=env_path, override=True)
             current_token = os.getenv("DISPATCHARR_TOKEN")
             if not current_token:
-                logging.error(
+                logger.error(
                     "Login succeeded, token still not found. Aborting."
                 )
                 sys.exit(1)
         else:
-            logging.error(
+            logger.error(
                 "Login failed. Check credentials in .env. Aborting."
             )
             sys.exit(1)
@@ -79,14 +77,14 @@ def login() -> bool:
     base_url = _get_base_url()
 
     if not all([username, password, base_url]):
-        logging.error(
+        logger.error(
             "DISPATCHARR_USER, DISPATCHARR_PASS, and "
             "DISPATCHARR_BASE_URL must be set in .env file."
         )
         return False
 
     login_url = f"{base_url}/api/accounts/token/"
-    logging.info(f"Attempting to log in to {base_url}...")
+    logger.info(f"Attempting to log in to {base_url}...")
 
     try:
         resp = requests.post(
@@ -100,17 +98,17 @@ def login() -> bool:
 
         if token:
             set_key(env_path, "DISPATCHARR_TOKEN", token)
-            logging.info("Login successful. Token saved.")
+            logger.info("Login successful. Token saved.")
             return True
         else:
-            logging.error(
+            logger.error(
                 "Login failed: No access token in response."
             )
             return False
     except requests.exceptions.RequestException as e:
-        logging.error(f"Login failed: {e}")
+        logger.error(f"Login failed: {e}")
         if hasattr(e, 'response') and e.response is not None:
-            logging.error(f"Response content: {e.response.text}")
+            logger.error(f"Response content: {e.response.text}")
         return False
 
 def _refresh_token() -> bool:
@@ -120,13 +118,13 @@ def _refresh_token() -> bool:
     Returns:
         bool: True if refresh successful, False otherwise.
     """
-    logging.info("Token expired or invalid. Attempting to refresh...")
+    logger.info("Token expired or invalid. Attempting to refresh...")
     if login():
         load_dotenv(dotenv_path=env_path, override=True)
-        logging.info("Token refreshed successfully.")
+        logger.info("Token refreshed successfully.")
         return True
     else:
-        logging.error("Token refresh failed.")
+        logger.error("Token refresh failed.")
         return False
 
 
@@ -156,7 +154,7 @@ def _make_request(
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 401:
             if _refresh_token():
-                logging.info(
+                logger.info(
                     f"Retrying {method} request to {url} "
                     f"with new token..."
                 )
@@ -168,13 +166,13 @@ def _make_request(
             else:
                 raise
         else:
-            logging.error(
+            logger.error(
                 f"HTTP Error: {e.response.status_code} for URL: {url}"
             )
-            logging.error(f"Response: {e.response.text}")
+            logger.error(f"Response: {e.response.text}")
             raise
     except requests.exceptions.RequestException as e:
-        logging.error(f"Request failed: {e}")
+        logger.error(f"Request failed: {e}")
         raise
 
 # --- Main Functionality ---
@@ -193,7 +191,7 @@ def fetch_existing_groups() -> Dict[str, Dict[str, Any]]:
             return {str(g["id"]): g for g in response.json()}
         return {}
     except requests.exceptions.RequestException as e:
-        logging.error(f"Could not fetch existing groups: {e}")
+        logger.error(f"Could not fetch existing groups: {e}")
         return {}
 
 
@@ -239,10 +237,10 @@ def main() -> None:
     """
     csv_file = "csv/groups_template.csv"
     if not os.path.exists(csv_file):
-        logging.error(f"Error: The file {csv_file} was not found.")
+        logger.error(f"Error: The file {csv_file} was not found.")
         sys.exit(1)
 
-    logging.info("📥 Syncing groups from CSV...")
+    logger.info("📥 Syncing groups from CSV...")
     existing_groups = fetch_existing_groups()
 
     with open(csv_file, mode="r", newline="", encoding="utf-8") as file:
@@ -251,7 +249,7 @@ def main() -> None:
             gid = row.get("id", "").strip()
             name = row.get("name", "").strip()
             if not gid or not name:
-                logging.warning(
+                logger.warning(
                     f"Skipping row with missing id or name: {row}"
                 )
                 continue
@@ -261,29 +259,29 @@ def main() -> None:
                 if current_name != name:
                     try:
                         update_group(gid, name)
-                        logging.info(
+                        logger.info(
                             f"  🔁 Updated group ID {gid}: "
                             f"'{current_name}' → '{name}'"
                         )
                     except requests.exceptions.RequestException:
-                        logging.error(
+                        logger.error(
                             f"  ❌ Failed to update group ID {gid}"
                         )
                 else:
-                    logging.info(
+                    logger.info(
                         f"  ✅ Group ID {gid} ('{name}') "
                         f"already up-to-date"
                     )
             else:
                 try:
                     create_group(name)
-                    logging.info(f"  ➕ Created new group: {name}")
+                    logger.info(f"  ➕ Created new group: {name}")
                 except requests.exceptions.RequestException:
-                    logging.error(
+                    logger.error(
                         f"  ❌ Failed to create group: {name}"
                     )
 
-    logging.info("\n✅ Sync complete!")
+    logger.info("\n✅ Sync complete!")
 
 if __name__ == "__main__":
     main()

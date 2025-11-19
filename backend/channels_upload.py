@@ -7,7 +7,6 @@ channel metadata after synchronization.
 """
 
 import csv
-import logging
 import os
 import sys
 from typing import Dict, Any, Optional
@@ -17,11 +16,10 @@ import json
 from dotenv import load_dotenv, set_key
 from pathlib import Path
 
+from logging_config import setup_logging, log_function_call, log_function_return, log_exception
+
 # --- Setup ---
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
+logger = setup_logging(__name__)
 env_path = Path('.') / '.env'
 load_dotenv(dotenv_path=env_path)
 
@@ -39,7 +37,7 @@ def _get_base_url() -> str:
     """
     base_url = os.getenv("DISPATCHARR_BASE_URL")
     if not base_url:
-        logging.error(
+        logger.error(
             "DISPATCHARR_BASE_URL not found in .env. Please set it."
         )
         sys.exit(1)
@@ -57,19 +55,19 @@ def _get_auth_headers() -> Dict[str, str]:
     """
     current_token = os.getenv("DISPATCHARR_TOKEN")
     if not current_token:
-        logging.info(
+        logger.info(
             "DISPATCHARR_TOKEN not found. Attempting to log in..."
         )
         if login():
             load_dotenv(dotenv_path=env_path, override=True)
             current_token = os.getenv("DISPATCHARR_TOKEN")
             if not current_token:
-                logging.error(
+                logger.error(
                     "Login succeeded, token still not found. Aborting."
                 )
                 sys.exit(1)
         else:
-            logging.error(
+            logger.error(
                 "Login failed. Check credentials in .env. Aborting."
             )
             sys.exit(1)
@@ -91,14 +89,14 @@ def login() -> bool:
     base_url = _get_base_url()
 
     if not all([username, password, base_url]):
-        logging.error(
+        logger.error(
             "DISPATCHARR_USER, DISPATCHARR_PASS, and "
             "DISPATCHARR_BASE_URL must be set in .env file."
         )
         return False
 
     login_url = f"{base_url}/api/accounts/token/"
-    logging.info(f"Attempting to log in to {base_url}...")
+    logger.info(f"Attempting to log in to {base_url}...")
 
     try:
         resp = requests.post(
@@ -112,17 +110,17 @@ def login() -> bool:
 
         if token:
             set_key(env_path, "DISPATCHARR_TOKEN", token)
-            logging.info("Login successful. Token saved.")
+            logger.info("Login successful. Token saved.")
             return True
         else:
-            logging.error(
+            logger.error(
                 "Login failed: No access token in response."
             )
             return False
     except requests.exceptions.RequestException as e:
-        logging.error(f"Login failed: {e}")
+        logger.error(f"Login failed: {e}")
         if hasattr(e, 'response') and e.response is not None:
-            logging.error(f"Response content: {e.response.text}")
+            logger.error(f"Response content: {e.response.text}")
         return False
 
 def _refresh_token() -> bool:
@@ -132,13 +130,13 @@ def _refresh_token() -> bool:
     Returns:
         bool: True if refresh successful, False otherwise.
     """
-    logging.info("Token expired or invalid. Attempting to refresh...")
+    logger.info("Token expired or invalid. Attempting to refresh...")
     if login():
         load_dotenv(dotenv_path=env_path, override=True)
-        logging.info("Token refreshed successfully.")
+        logger.info("Token refreshed successfully.")
         return True
     else:
-        logging.error("Token refresh failed.")
+        logger.error("Token refresh failed.")
         return False
 
 
@@ -168,7 +166,7 @@ def _make_request(
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 401:
             if _refresh_token():
-                logging.info(
+                logger.info(
                     f"Retrying {method} request to {url} "
                     f"with new token..."
                 )
@@ -180,13 +178,13 @@ def _make_request(
             else:
                 raise
         else:
-            logging.error(
+            logger.error(
                 f"HTTP Error: {e.response.status_code} for URL: {url}"
             )
-            logging.error(f"Response: {e.response.text}")
+            logger.error(f"Response: {e.response.text}")
             raise
     except requests.exceptions.RequestException as e:
-        logging.error(f"Request failed: {e}")
+        logger.error(f"Request failed: {e}")
         raise
 
 # --- Main Functionality ---
@@ -208,7 +206,7 @@ def fetch_existing_channels() -> Dict[str, Dict[str, Any]]:
     except (
         requests.exceptions.RequestException, json.JSONDecodeError
     ) as e:
-        logging.error(f"Could not fetch existing channels: {e}")
+        logger.error(f"Could not fetch existing channels: {e}")
         return {}
 
 
@@ -249,14 +247,14 @@ def refresh_channel_metadata(output_file: str) -> None:
     Parameters:
         output_file (str): Path to the output CSV file.
     """
-    logging.info(
+    logger.info(
         f"🔄 Refreshing channel metadata file: {output_file}"
     )
     try:
         url = f"{_get_base_url()}/api/channels/channels/"
         channels = _make_request("GET", url).json()
         if not channels:
-            logging.warning("No channels found to refresh.")
+            logger.warning("No channels found to refresh.")
             return
 
         with open(
@@ -286,12 +284,12 @@ def refresh_channel_metadata(output_file: str) -> None:
                     else:
                         row_data.append(value)
                 writer.writerow(row_data)
-        logging.info("✅ Successfully refreshed channel metadata.")
+        logger.info("✅ Successfully refreshed channel metadata.")
 
     except (
         requests.exceptions.RequestException, json.JSONDecodeError
     ) as e:
-        logging.error(f"❌ Failed to refresh channel metadata: {e}")
+        logger.error(f"❌ Failed to refresh channel metadata: {e}")
 
 def main() -> None:
     """
@@ -317,12 +315,12 @@ def main() -> None:
     metadata_csv_file = "csv/01_channels_metadata.csv"
 
     if not os.path.exists(input_csv_file):
-        logging.error(
+        logger.error(
             f"Error: The file {input_csv_file} was not found."
         )
         sys.exit(1)
 
-    logging.info(f"📡 Syncing channels from {input_csv_file}...")
+    logger.info(f"📡 Syncing channels from {input_csv_file}...")
     existing_channels = fetch_existing_channels()
 
     def get_int_or_none(value: str) -> Optional[int]:
@@ -351,7 +349,7 @@ def main() -> None:
                     name = row.get("name", "").strip()
 
                     if not channel_number or not name:
-                        logging.warning(f"  ❗️ Skipping row due to missing channel_number or name: {row}")
+                        logger.warning(f"  ❗️ Skipping row due to missing channel_number or name: {row}")
                         continue
                     
                     cid = row.get("id", "").strip()
@@ -377,26 +375,26 @@ def main() -> None:
                     if cid and cid in existing_channels:
                         r = update_channel(cid, payload)
                         if r.status_code == 200:
-                            logging.info(f"  🔁 Updated channel ID {cid}: {payload.get('name', 'N/A')}")
+                            logger.info(f"  🔁 Updated channel ID {cid}: {payload.get('name', 'N/A')}")
                         else:
-                            logging.error(f"  ❌ Failed to update channel ID {cid}. Status: {r.status_code}, Response: {r.text}")
+                            logger.error(f"  ❌ Failed to update channel ID {cid}. Status: {r.status_code}, Response: {r.text}")
                     else:
                         r = create_channel(payload)
                         if r.status_code == 201:
-                            logging.info(f"  ➕ Created channel: {payload.get('name', 'N/A')}")
+                            logger.info(f"  ➕ Created channel: {payload.get('name', 'N/A')}")
                         else:
-                            logging.error(f"  ❌ Failed to create channel: {payload.get('name', 'N/A')}. Status: {r.status_code}, Response: {r.text}")
+                            logger.error(f"  ❌ Failed to create channel: {payload.get('name', 'N/A')}. Status: {r.status_code}, Response: {r.text}")
                 except KeyError as e:
-                    logging.warning(f"  ❗️ Skipping row due to missing CSV column: {e}")
+                    logger.warning(f"  ❗️ Skipping row due to missing CSV column: {e}")
                 except (ValueError, TypeError) as e:
-                    logging.warning(f"  ❗️ Skipping row due to data conversion error: {e} - Row: {row}")
+                    logger.warning(f"  ❗️ Skipping row due to data conversion error: {e} - Row: {row}")
 
     except FileNotFoundError:
-        logging.error(f"❌ Error: The file {input_csv_file} was not found.")
+        logger.error(f"❌ Error: The file {input_csv_file} was not found.")
     except Exception as e:
-        logging.error(f"An unexpected error occurred: {e}")
+        logger.error(f"An unexpected error occurred: {e}")
 
-    logging.info("\n✅ Channel sync complete!")
+    logger.info("\n✅ Channel sync complete!")
     refresh_channel_metadata(metadata_csv_file)
 
 
