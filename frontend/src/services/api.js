@@ -85,6 +85,12 @@ export const changelogAPI = {
   getChangelog: (days = 7) => api.get(`/changelog?days=${days}`),
 };
 
+export const eventOrderingAPI = {
+  getConfig: () => api.get('/event-ordering'),
+  updateConfig: (config) => api.put('/event-ordering', config),
+  trigger: () => api.post('/event-ordering/trigger'),
+};
+
 export const setupAPI = {
   getStatus: () => api.get('/setup-wizard'),
 };

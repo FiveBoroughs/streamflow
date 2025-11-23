@@ -82,6 +82,331 @@ for handler in logging.root.handlers:
 # Configuration directory
 CONFIG_DIR = Path(os.environ.get('CONFIG_DIR', '/app/data'))
 
+# Regular expression for parsing event times from stream names
+import re
+EVENT_TIME_PATTERN = re.compile(r'start:(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})')
+
+
+def parse_event_time(stream_name: str) -> Optional[datetime]:
+    """Parse event start time from stream name.
+
+    Looks for pattern like 'start:2025-11-21 14:55:00' in stream name.
+
+    Args:
+        stream_name: The stream name to parse
+
+    Returns:
+        datetime object if found, None otherwise
+    """
+    match = EVENT_TIME_PATTERN.search(stream_name)
+    if match:
+        try:
+            return datetime.strptime(match.group(1), '%Y-%m-%d %H:%M:%S')
+        except ValueError:
+            return None
+    return None
+
+
+def reorder_streams_by_event_time(channel_id: str, stream_ids: List[int]) -> List[int]:
+    """Reorder streams within a channel by event time.
+
+    Streams are ordered by:
+    1. Currently live events (start time <= now <= stop time)
+    2. Upcoming events (sorted by start time, soonest first)
+    3. Past events or streams without event times (original order)
+
+    Args:
+        channel_id: The channel ID
+        stream_ids: List of stream IDs to reorder
+
+    Returns:
+        Reordered list of stream IDs
+    """
+    if not stream_ids:
+        return stream_ids
+
+    try:
+        base_url = _get_base_url()
+
+        # Fetch stream details for each stream ID
+        streams_with_times = []
+        for idx, stream_id in enumerate(stream_ids):
+            stream_data = fetch_data_from_url(f"{base_url}/api/channels/streams/{stream_id}/")
+            if stream_data:
+                stream_name = stream_data.get('name', '')
+                event_time = parse_event_time(stream_name)
+                streams_with_times.append({
+                    'id': stream_id,
+                    'name': stream_name,
+                    'event_time': event_time,
+                    'original_index': idx  # Preserve provider order for ties
+                })
+            else:
+                streams_with_times.append({
+                    'id': stream_id,
+                    'name': '',
+                    'event_time': None,
+                    'original_index': idx
+                })
+
+        now = datetime.utcnow()  # Use UTC since stream times are in UTC
+
+        # Separate streams into categories
+        with_time = [(s, s['event_time']) for s in streams_with_times if s['event_time']]
+        without_time = [s for s in streams_with_times if not s['event_time']]
+
+        # Sort streams with event times by start time, then by original index for ties
+        with_time.sort(key=lambda x: (x[1], x[0]['original_index']))
+
+        # Separate into live/upcoming and past
+        live_upcoming = []
+        past = []
+
+        for stream, event_time in with_time:
+            if event_time >= now - timedelta(hours=2):  # Allow 2 hour buffer for "live"
+                live_upcoming.append(stream)
+            else:
+                past.append(stream)
+
+        # Final order: live/upcoming first, then past, then no time
+        ordered = live_upcoming + past + without_time
+
+        logging.info(f"Reordered channel {channel_id}: {len(live_upcoming)} upcoming/live, {len(past)} past, {len(without_time)} no time")
+
+        return [s['id'] for s in ordered]
+
+    except Exception as e:
+        logging.error(f"Failed to reorder streams for channel {channel_id}: {e}")
+        return stream_ids
+
+
+def parse_event_time_multi_format(stream_name: str) -> Optional[datetime]:
+    """Parse event time from stream name supporting multiple formats.
+
+    Supported formats:
+    1. start:YYYY-MM-DD HH:MM:SS (UFC/NBA Events)
+    2. - 7PM EventName (LIVE EVENT PPV with time only)
+    3. / Nov 22 : 8PM UK (LIVE EVENT PPV with date)
+
+    Args:
+        stream_name: The stream name to parse
+
+    Returns:
+        datetime object if found, None otherwise
+    """
+    # Format 1: start:YYYY-MM-DD HH:MM:SS
+    match = EVENT_TIME_PATTERN.search(stream_name)
+    if match:
+        try:
+            return datetime.strptime(match.group(1), '%Y-%m-%d %H:%M:%S')
+        except ValueError:
+            pass
+
+    # Format 2: / Nov 22 : 8PM UK (with date)
+    match = re.search(r'/\s*(\w+)\s+(\d+)\s*:\s*(\d+)(AM|PM)\s*UK', stream_name, re.IGNORECASE)
+    if match:
+        try:
+            month_str = match.group(1)
+            day = int(match.group(2))
+            hour = int(match.group(3))
+            ampm = match.group(4).upper()
+
+            if ampm == 'PM' and hour != 12:
+                hour += 12
+            elif ampm == 'AM' and hour == 12:
+                hour = 0
+
+            months = {'jan':1,'feb':2,'mar':3,'apr':4,'may':5,'jun':6,
+                     'jul':7,'aug':8,'sep':9,'oct':10,'nov':11,'dec':12}
+            month = months.get(month_str.lower()[:3], 1)
+            return datetime(2025, month, day, hour, 0, 0)
+        except:
+            pass
+
+    # Format 3: - 7PM EventName (time only, assume today)
+    match = re.search(r'-\s*(\d+)(AM|PM)\s+\w', stream_name, re.IGNORECASE)
+    if match:
+        try:
+            hour = int(match.group(1))
+            ampm = match.group(2).upper()
+
+            if ampm == 'PM' and hour != 12:
+                hour += 12
+            elif ampm == 'AM' and hour == 12:
+                hour = 0
+
+            now = datetime.utcnow()
+            return datetime(now.year, now.month, now.day, hour, 0, 0)
+        except:
+            pass
+
+    return None
+
+
+def apply_event_time_ordering_for_channels(channel_ids: List[int]):
+    """Apply event time ordering to specific channels.
+
+    Args:
+        channel_ids: List of channel IDs to order
+    """
+    try:
+        base_url = _get_base_url()
+        reordered_count = 0
+
+        for channel_id in channel_ids:
+            try:
+                # Get channel info
+                channel = fetch_data_from_url(f"{base_url}/api/channels/channels/{channel_id}/")
+                if not channel:
+                    logging.warning(f"Channel {channel_id} not found")
+                    continue
+
+                channel_name = channel.get('name', f'Channel {channel_id}')
+
+                # Get current streams
+                streams = fetch_data_from_url(f"{base_url}/api/channels/channels/{channel_id}/streams/")
+                if not streams or not isinstance(streams, list):
+                    continue
+
+                stream_ids = [s['id'] for s in streams if isinstance(s, dict) and 'id' in s]
+                if len(stream_ids) < 2:
+                    continue
+
+                # Fetch stream details and parse times
+                streams_data = []
+                for idx, stream_id in enumerate(stream_ids):
+                    stream_data = fetch_data_from_url(f"{base_url}/api/channels/streams/{stream_id}/")
+                    if stream_data:
+                        stream_name = stream_data.get('name', '')
+                        event_time = parse_event_time_multi_format(stream_name)
+
+                        # Extract number for ordering (e.g., "PPV 1", "EVENT 06", "UFC 02")
+                        num_match = re.search(r'(?:PPV|EVENT|UFC|NBA)\s*(\d+)', stream_name, re.IGNORECASE)
+                        item_num = int(num_match.group(1)) if num_match else 999
+
+                        streams_data.append({
+                            'id': stream_id,
+                            'name': stream_name,
+                            'event_time': event_time,
+                            'item_num': item_num,
+                            'original_index': idx
+                        })
+
+                if not streams_data:
+                    continue
+
+                # Check if any streams have event times
+                has_times = any(s['event_time'] for s in streams_data)
+
+                if has_times:
+                    # Sort by event time
+                    now = datetime.utcnow()
+                    buffer_hours = 2
+
+                    upcoming = []
+                    past = []
+
+                    for s in streams_data:
+                        if s['event_time']:
+                            hours_diff = (now - s['event_time']).total_seconds() / 3600
+                            if hours_diff < buffer_hours:
+                                upcoming.append(s)
+                            else:
+                                past.append(s)
+                        else:
+                            past.append(s)
+
+                    # Sort upcoming by time, past by time desc
+                    upcoming.sort(key=lambda x: (x['event_time'], x['item_num']))
+                    past.sort(key=lambda x: (x['event_time'] or datetime.min, x['item_num']), reverse=True)
+
+                    ordered = upcoming + past
+                else:
+                    # No times, sort by item number
+                    streams_data.sort(key=lambda x: x['item_num'])
+                    ordered = streams_data
+
+                reordered_ids = [s['id'] for s in ordered]
+
+                if reordered_ids != stream_ids:
+                    success = update_channel_streams(str(channel_id), reordered_ids)
+                    if success:
+                        logging.info(f"✓ Reordered {channel_name}: {len([s for s in ordered if s.get('event_time') and (datetime.utcnow() - s['event_time']).total_seconds() / 3600 < 2])} upcoming")
+                        reordered_count += 1
+                    else:
+                        logging.error(f"✗ Failed to update {channel_name}")
+
+            except Exception as e:
+                logging.error(f"Error ordering channel {channel_id}: {e}")
+
+        logging.info(f"Event ordering complete: {reordered_count}/{len(channel_ids)} channels updated")
+
+    except Exception as e:
+        logging.error(f"Failed to apply event time ordering: {e}")
+
+
+def apply_event_time_ordering():
+    """Apply event time ordering to all channels.
+
+    This function fetches all channels and reorders their streams
+    based on event time, prioritizing live and upcoming events.
+    """
+    try:
+        base_url = _get_base_url()
+
+        # Get all channels
+        all_channels = fetch_data_from_url(f"{base_url}/api/channels/channels/")
+        if not all_channels:
+            logging.warning("No channels found for event time ordering")
+            return
+
+        reordered_count = 0
+
+        for channel in all_channels:
+            if not isinstance(channel, dict) or 'id' not in channel:
+                continue
+
+            channel_id = str(channel['id'])
+            channel_name = channel.get('name', f'Channel {channel_id}')
+
+            # Get current streams for this channel
+            streams = fetch_data_from_url(f"{base_url}/api/channels/channels/{channel_id}/streams/")
+            if not streams or not isinstance(streams, list):
+                continue
+
+            # Get stream IDs in current order
+            stream_ids = [s['id'] for s in streams if isinstance(s, dict) and 'id' in s]
+
+            if len(stream_ids) < 2:
+                continue  # No need to reorder single stream or empty
+
+            # Check if any streams have event times
+            has_event_times = False
+            for s in streams:
+                if parse_event_time(s.get('name', '')):
+                    has_event_times = True
+                    break
+
+            if not has_event_times:
+                continue  # Skip channels without event times
+
+            # Reorder streams
+            reordered_ids = reorder_streams_by_event_time(channel_id, stream_ids)
+
+            if reordered_ids != stream_ids:
+                # Update channel with new stream order
+                success = update_channel_streams(channel_id, reordered_ids)
+                if success:
+                    logging.info(f"✓ Reordered streams for channel {channel_name} by event time")
+                    reordered_count += 1
+                else:
+                    logging.error(f"✗ Failed to update stream order for channel {channel_name}")
+
+        logging.info(f"Event time ordering complete: {reordered_count} channels reordered")
+
+    except Exception as e:
+        logging.error(f"Failed to apply event time ordering: {e}")
+
 
 class StreamCheckConfig:
     """Configuration for stream checking service."""
@@ -89,7 +414,7 @@ class StreamCheckConfig:
     DEFAULT_CONFIG = {
         'enabled': True,
         'check_interval': 300,  # DEPRECATED - checks now only triggered by M3U refresh
-        'pipeline_mode': 'pipeline_1_5',  # Pipeline mode: 'disabled', 'pipeline_1', 'pipeline_1_5', 'pipeline_2', 'pipeline_2_5', 'pipeline_3'
+        'pipeline_mode': 'pipeline_1_5',  # Pipeline mode: 'disabled', 'pipeline_1', 'pipeline_1_5', 'pipeline_2', 'pipeline_2_5', 'pipeline_3', 'pipeline_4'
         'global_check_schedule': {
             'enabled': True,
             'cron_expression': '0 3 * * *',  # Cron expression: default is daily at 3:00 AM
@@ -742,7 +1067,10 @@ class StreamCheckerService:
         
         # Event for immediate config change notification
         self.config_changed = threading.Event()
-        
+
+        # Track last event ordering time
+        self.last_event_ordering_time = None
+
         logging.info("Stream Checker Service initialized")
     
     def start(self):
@@ -831,11 +1159,52 @@ class StreamCheckerService:
                 # This will set global_action_in_progress if a global action is triggered
                 if not self.global_action_in_progress:
                     self._check_global_schedule()
-                
+
+                # Check if it's time for event ordering
+                self._check_event_ordering_schedule()
+
             except Exception as e:
                 logging.error(f"Error in scheduler loop: {e}", exc_info=True)
-        
+
         logging.info("Stream checker scheduler stopped")
+
+    def _check_event_ordering_schedule(self):
+        """Check if it's time to run event ordering on configured channels."""
+        try:
+            # Load event ordering config from channel_regex_config.json
+            config_file = CONFIG_DIR / 'channel_regex_config.json'
+            if not config_file.exists():
+                return
+
+            with open(config_file, 'r', encoding='utf-8') as f:
+                regex_config = json.load(f)
+
+            event_config = regex_config.get('event_ordering', {})
+            if not event_config.get('enabled', False):
+                return
+
+            frequency = event_config.get('frequency', 300)  # Default 5 minutes
+            channels = event_config.get('channels', [])
+
+            if not channels:
+                return
+
+            now = datetime.now()
+
+            # Check if enough time has passed since last ordering
+            if self.last_event_ordering_time:
+                elapsed = (now - self.last_event_ordering_time).total_seconds()
+                if elapsed < frequency:
+                    return
+
+            # Run event ordering
+            logging.info(f"Running event time ordering on {len(channels)} channels")
+            self.last_event_ordering_time = now
+
+            apply_event_time_ordering_for_channels(channels)
+
+        except Exception as e:
+            logging.error(f"Error in event ordering schedule: {e}")
     
     def _queue_updated_channels(self):
         """Queue channels that have received M3U updates.
@@ -848,8 +1217,8 @@ class StreamCheckerService:
         """
         pipeline_mode = self.config.get('pipeline_mode', 'pipeline_1_5')
         
-        # Disabled and Pipelines 2, 2.5, and 3 don't check on update
-        if pipeline_mode in ['disabled', 'pipeline_2', 'pipeline_2_5', 'pipeline_3']:
+        # Disabled and Pipelines 2, 2.5, 3, and 4 don't check on update
+        if pipeline_mode in ['disabled', 'pipeline_2', 'pipeline_2_5', 'pipeline_3', 'pipeline_4']:
             logging.info(f"Skipping channel queueing - {pipeline_mode} mode does not check on update")
             return
         
@@ -890,9 +1259,9 @@ class StreamCheckerService:
         # Get pipeline mode
         pipeline_mode = self.config.get('pipeline_mode', 'pipeline_1_5')
         
-        # Only pipelines with .5 suffix and pipeline_3 have scheduled global actions
+        # Only pipelines with .5 suffix, pipeline_3, and pipeline_4 have scheduled global actions
         # Disabled mode skips all automation
-        if pipeline_mode not in ['pipeline_1_5', 'pipeline_2_5', 'pipeline_3']:
+        if pipeline_mode not in ['pipeline_1_5', 'pipeline_2_5', 'pipeline_3', 'pipeline_4']:
             logging.debug(f"Skipping global schedule check - {pipeline_mode} mode does not have scheduled global actions")
             return
         
@@ -974,26 +1343,33 @@ class StreamCheckerService:
     
     def _perform_global_action(self):
         """Perform a complete global action: Update M3U, Match streams, and Check all channels.
-        
+
         This is the comprehensive global action that:
         1. Reloads enabled M3U accounts
         2. Matches new streams with regex patterns
-        3. Checks every channel from every stream (bypassing 2-hour immunity)
-        
+        3. (Pipeline 4 only) Reorders streams by event time
+        4. Checks every channel from every stream (bypassing 2-hour immunity)
+
         During this operation, regular automated updates, matching, and checking are paused.
         """
         try:
             # Set global action flag to prevent concurrent operations
             self.global_action_in_progress = True
+            pipeline_mode = self.config.get('pipeline_mode', 'pipeline_1_5')
+            is_pipeline_4 = pipeline_mode == 'pipeline_4'
+            total_steps = 4 if is_pipeline_4 else 3
+
             logging.info("=" * 80)
             logging.info("STARTING GLOBAL ACTION")
+            if is_pipeline_4:
+                logging.info("Pipeline 4 mode: Event time ordering enabled")
             logging.info("Regular automation paused during global action")
             logging.info("=" * 80)
-            
+
             automation_manager = None
-            
+
             # Step 1: Update M3U playlists
-            logging.info("Step 1/3: Updating M3U playlists...")
+            logging.info(f"Step 1/{total_steps}: Updating M3U playlists...")
             try:
                 from automated_stream_manager import AutomatedStreamManager
                 automation_manager = AutomatedStreamManager()
@@ -1004,9 +1380,9 @@ class StreamCheckerService:
                     logging.warning("⚠ M3U playlist update had issues")
             except Exception as e:
                 logging.error(f"✗ Failed to update M3U playlists: {e}")
-            
+
             # Step 2: Match and assign streams
-            logging.info("Step 2/3: Matching and assigning streams...")
+            logging.info(f"Step 2/{total_steps}: Matching and assigning streams...")
             try:
                 if automation_manager is not None:
                     assignments = automation_manager.discover_and_assign_streams()
@@ -1018,9 +1394,19 @@ class StreamCheckerService:
                     logging.warning("⚠ Skipping stream matching - automation manager not available")
             except Exception as e:
                 logging.error(f"✗ Failed to match streams: {e}")
-            
-            # Step 3: Check all channels (force check to bypass immunity)
-            logging.info("Step 3/3: Queueing all channels for checking...")
+
+            # Step 3 (Pipeline 4 only): Apply event time ordering
+            if is_pipeline_4:
+                logging.info(f"Step 3/{total_steps}: Applying event time ordering...")
+                try:
+                    apply_event_time_ordering()
+                    logging.info("✓ Event time ordering applied successfully")
+                except Exception as e:
+                    logging.error(f"✗ Failed to apply event time ordering: {e}")
+
+            # Step 3/4: Check all channels (force check to bypass immunity)
+            check_step = 4 if is_pipeline_4 else 3
+            logging.info(f"Step {check_step}/{total_steps}: Queueing all channels for checking...")
             self._queue_all_channels(force_check=True)
             
             logging.info("=" * 80)
@@ -1468,9 +1854,13 @@ class StreamCheckerService:
                 step_detail='Confirming stream order was applied'
             )
             time.sleep(0.5)  # Brief delay to ensure API has processed the update
-            updated_channel_data = fetch_data_from_url(f"{base_url}/api/channels/channels/{channel_id}/")
+            # Use include_streams=true to get correct order from database (workaround for Dispatcharr bug)
+            updated_channel_data = fetch_data_from_url(f"{base_url}/api/channels/channels/{channel_id}/?include_streams=true")
             if updated_channel_data:
-                updated_stream_ids = updated_channel_data.get('streams', [])
+                # Extract stream IDs from full stream objects
+                streams = updated_channel_data.get('streams', [])
+                updated_stream_ids = [s['id'] if isinstance(s, dict) else s for s in streams]
+                logging.info(f"🔍 DEBUG GET: Verification streams order: {updated_stream_ids[:10]}...")
                 if updated_stream_ids == reordered_ids:
                     logging.info(f"✓ Verified: Channel {channel_name} streams reordered correctly")
                 else:

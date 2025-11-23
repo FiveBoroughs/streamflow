@@ -504,6 +504,88 @@ def test_regex_pattern_live():
         logging.error(f"Error testing regex patterns live: {e}")
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/event-ordering', methods=['GET'])
+def get_event_ordering_config():
+    """Get event ordering configuration."""
+    try:
+        config_file = CONFIG_DIR / 'channel_regex_config.json'
+        if config_file.exists():
+            with open(config_file, 'r') as f:
+                config = json.load(f)
+                return jsonify(config.get('event_ordering', {
+                    'enabled': False,
+                    'frequency': 300,
+                    'channels': []
+                }))
+        return jsonify({
+            'enabled': False,
+            'frequency': 300,
+            'channels': []
+        })
+    except Exception as e:
+        logging.error(f"Error getting event ordering config: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/event-ordering', methods=['PUT'])
+def update_event_ordering_config():
+    """Update event ordering configuration."""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+
+        config_file = CONFIG_DIR / 'channel_regex_config.json'
+
+        # Load existing config
+        if config_file.exists():
+            with open(config_file, 'r') as f:
+                config = json.load(f)
+        else:
+            config = {'patterns': {}}
+
+        # Update event ordering section
+        config['event_ordering'] = {
+            'enabled': data.get('enabled', False),
+            'frequency': data.get('frequency', 300),
+            'channels': data.get('channels', [])
+        }
+
+        # Save config
+        with open(config_file, 'w') as f:
+            json.dump(config, f, indent=2, ensure_ascii=False)
+
+        logging.info(f"Event ordering config updated: {config['event_ordering']}")
+        return jsonify({"message": "Event ordering configuration updated"})
+    except Exception as e:
+        logging.error(f"Error updating event ordering config: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/event-ordering/trigger', methods=['POST'])
+def trigger_event_ordering():
+    """Manually trigger event ordering on configured channels."""
+    try:
+        from stream_checker_service import apply_event_time_ordering_for_channels
+
+        config_file = CONFIG_DIR / 'channel_regex_config.json'
+        if config_file.exists():
+            with open(config_file, 'r') as f:
+                config = json.load(f)
+                channels = config.get('event_ordering', {}).get('channels', [])
+
+                if channels:
+                    apply_event_time_ordering_for_channels(channels)
+                    return jsonify({
+                        "message": f"Event ordering triggered for {len(channels)} channels",
+                        "channels": channels
+                    })
+                else:
+                    return jsonify({"error": "No channels configured for event ordering"}), 400
+        else:
+            return jsonify({"error": "No event ordering configuration found"}), 400
+    except Exception as e:
+        logging.error(f"Error triggering event ordering: {e}")
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/api/changelog', methods=['GET'])
 def get_changelog():
     """Get recent changelog entries from both automation and stream checker."""

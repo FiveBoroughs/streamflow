@@ -2,7 +2,7 @@
 
 ## Overview
 
-The StreamFlow application now supports 5 different pipeline modes, each with different behaviors for updating M3U playlists, matching streams to channels, and checking stream quality. This provides flexibility for users with different needs and connection constraints.
+The StreamFlow application now supports 6 different pipeline modes, each with different behaviors for updating M3U playlists, matching streams to channels, and checking stream quality. This provides flexibility for users with different needs and connection constraints.
 
 ## Pipeline Modes
 
@@ -139,6 +139,42 @@ The StreamFlow application now supports 5 different pipeline modes, each with di
 
 ---
 
+### Pipeline 4: Pipeline 3 + Event Time Ordering
+
+**Configuration:**
+```json
+{
+  "pipeline_mode": "pipeline_4",
+  "queue": {
+    "check_on_update": false
+  },
+  "global_check_schedule": {
+    "enabled": true,
+    "frequency": "daily",
+    "hour": 3,
+    "minute": 0
+  }
+}
+```
+
+**Behavior:**
+- All features of Pipeline 3
+- **PLUS:** Event Time Ordering
+  - Parses `start:YYYY-MM-DD HH:MM:SS` from stream names
+  - Reorders streams within channels by event time
+  - Live and upcoming events are prioritized first
+  - Past events and streams without times maintain original order
+
+**Use Case:** Users with event-based channels (e.g., UFC, PPV events) who want streams automatically ordered so the current or next upcoming event appears first.
+
+**Steps during Global Action:**
+1. Update all M3U playlists
+2. Match all streams to channels
+3. **Apply event time ordering** (new step)
+4. Check ALL channels
+
+---
+
 ## Global Action
 
 ### What is a Global Action?
@@ -151,7 +187,7 @@ A Global Action is a comprehensive operation that:
 ### When Does it Run?
 
 Global Actions run:
-- **Automatically:** Based on the scheduled time (for Pipeline 1.5, 2.5, and 3)
+- **Automatically:** Based on the scheduled time (for Pipeline 1.5, 2.5, 3, and 4)
 - **Manually:** Via the "Global Action" button in the UI or API call
 
 ### Exclusive Execution
