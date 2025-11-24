@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Box,
   Typography,
@@ -14,16 +15,15 @@ import {
   RadioGroup,
   Radio,
   FormControl,
-  Chip,
-  Autocomplete
+  Chip
 } from '@mui/material';
-import { automationAPI, streamCheckerAPI, eventOrderingAPI, channelsAPI } from '../services/api';
+import { automationAPI, streamCheckerAPI, eventOrderingAPI } from '../services/api';
 
 function AutomationSettings() {
+  const navigate = useNavigate();
   const [config, setConfig] = useState(null);
   const [streamCheckerConfig, setStreamCheckerConfig] = useState(null);
   const [eventOrderingConfig, setEventOrderingConfig] = useState(null);
-  const [channels, setChannels] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [triggering, setTriggering] = useState(false);
@@ -37,16 +37,14 @@ function AutomationSettings() {
   const loadConfig = async () => {
     try {
       setLoading(true);
-      const [automationResponse, streamCheckerResponse, eventOrderingResponse, channelsResponse] = await Promise.all([
+      const [automationResponse, streamCheckerResponse, eventOrderingResponse] = await Promise.all([
         automationAPI.getConfig(),
         streamCheckerAPI.getConfig(),
-        eventOrderingAPI.getConfig(),
-        channelsAPI.getChannels()
+        eventOrderingAPI.getConfig()
       ]);
       setConfig(automationResponse.data);
       setStreamCheckerConfig(streamCheckerResponse.data);
       setEventOrderingConfig(eventOrderingResponse.data);
-      setChannels(channelsResponse.data || []);
     } catch (err) {
       console.error('Failed to load config:', err);
       setError('Failed to load automation configuration');
@@ -461,7 +459,7 @@ function AutomationSettings() {
 
         {/* Event Ordering Settings */}
         {pipelineMode && pipelineMode !== 'disabled' && eventOrderingConfig && (
-          <Grid item xs={12}>
+          <Grid item xs={12} md={6}>
             <Card>
               <CardContent>
                 <Typography variant="h6" gutterBottom>
@@ -480,7 +478,7 @@ function AutomationSettings() {
                     />
                   }
                   label="Enable Event Time Ordering"
-                  sx={{ mb: 2 }}
+                  sx={{ mb: 2, display: 'block' }}
                 />
 
                 <TextField
@@ -495,62 +493,40 @@ function AutomationSettings() {
                   disabled={!eventOrderingConfig.enabled}
                 />
 
-                <Autocomplete
-                  multiple
-                  options={channels}
-                  getOptionLabel={(option) => {
-                    if (typeof option === 'number') {
-                      const channel = channels.find(c => c.id === option);
-                      return channel ? `${channel.name} (ID: ${channel.id})` : `Channel ${option}`;
-                    }
-                    return `${option.name} (ID: ${option.id})`;
-                  }}
-                  value={channels.filter(c => (eventOrderingConfig.channels || []).includes(c.id))}
-                  onChange={(e, newValue) => {
-                    handleEventOrderingChange('channels', newValue.map(c => c.id));
-                  }}
-                  renderInput={(params) => (
-                    <TextField
-                      {...params}
-                      label="Channels to Order"
-                      placeholder="Select channels..."
-                      helperText="Select channels that contain event streams (e.g., UFC Events, NBA Events)"
-                      margin="normal"
-                    />
-                  )}
-                  renderTags={(value, getTagProps) =>
-                    value.map((option, index) => (
-                      <Chip
-                        label={option.name}
-                        {...getTagProps({ index })}
-                        key={option.id}
-                      />
-                    ))
-                  }
-                  disabled={!eventOrderingConfig.enabled}
-                  sx={{ mt: 1 }}
-                />
+                {/* Show configured channels count */}
+                {eventOrderingConfig.channels && Object.keys(eventOrderingConfig.channels).length > 0 && (
+                  <Box sx={{ mt: 2, mb: 2 }}>
+                    <Typography variant="body2" color="text.secondary">
+                      Configured channels:
+                    </Typography>
+                    <Box display="flex" flexWrap="wrap" gap={0.5} mt={1}>
+                      {Object.entries(eventOrderingConfig.channels).map(([channelId, channelConfig]) => (
+                        <Chip
+                          key={channelId}
+                          label={channelConfig.name || `Channel ${channelId}`}
+                          size="small"
+                          variant="outlined"
+                        />
+                      ))}
+                    </Box>
+                  </Box>
+                )}
 
                 <Box sx={{ mt: 2, display: 'flex', gap: 2 }}>
                   <Button
+                    variant="contained"
+                    onClick={() => navigate('/event-ordering')}
+                  >
+                    Configure Channels
+                  </Button>
+                  <Button
                     variant="outlined"
                     onClick={handleTriggerEventOrdering}
-                    disabled={triggering || !eventOrderingConfig.enabled || !eventOrderingConfig.channels?.length}
+                    disabled={triggering || !eventOrderingConfig.enabled || !eventOrderingConfig.channels || Object.keys(eventOrderingConfig.channels).length === 0}
                   >
                     {triggering ? <CircularProgress size={20} /> : 'Trigger Now'}
                   </Button>
                 </Box>
-
-                <Alert severity="info" sx={{ mt: 2 }}>
-                  <Typography variant="body2">
-                    Supported time formats:
-                    <ul style={{ marginTop: '4px', marginBottom: '0' }}>
-                      <li><code>start:2025-11-22 18:55:00</code> (UFC/NBA Events)</li>
-                      <li><code>/ Nov 22 : 8PM UK</code> (LIVE EVENT PPV)</li>
-                      <li><code>- 7PM Samourai MMA</code> (time only)</li>
-                    </ul>
-                  </Typography>
-                </Alert>
               </CardContent>
             </Card>
           </Grid>

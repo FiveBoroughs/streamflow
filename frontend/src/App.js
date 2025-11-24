@@ -23,7 +23,8 @@ import {
   History as HistoryIcon,
   Menu as MenuIcon,
   Close as CloseIcon,
-  CheckCircle as StreamCheckerIcon
+  CheckCircle as StreamCheckerIcon,
+  Schedule as EventOrderingIcon
 } from '@mui/icons-material';
 
 import Dashboard from './components/Dashboard';
@@ -32,6 +33,7 @@ import AutomationSettings from './components/AutomationSettings';
 import Changelog from './components/Changelog';
 import StreamChecker from './components/StreamChecker';
 import SetupWizard from './components/SetupWizard';
+import EventOrderingConfig from './components/EventOrderingConfig';
 import { api } from './services/api';
 
 const drawerWidth = 240;
@@ -69,6 +71,7 @@ function App() {
     { text: 'Dashboard', icon: <DashboardIcon />, path: '/' },
     { text: 'Stream Checker', icon: <StreamCheckerIcon />, path: '/stream-checker' },
     { text: 'Channel Configuration', icon: <PlaylistIcon />, path: '/channels' },
+    { text: 'Event Ordering', icon: <EventOrderingIcon />, path: '/event-ordering' },
     { text: 'Automation Settings', icon: <SettingsIcon />, path: '/settings' },
     { text: 'Changelog', icon: <HistoryIcon />, path: '/changelog' },
   ];
@@ -172,6 +175,7 @@ function App() {
             <Route path="/" element={<Dashboard />} />
             <Route path="/stream-checker" element={<StreamChecker />} />
             <Route path="/channels" element={<ChannelConfiguration />} />
+            <Route path="/event-ordering" element={<EventOrderingConfig />} />
             <Route path="/settings" element={<AutomationSettings />} />
             <Route path="/changelog" element={<Changelog />} />
           </Routes>

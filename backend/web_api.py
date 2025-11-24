@@ -257,6 +257,52 @@ def get_channel_logo(logo_id):
         logging.error(f"Error fetching logo: {e}")
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/channels/<int:channel_id>/streams', methods=['GET'])
+def get_channel_streams(channel_id):
+    """Get all streams for a specific channel from Dispatcharr."""
+    try:
+        base_url = _get_base_url()
+
+        # Get channel details including streams
+        channel = fetch_data_from_url(f"{base_url}/api/channels/channels/{channel_id}/")
+
+        if channel is None:
+            return jsonify({"error": "Channel not found"}), 404
+
+        # Extract streams from channel data
+        # Streams can be a list of IDs or a list of objects
+        streams = channel.get('streams', [])
+
+        # Return streams with name and other relevant info
+        stream_list = []
+        for idx, stream in enumerate(streams):
+            # Handle both stream ID (int) and stream object (dict)
+            if isinstance(stream, int):
+                # Fetch stream details
+                stream_data = fetch_data_from_url(f"{base_url}/api/channels/streams/{stream}/")
+                if stream_data:
+                    stream_list.append({
+                        'id': stream,
+                        'name': stream_data.get('name', ''),
+                        'url': stream_data.get('url', ''),
+                        'item_number': idx
+                    })
+            elif isinstance(stream, dict):
+                stream_list.append({
+                    'id': stream.get('id'),
+                    'name': stream.get('name', ''),
+                    'url': stream.get('url', ''),
+                    'item_number': stream.get('item_number', idx)
+                })
+
+        # Sort by item_number
+        stream_list.sort(key=lambda x: x.get('item_number', 0))
+
+        return jsonify(stream_list)
+    except Exception as e:
+        logging.error(f"Error fetching channel streams: {e}")
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/api/regex-patterns', methods=['GET'])
 def get_regex_patterns():
     """Get all regex patterns for channel matching."""
@@ -515,12 +561,12 @@ def get_event_ordering_config():
                 return jsonify(config.get('event_ordering', {
                     'enabled': False,
                     'frequency': 300,
-                    'channels': []
+                    'channels': {}
                 }))
         return jsonify({
             'enabled': False,
             'frequency': 300,
-            'channels': []
+            'channels': {}
         })
     except Exception as e:
         logging.error(f"Error getting event ordering config: {e}")
@@ -547,7 +593,7 @@ def update_event_ordering_config():
         config['event_ordering'] = {
             'enabled': data.get('enabled', False),
             'frequency': data.get('frequency', 300),
-            'channels': data.get('channels', [])
+            'channels': data.get('channels', {})
         }
 
         # Save config
@@ -570,13 +616,16 @@ def trigger_event_ordering():
         if config_file.exists():
             with open(config_file, 'r') as f:
                 config = json.load(f)
-                channels = config.get('event_ordering', {}).get('channels', [])
+                channels_config = config.get('event_ordering', {}).get('channels', {})
 
-                if channels:
-                    apply_event_time_ordering_for_channels(channels)
+                # Extract channel IDs from the config (keys of the channels object)
+                channel_ids = [int(cid) for cid in channels_config.keys()]
+
+                if channel_ids:
+                    apply_event_time_ordering_for_channels(channel_ids, channels_config)
                     return jsonify({
-                        "message": f"Event ordering triggered for {len(channels)} channels",
-                        "channels": channels
+                        "message": f"Event ordering triggered for {len(channel_ids)} channels",
+                        "channels": channel_ids
                     })
                 else:
                     return jsonify({"error": "No channels configured for event ordering"}), 400

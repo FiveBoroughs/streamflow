@@ -180,6 +180,71 @@ def reorder_streams_by_event_time(channel_id: str, stream_ids: List[int]) -> Lis
         return stream_ids
 
 
+def parse_event_time_with_pattern(stream_name: str, pattern: str) -> tuple:
+    """Parse event time from stream name using a custom regex pattern with named groups.
+
+    Expected named groups: year, month, day, hour, minute, second, ampm, order, league
+
+    Args:
+        stream_name: The stream name to parse
+        pattern: Regex pattern with named capture groups
+
+    Returns:
+        tuple of (datetime, order_num) - datetime object if found (None otherwise), order number for tiebreaking
+    """
+    try:
+        match = re.search(pattern, stream_name, re.IGNORECASE)
+        if not match:
+            return (None, 999)
+
+        groups = match.groupdict()
+
+        # Extract order for tiebreaking
+        order_val = groups.get('order')
+        order_num = int(order_val) if order_val and order_val.isdigit() else 999
+
+        # Extract components with defaults
+        now = datetime.utcnow()
+
+        # Year
+        year = int(groups.get('year', now.year)) if groups.get('year') else now.year
+
+        # Month - can be numeric or text
+        month_val = groups.get('month')
+        if month_val:
+            if month_val.isdigit():
+                month = int(month_val)
+            else:
+                months = {'jan':1,'feb':2,'mar':3,'apr':4,'may':5,'jun':6,
+                         'jul':7,'aug':8,'sep':9,'oct':10,'nov':11,'dec':12}
+                month = months.get(month_val.lower()[:3], now.month)
+        else:
+            month = now.month
+
+        # Day
+        day = int(groups.get('day', now.day)) if groups.get('day') else now.day
+
+        # Hour
+        hour = int(groups.get('hour', 0)) if groups.get('hour') else 0
+
+        # Handle AM/PM
+        ampm = groups.get('ampm', '').upper()
+        if ampm == 'PM' and hour != 12:
+            hour += 12
+        elif ampm == 'AM' and hour == 12:
+            hour = 0
+
+        # Minute and second
+        minute = int(groups.get('minute', 0)) if groups.get('minute') else 0
+        second = int(groups.get('second', 0)) if groups.get('second') else 0
+
+        return (datetime(year, month, day, hour, minute, second), order_num)
+
+    except Exception as e:
+        logging.debug(f"Failed to parse event time with pattern: {e}")
+        return (None, 999)
+
+
 def parse_event_time_multi_format(stream_name: str) -> Optional[datetime]:
     """Parse event time from stream name supporting multiple formats.
 
@@ -243,11 +308,12 @@ def parse_event_time_multi_format(stream_name: str) -> Optional[datetime]:
     return None
 
 
-def apply_event_time_ordering_for_channels(channel_ids: List[int]):
+def apply_event_time_ordering_for_channels(channel_ids: List[int], channels_config: dict = None):
     """Apply event time ordering to specific channels.
 
     Args:
         channel_ids: List of channel IDs to order
+        channels_config: Optional dict with per-channel config including custom patterns
     """
     try:
         base_url = _get_base_url()
@@ -262,6 +328,11 @@ def apply_event_time_ordering_for_channels(channel_ids: List[int]):
                     continue
 
                 channel_name = channel.get('name', f'Channel {channel_id}')
+
+                # Get custom pattern for this channel if available
+                custom_pattern = None
+                if channels_config and str(channel_id) in channels_config:
+                    custom_pattern = channels_config[str(channel_id)].get('pattern')
 
                 # Get current streams
                 streams = fetch_data_from_url(f"{base_url}/api/channels/channels/{channel_id}/streams/")
@@ -278,11 +349,15 @@ def apply_event_time_ordering_for_channels(channel_ids: List[int]):
                     stream_data = fetch_data_from_url(f"{base_url}/api/channels/streams/{stream_id}/")
                     if stream_data:
                         stream_name = stream_data.get('name', '')
-                        event_time = parse_event_time_multi_format(stream_name)
 
-                        # Extract number for ordering (e.g., "PPV 1", "EVENT 06", "UFC 02")
-                        num_match = re.search(r'(?:PPV|EVENT|UFC|NBA)\s*(\d+)', stream_name, re.IGNORECASE)
-                        item_num = int(num_match.group(1)) if num_match else 999
+                        # Use custom pattern if available, otherwise fall back to multi-format parser
+                        if custom_pattern:
+                            event_time, item_num = parse_event_time_with_pattern(stream_name, custom_pattern)
+                        else:
+                            event_time = parse_event_time_multi_format(stream_name)
+                            # Fall back to extracting number for ordering (e.g., "PPV 1", "EVENT 06", "UFC 02")
+                            num_match = re.search(r'(?:PPV|EVENT|UFC|NBA)\s*(\d+)', stream_name, re.IGNORECASE)
+                            item_num = int(num_match.group(1)) if num_match else 999
 
                         streams_data.append({
                             'id': stream_id,
@@ -1184,9 +1259,19 @@ class StreamCheckerService:
                 return
 
             frequency = event_config.get('frequency', 300)  # Default 5 minutes
-            channels = event_config.get('channels', [])
+            channels_data = event_config.get('channels', {})
 
-            if not channels:
+            # Handle backward compatibility: channels can be array (old) or object (new)
+            if isinstance(channels_data, list):
+                # Old format: list of channel IDs
+                channel_ids = [int(cid) for cid in channels_data]
+                channels_config = {}
+            else:
+                # New format: object with channel IDs as keys
+                channel_ids = [int(cid) for cid in channels_data.keys()]
+                channels_config = channels_data
+
+            if not channel_ids:
                 return
 
             now = datetime.now()
@@ -1198,10 +1283,10 @@ class StreamCheckerService:
                     return
 
             # Run event ordering
-            logging.info(f"Running event time ordering on {len(channels)} channels")
+            logging.info(f"Running event time ordering on {len(channel_ids)} channels")
             self.last_event_ordering_time = now
 
-            apply_event_time_ordering_for_channels(channels)
+            apply_event_time_ordering_for_channels(channel_ids, channels_config)
 
         except Exception as e:
             logging.error(f"Error in event ordering schedule: {e}")
