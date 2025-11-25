@@ -36,7 +36,8 @@ from api_utils import (
     fetch_data_from_url,
     update_channel_streams,
     _get_base_url,
-    patch_request
+    patch_request,
+    get_valid_stream_ids
 )
 
 # Import dead streams tracker
@@ -193,8 +194,13 @@ def parse_event_time_with_pattern(stream_name: str, pattern: str) -> tuple:
         tuple of (datetime, order_num) - datetime object if found (None otherwise), order number for tiebreaking
     """
     try:
-        match = re.search(pattern, stream_name, re.IGNORECASE)
+        # Convert JavaScript-style named groups (?<name>) to Python-style (?P<name>)
+        python_pattern = re.sub(r'\(\?<([^>]+)>', r'(?P<\1>', pattern)
+
+        match = re.search(python_pattern, stream_name, re.IGNORECASE)
         if not match:
+            logging.warning(f"Pattern did not match stream: {stream_name[:80]}")
+            logging.debug(f"Pattern used: {pattern}")
             return (None, 999)
 
         groups = match.groupdict()
@@ -308,6 +314,288 @@ def parse_event_time_multi_format(stream_name: str) -> Optional[datetime]:
     return None
 
 
+def get_moved_streams_file():
+    """Get path to the moved streams tracking file."""
+    return Path(__file__).parent / 'data' / 'moved_streams.json'
+
+
+def load_moved_streams():
+    """Load tracking data for moved streams."""
+    filepath = get_moved_streams_file()
+    if filepath.exists():
+        try:
+            with open(filepath, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            logging.error(f"Error loading moved streams: {e}")
+    return {"moved_streams": []}
+
+
+def save_moved_streams(data):
+    """Save tracking data for moved streams."""
+    filepath = get_moved_streams_file()
+    filepath.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with open(filepath, 'w') as f:
+            json.dump(data, f, indent=2)
+    except Exception as e:
+        logging.error(f"Error saving moved streams: {e}")
+
+
+def move_streams_to_channel(stream_ids: List[int], target_channel_id: int, valid_stream_ids: set = None) -> bool:
+    """Move streams to a target channel in Dispatcharr.
+
+    Args:
+        stream_ids: List of stream IDs to move
+        target_channel_id: Channel ID to move streams to
+        valid_stream_ids: Pre-fetched set of valid stream IDs to avoid redundant API calls
+
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        base_url = _get_base_url()
+
+        # Get current streams in target channel
+        target_streams = fetch_data_from_url(f"{base_url}/api/channels/channels/{target_channel_id}/streams/")
+        if target_streams is None:
+            target_streams = []
+
+        current_ids = [s['id'] for s in target_streams if isinstance(s, dict) and 'id' in s]
+
+        # Add new streams to the end
+        new_ids = current_ids + stream_ids
+
+        # Safeguard: ensure we're not creating duplicates
+        if len(new_ids) != len(set(new_ids)):
+            logging.warning(f"Removing {len(new_ids) - len(set(new_ids))} duplicate streams for channel {target_channel_id}")
+            # Keep order, remove duplicates
+            seen = set()
+            new_ids = [x for x in new_ids if not (x in seen or seen.add(x))]
+
+        # Build valid set from current + new streams (no need to fetch all)
+        local_valid_ids = set(new_ids)
+
+        # Update target channel
+        success = update_channel_streams(str(target_channel_id), new_ids, local_valid_ids, allow_dead_streams=True)
+        if success:
+            logging.info(f"Moved {len(stream_ids)} streams to channel {target_channel_id}")
+        return success
+
+    except Exception as e:
+        logging.error(f"Error moving streams to channel {target_channel_id}: {e}")
+        return False
+
+
+def remove_streams_from_channel(stream_ids: List[int], channel_id: int, valid_stream_ids: set = None) -> bool:
+    """Remove streams from a channel in Dispatcharr.
+
+    Args:
+        stream_ids: List of stream IDs to remove
+        channel_id: Channel ID to remove streams from
+        valid_stream_ids: Pre-fetched set of valid stream IDs to avoid redundant API calls
+
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        base_url = _get_base_url()
+
+        # Get current streams in channel
+        channel_streams = fetch_data_from_url(f"{base_url}/api/channels/channels/{channel_id}/streams/")
+        if not channel_streams:
+            return True
+
+        current_ids = [s['id'] for s in channel_streams if isinstance(s, dict) and 'id' in s]
+
+        # Remove specified streams
+        new_ids = [sid for sid in current_ids if sid not in stream_ids]
+
+        # Safeguard: verify expected removal count
+        expected_removed = len([sid for sid in stream_ids if sid in current_ids])
+        actual_removed = len(current_ids) - len(new_ids)
+        if expected_removed != actual_removed:
+            logging.warning(f"Stream removal mismatch for channel {channel_id}. Expected: {expected_removed}, Actual: {actual_removed}")
+
+        # Build valid set from remaining streams (no need to fetch all)
+        local_valid_ids = set(new_ids)
+
+        # Update channel
+        success = update_channel_streams(str(channel_id), new_ids, local_valid_ids, allow_dead_streams=True)
+        if success:
+            logging.info(f"Removed {len(stream_ids)} streams from channel {channel_id}")
+        return success
+
+    except Exception as e:
+        logging.error(f"Error removing streams from channel {channel_id}: {e}")
+        return False
+
+
+def handle_overflow_conflicts(streams_data: list, channel_id: int, overflow_channel_ids: list, return_after_hours: int, valid_stream_ids: set = None):
+    """Handle overflow for conflicting events at the same time.
+
+    Groups streams by name (to keep primary+backup together), detects time conflicts,
+    and moves conflicting events to overflow channels.
+
+    Args:
+        streams_data: List of stream data dicts with event_time and item_num
+        channel_id: Source channel ID
+        overflow_channel_ids: List of target overflow channel IDs
+        return_after_hours: Hours after which to return streams
+        valid_stream_ids: Pre-fetched set of valid stream IDs to avoid redundant API calls
+    """
+    try:
+        if not overflow_channel_ids:
+            return
+
+        # Group streams by event (using item_num as event identifier)
+        events = {}
+        for stream in streams_data:
+            item_num = stream.get('item_num', 999)
+            if item_num not in events:
+                events[item_num] = []
+            events[item_num].append(stream)
+
+        # Build list of events with time ranges (start + duration)
+        events_with_ranges = []
+        logging.info(f"Processing {len(events)} unique events for overflow check")
+        for item_num, event_streams in events.items():
+            # Use the event time from the first stream of this event
+            event_time = event_streams[0].get('event_time')
+            if event_time:
+                # Calculate end time using return_after_hours as event duration
+                event_end = event_time + timedelta(hours=return_after_hours)
+                events_with_ranges.append({
+                    'item_num': item_num,
+                    'streams': event_streams,
+                    'start_time': event_time,
+                    'end_time': event_end
+                })
+            else:
+                logging.info(f"Event {item_num} has no event_time: {event_streams[0].get('name', 'unknown')[:50]}")
+
+        # Sort events by start time
+        events_with_ranges.sort(key=lambda x: (x['start_time'], x['item_num']))
+
+        # Find overlapping events (channel can only play one event at a time)
+        moves_by_channel = {}  # overflow_channel_id -> list of stream_ids
+        streams_to_remove_by_channel = {}  # channel_id -> list of stream_ids (track where to remove from)
+        move_idx = 0
+        conflicts_found = []
+
+        if events_with_ranges:
+            # Keep first event, check subsequent events for overlap
+            kept_events = [events_with_ranges[0]]
+
+            for event in events_with_ranges[1:]:
+                # Check if this event overlaps with any kept event
+                has_conflict = False
+                for kept in kept_events:
+                    # Two events overlap if: event1.start < event2.end AND event2.start < event1.end
+                    if event['start_time'] < kept['end_time'] and kept['start_time'] < event['end_time']:
+                        has_conflict = True
+                        conflicts_found.append({
+                            'event': event,
+                            'conflicts_with': kept
+                        })
+
+                        # Move to overflow
+                        overflow_id = int(overflow_channel_ids[move_idx % len(overflow_channel_ids)])
+                        move_idx += 1
+
+                        if overflow_id not in moves_by_channel:
+                            moves_by_channel[overflow_id] = []
+
+                        for stream in event['streams']:
+                            moves_by_channel[overflow_id].append(stream['id'])
+
+                            # Track which channel to remove this stream from
+                            source_channel = stream.get('current_channel', channel_id)
+                            if source_channel not in streams_to_remove_by_channel:
+                                streams_to_remove_by_channel[source_channel] = []
+                            streams_to_remove_by_channel[source_channel].append(stream['id'])
+
+                        logging.info(f"Conflict: Event {event['item_num']} ({event['start_time'].strftime('%H:%M')}-{event['end_time'].strftime('%H:%M')}) overlaps with event {kept['item_num']} ({kept['start_time'].strftime('%H:%M')}-{kept['end_time'].strftime('%H:%M')}). Moving {len(event['streams'])} streams to channel {overflow_id}")
+                        break
+
+                if not has_conflict:
+                    # No conflict, keep this event on the channel
+                    kept_events.append(event)
+
+            logging.info(f"Found {len(conflicts_found)} conflicting events out of {len(events_with_ranges)} total events")
+
+        if not moves_by_channel:
+            return
+
+        # Move streams to their respective overflow channels
+        tracking = load_moved_streams()
+        now = datetime.utcnow()
+        return_at = now + timedelta(hours=return_after_hours)
+
+        for overflow_id, stream_ids in moves_by_channel.items():
+            if move_streams_to_channel(stream_ids, overflow_id, valid_stream_ids):
+                # Remove from their actual source channels (might be main or another overflow)
+                for source_channel_id, streams_to_remove in streams_to_remove_by_channel.items():
+                    # Only remove streams that are going to this overflow channel
+                    streams_for_this_overflow = [sid for sid in streams_to_remove if sid in stream_ids]
+                    if streams_for_this_overflow:
+                        remove_streams_from_channel(streams_for_this_overflow, source_channel_id, valid_stream_ids)
+                        logging.info(f"Removed {len(streams_for_this_overflow)} streams from channel {source_channel_id}")
+
+                # Track for return to main channel
+                tracking['moved_streams'].append({
+                    'stream_ids': stream_ids,
+                    'from_channel': channel_id,
+                    'to_channel': overflow_id,
+                    'moved_at': now.isoformat(),
+                    'return_at': return_at.isoformat()
+                })
+                logging.info(f"Tracked {len(stream_ids)} streams for return from channel {overflow_id} at {return_at.isoformat()}")
+
+        save_moved_streams(tracking)
+
+    except Exception as e:
+        logging.error(f"Error handling overflow conflicts: {e}")
+
+
+def return_moved_streams():
+    """Return streams that have exceeded their overflow time back to original channel."""
+    try:
+        tracking = load_moved_streams()
+        now = datetime.utcnow()
+
+        remaining = []
+        for entry in tracking.get('moved_streams', []):
+            return_at = datetime.fromisoformat(entry['return_at'])
+
+            if now >= return_at:
+                # Time to return these streams
+                stream_ids = entry['stream_ids']
+                from_channel = entry['from_channel']
+                to_channel = entry['to_channel']
+
+                logging.info(f"Returning {len(stream_ids)} streams from channel {to_channel} to {from_channel}")
+
+                # Move back to original channel
+                if move_streams_to_channel(stream_ids, from_channel):
+                    # Remove from overflow channel
+                    remove_streams_from_channel(stream_ids, to_channel)
+                    logging.info(f"Successfully returned streams to channel {from_channel}")
+                else:
+                    # Keep in tracking if failed
+                    remaining.append(entry)
+            else:
+                # Not yet time to return
+                remaining.append(entry)
+
+        # Update tracking file
+        tracking['moved_streams'] = remaining
+        save_moved_streams(tracking)
+
+    except Exception as e:
+        logging.error(f"Error returning moved streams: {e}")
+
+
 def apply_event_time_ordering_for_channels(channel_ids: List[int], channels_config: dict = None):
     """Apply event time ordering to specific channels.
 
@@ -319,6 +607,9 @@ def apply_event_time_ordering_for_channels(channel_ids: List[int], channels_conf
         base_url = _get_base_url()
         reordered_count = 0
 
+        # Collect all stream IDs we work with - they're valid since they come from channels
+        all_stream_ids = set()
+
         for channel_id in channel_ids:
             try:
                 # Get channel info
@@ -329,10 +620,18 @@ def apply_event_time_ordering_for_channels(channel_ids: List[int], channels_conf
 
                 channel_name = channel.get('name', f'Channel {channel_id}')
 
-                # Get custom pattern for this channel if available
+                # Get custom pattern and overflow config for this channel if available
                 custom_pattern = None
+                overflow_channel_ids = []
+                return_after_hours = 6
                 if channels_config and str(channel_id) in channels_config:
-                    custom_pattern = channels_config[str(channel_id)].get('pattern')
+                    channel_config = channels_config[str(channel_id)]
+                    custom_pattern = channel_config.get('pattern')
+                    # Handle both old single ID and new array format
+                    overflow_channel_ids = channel_config.get('overflow_channel_ids', [])
+                    if not overflow_channel_ids and channel_config.get('overflow_channel_id'):
+                        overflow_channel_ids = [channel_config.get('overflow_channel_id')]
+                    return_after_hours = channel_config.get('return_after_hours', 6)
 
                 # Get current streams
                 streams = fetch_data_from_url(f"{base_url}/api/channels/channels/{channel_id}/streams/")
@@ -343,16 +642,23 @@ def apply_event_time_ordering_for_channels(channel_ids: List[int], channels_conf
                 if len(stream_ids) < 2:
                     continue
 
-                # Fetch stream details and parse times
+                # Use stream IDs from channel as valid set - no need to fetch all streams
+                # These streams came from the channel so they're already valid
+                valid_stream_ids = set(stream_ids)
+                all_stream_ids.update(stream_ids)
+
+                # Parse stream data - names are already in the streams response
                 streams_data = []
-                for idx, stream_id in enumerate(stream_ids):
-                    stream_data = fetch_data_from_url(f"{base_url}/api/channels/streams/{stream_id}/")
-                    if stream_data:
-                        stream_name = stream_data.get('name', '')
+                for idx, stream in enumerate(streams):
+                    if isinstance(stream, dict) and 'id' in stream:
+                        stream_id = stream['id']
+                        stream_name = stream.get('name', '')
 
                         # Use custom pattern if available, otherwise fall back to multi-format parser
                         if custom_pattern:
                             event_time, item_num = parse_event_time_with_pattern(stream_name, custom_pattern)
+                            if idx == 0:  # Log first stream for debugging
+                                logging.info(f"Parsed first stream: event_time={event_time}, item_num={item_num}")
                         else:
                             event_time = parse_event_time_multi_format(stream_name)
                             # Fall back to extracting number for ordering (e.g., "PPV 1", "EVENT 06", "UFC 02")
@@ -404,12 +710,61 @@ def apply_event_time_ordering_for_channels(channel_ids: List[int], channels_conf
                 reordered_ids = [s['id'] for s in ordered]
 
                 if reordered_ids != stream_ids:
-                    success = update_channel_streams(str(channel_id), reordered_ids)
+                    # Safeguard: ensure we're not losing streams (same set, different order)
+                    if not reordered_ids:
+                        logging.error(f"✗ Safeguard: Refusing to clear channel {channel_name}")
+                        continue
+                    if set(reordered_ids) != set(stream_ids):
+                        logging.error(f"✗ Safeguard: Stream set mismatch for {channel_name}. Original: {len(stream_ids)}, New: {len(reordered_ids)}")
+                        continue
+
+                    success = update_channel_streams(str(channel_id), reordered_ids, valid_stream_ids, allow_dead_streams=True)
                     if success:
                         logging.info(f"✓ Reordered {channel_name}: {len([s for s in ordered if s.get('event_time') and (datetime.utcnow() - s['event_time']).total_seconds() / 3600 < 2])} upcoming")
                         reordered_count += 1
                     else:
                         logging.error(f"✗ Failed to update {channel_name}")
+
+                # Handle overflow conflicts if configured
+                if overflow_channel_ids and streams_data:
+                    logging.info(f"Checking overflow conflicts for {channel_name} with {len(overflow_channel_ids)} overflow channels")
+
+                    # Also load streams from overflow channels to ensure primary/backup pairs stay together
+                    all_streams_data = list(streams_data)  # Copy main channel streams
+                    for overflow_id in overflow_channel_ids:
+                        overflow_streams = fetch_data_from_url(f"{base_url}/api/channels/channels/{overflow_id}/streams/")
+                        if overflow_streams and isinstance(overflow_streams, list):
+                            for stream in overflow_streams:
+                                if isinstance(stream, dict) and 'id' in stream:
+                                    stream_id = stream['id']
+                                    stream_name = stream.get('name', '')
+
+                                    # Parse this stream with the same pattern
+                                    if custom_pattern:
+                                        event_time, item_num = parse_event_time_with_pattern(stream_name, custom_pattern)
+                                    else:
+                                        event_time = parse_event_time_multi_format(stream_name)
+                                        num_match = re.search(r'(?:PPV|EVENT|UFC|NBA)\s*(\d+)', stream_name, re.IGNORECASE)
+                                        item_num = int(num_match.group(1)) if num_match else 999
+
+                                    all_streams_data.append({
+                                        'id': stream_id,
+                                        'name': stream_name,
+                                        'event_time': event_time,
+                                        'item_num': item_num,
+                                        'original_index': len(all_streams_data),
+                                        'current_channel': overflow_id  # Track where this stream is now
+                                    })
+
+                    handle_overflow_conflicts(
+                        all_streams_data,
+                        channel_id,
+                        overflow_channel_ids,
+                        return_after_hours,
+                        valid_stream_ids
+                    )
+                elif not overflow_channel_ids:
+                    logging.debug(f"No overflow channels configured for {channel_name}")
 
             except Exception as e:
                 logging.error(f"Error ordering channel {channel_id}: {e}")
@@ -1287,6 +1642,9 @@ class StreamCheckerService:
             self.last_event_ordering_time = now
 
             apply_event_time_ordering_for_channels(channel_ids, channels_config)
+
+            # Check for streams that need to be returned from overflow
+            return_moved_streams()
 
         except Exception as e:
             logging.error(f"Error in event ordering schedule: {e}")

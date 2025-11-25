@@ -47,6 +47,25 @@ function EventOrderingConfig() {
   const [selectedWords, setSelectedWords] = useState(new Set());
 
   // Categories for time components
+  // Muted color palette for channels
+  const channelColors = [
+    { bg: '#2d3748', border: '#4a5568', text: '#e2e8f0' }, // slate
+    { bg: '#2c3e50', border: '#34495e', text: '#ecf0f1' }, // dark blue
+    { bg: '#3d3d3d', border: '#5a5a5a', text: '#e0e0e0' }, // gray
+    { bg: '#1e3a5f', border: '#2980b9', text: '#aed6f1' }, // blue
+    { bg: '#4a2c2a', border: '#6b3a38', text: '#f5b7b1' }, // muted red
+    { bg: '#2e4a3e', border: '#27ae60', text: '#a9dfbf' }, // green
+    { bg: '#4a3f2e', border: '#d4a574', text: '#fdebd0' }, // tan
+    { bg: '#3e2a4a', border: '#8e44ad', text: '#d7bde2' }, // purple
+    { bg: '#2a3e4a', border: '#5dade2', text: '#aed6f1' }, // teal
+    { bg: '#4a3e2a', border: '#f39c12', text: '#fdebd0' }, // amber
+  ];
+
+  const getChannelColor = (channelId) => {
+    const index = channels.findIndex(c => String(c.id) === String(channelId));
+    return channelColors[index % channelColors.length];
+  };
+
   const categories = [
     { id: 'league', label: 'League', color: '#f97316', tooltip: 'Event type (UFC, NBA, etc.)' },
     { id: 'order', label: 'Order', color: '#a855f7', tooltip: 'Event number for tiebreaking when times match (lower first)' },
@@ -64,6 +83,11 @@ function EventOrderingConfig() {
   const [generatedPattern, setGeneratedPattern] = useState('');
   const [testResults, setTestResults] = useState([]);
   const [orderingPreview, setOrderingPreview] = useState([]);
+
+  // Overflow settings
+  const [overflowChannelIds, setOverflowChannelIds] = useState([]);
+  const [returnAfterHours, setReturnAfterHours] = useState(6);
+  const [overflowPreview, setOverflowPreview] = useState({ conflicts: [], staying: [], moving: [] });
 
   // Config state
   const [config, setConfig] = useState(null);
@@ -97,6 +121,8 @@ function EventOrderingConfig() {
     setGeneratedPattern('');
     setTestResults([]);
     setOrderingPreview([]);
+    setOverflowChannelIds([]);
+    setReturnAfterHours(6);
 
     if (!channelId) {
       setStreams([]);
@@ -105,9 +131,41 @@ function EventOrderingConfig() {
 
     try {
       setLoadingStreams(true);
+
+      // Load streams from main channel
       const response = await api.get(`/channels/${channelId}/streams`);
       const streamData = response.data || [];
-      setStreams(streamData);
+
+      // Load overflow channel IDs from config first
+      let tempOverflowIds = [];
+      if (config?.channels?.[channelId]) {
+        const channelConfig = config.channels[channelId];
+        tempOverflowIds = channelConfig.overflow_channel_ids ||
+          (channelConfig.overflow_channel_id ? [channelConfig.overflow_channel_id] : []);
+      }
+
+      // If overflow channels are configured, also load streams from them
+      let allStreams = streamData.map(s => ({ ...s, channelId: parseInt(channelId) }));
+      if (tempOverflowIds.length > 0) {
+        const overflowPromises = tempOverflowIds.map(overflowId =>
+          api.get(`/channels/${overflowId}/streams`).then(res => ({
+            channelId: parseInt(overflowId),
+            streams: res.data || []
+          })).catch(err => {
+            console.error(`Failed to load overflow channel ${overflowId}:`, err);
+            return { channelId: parseInt(overflowId), streams: [] };
+          })
+        );
+
+        const overflowResults = await Promise.all(overflowPromises);
+        overflowResults.forEach(result => {
+          result.streams.forEach(stream => {
+            allStreams.push({ ...stream, channelId: result.channelId });
+          });
+        });
+      }
+
+      setStreams(allStreams);
 
       // Auto-select first stream if available
       if (streamData.length > 0) {
@@ -120,12 +178,20 @@ function EventOrderingConfig() {
 
       // Load existing pattern if configured (after parseSample so it doesn't get cleared)
       if (config?.channels?.[channelId]) {
-        const existingPattern = config.channels[channelId].pattern || '';
-        setGeneratedPattern(existingPattern);
-        // Test the existing pattern against streams
-        if (existingPattern && streamData.length > 0) {
-          testPattern(existingPattern, streamData);
+        const channelConfig = config.channels[channelId];
+        setGeneratedPattern(channelConfig.pattern || '');
+        // Handle both old single ID and new array format
+        const overflowIds = channelConfig.overflow_channel_ids ||
+          (channelConfig.overflow_channel_id ? [channelConfig.overflow_channel_id] : []);
+        setOverflowChannelIds(overflowIds);
+        setReturnAfterHours(channelConfig.return_after_hours || 6);
+        // Test the existing pattern against all streams (main + overflow)
+        if (channelConfig.pattern && allStreams.length > 0) {
+          testPattern(channelConfig.pattern, allStreams);
         }
+      } else {
+        setOverflowChannelIds([]);
+        setReturnAfterHours(6);
       }
     } catch (err) {
       console.error('Failed to load streams:', err);
@@ -386,7 +452,8 @@ function EventOrderingConfig() {
           name: stream.name,
           eventTime,
           orderNum,
-          originalIndex: idx
+          originalIndex: idx,
+          channelId: stream.channelId
         };
       });
 
@@ -431,11 +498,144 @@ function EventOrderingConfig() {
       }));
 
       setOrderingPreview(ordered);
+
+      // Calculate overflow preview
+      calculateOverflowPreview(parsedStreams, overflowChannelIds);
     } catch (err) {
       setError(`Invalid regex pattern: ${err.message}`);
       setTestResults([]);
       setOrderingPreview([]);
+      setOverflowPreview({ conflicts: [], staying: [], moving: [] });
     }
+  };
+
+  // Recalculate overflow preview when overflow channels change
+  useEffect(() => {
+    if (testResults.length > 0 && overflowChannelIds.length > 0) {
+      // Re-parse the streams and recalculate
+      const parsedStreams = testResults.map(result => ({
+        name: result.name,
+        eventTime: result.groups ? parseGroupsToDate(result.groups) : null,
+        orderNum: result.groups?.order ? parseInt(result.groups.order) : 999,
+        originalIndex: testResults.indexOf(result)
+      }));
+      calculateOverflowPreview(parsedStreams, overflowChannelIds);
+    } else if (overflowChannelIds.length === 0) {
+      setOverflowPreview({ conflicts: [], staying: [], moving: [] });
+    }
+  }, [overflowChannelIds]);
+
+  // Helper to parse groups to date
+  const parseGroupsToDate = (groups) => {
+    if (!groups) return null;
+    try {
+      const year = parseInt(groups.year) || new Date().getFullYear();
+      const month = parseInt(groups.month) || 1;
+      const day = parseInt(groups.day) || 1;
+      let hour = parseInt(groups.hour) || 0;
+      const minute = parseInt(groups.minute) || 0;
+      const second = parseInt(groups.second) || 0;
+
+      if (groups.ampm) {
+        const ampm = groups.ampm.toLowerCase();
+        if (ampm === 'pm' && hour < 12) hour += 12;
+        if (ampm === 'am' && hour === 12) hour = 0;
+      }
+
+      return new Date(year, month - 1, day, hour, minute, second);
+    } catch {
+      return null;
+    }
+  };
+
+  const calculateOverflowPreview = (parsedStreams, currentOverflowIds) => {
+    // Get channel names for display
+    const selectedChannel = channels.find(c => c.id === parseInt(selectedChannelId));
+    const selectedChannelName = selectedChannel?.name || `Channel ${selectedChannelId}`;
+
+    // Group streams by event (using orderNum as event identifier)
+    const events = {};
+    parsedStreams.forEach(stream => {
+      const orderNum = stream.orderNum;
+      if (!events[orderNum]) {
+        events[orderNum] = [];
+      }
+      events[orderNum].push(stream);
+    });
+
+    // Group events by time
+    const timeSlots = {};
+    Object.entries(events).forEach(([orderNum, eventStreams]) => {
+      const eventTime = eventStreams[0].eventTime;
+      if (eventTime) {
+        // Round to minute for comparison
+        const timeKey = eventTime.toISOString().slice(0, 16);
+        if (!timeSlots[timeKey]) {
+          timeSlots[timeKey] = [];
+        }
+        timeSlots[timeKey].push({
+          orderNum: parseInt(orderNum),
+          streams: eventStreams,
+          eventTime
+        });
+      }
+    });
+
+    // Find conflicts
+    const conflicts = [];
+    const staying = [];
+    const moving = [];
+
+    Object.entries(timeSlots).forEach(([timeKey, eventsAtTime]) => {
+      if (eventsAtTime.length > 1) {
+        // Sort by orderNum, first stays, rest move
+        eventsAtTime.sort((a, b) => a.orderNum - b.orderNum);
+
+        const stayingEvent = eventsAtTime[0];
+        const stayingColor = getChannelColor(selectedChannelId);
+        staying.push({
+          orderNum: stayingEvent.orderNum,
+          streamCount: stayingEvent.streams.length,
+          streamNames: stayingEvent.streams.map(s => s.name),
+          eventTime: stayingEvent.eventTime,
+          channelName: selectedChannelName,
+          channelId: selectedChannelId,
+          color: stayingColor
+        });
+
+        // Distribute moving events across overflow channels
+        eventsAtTime.slice(1).forEach((event, idx) => {
+          if (!currentOverflowIds || currentOverflowIds.length === 0) return;
+          const overflowIdx = idx % currentOverflowIds.length;
+          const overflowId = currentOverflowIds[overflowIdx];
+          // Handle both string and number IDs
+          const overflowChannel = channels.find(c => String(c.id) === String(overflowId));
+          const overflowName = overflowChannel?.name || `Channel ${overflowId}`;
+
+          const overflowColor = getChannelColor(overflowId);
+          moving.push({
+            orderNum: event.orderNum,
+            streamCount: event.streams.length,
+            streamNames: event.streams.map(s => s.name),
+            eventTime: event.eventTime,
+            channelName: overflowName,
+            channelId: overflowId,
+            color: overflowColor
+          });
+        });
+
+        conflicts.push({
+          timeKey,
+          eventTime: eventsAtTime[0].eventTime,
+          events: eventsAtTime.map(e => ({
+            orderNum: e.orderNum,
+            streamCount: e.streams.length
+          }))
+        });
+      }
+    });
+
+    setOverflowPreview({ conflicts, staying, moving });
   };
 
   const handleSave = async () => {
@@ -454,7 +654,9 @@ function EventOrderingConfig() {
           ...config.channels,
           [selectedChannelId]: {
             pattern: generatedPattern,
-            name: channel?.name || `Channel ${selectedChannelId}`
+            name: channel?.name || `Channel ${selectedChannelId}`,
+            overflow_channel_ids: overflowChannelIds,
+            return_after_hours: returnAfterHours
           }
         }
       };
@@ -877,6 +1079,48 @@ function EventOrderingConfig() {
           </Grid>
         )}
 
+        {/* Manual Pattern Entry */}
+        <Grid item xs={12}>
+          <Card>
+            <CardContent>
+              <Typography variant="h6" gutterBottom>
+                Manual Pattern Entry
+              </Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                Or enter a custom regex pattern directly. Use named capture groups for time components.
+              </Typography>
+              <TextField
+                fullWidth
+                label="Custom Pattern"
+                value={generatedPattern}
+                onChange={(e) => setGeneratedPattern(e.target.value)}
+                placeholder="e.g., start:(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2}) (?<hour>\d{2}):(?<minute>\d{2})"
+                helperText="Named groups: year, month, day, hour, minute, second, ampm"
+                sx={{ mb: 2 }}
+              />
+              <Box display="flex" gap={2}>
+                <Button
+                  variant="outlined"
+                  onClick={() => testPattern(generatedPattern)}
+                  startIcon={<TestIcon />}
+                  disabled={!generatedPattern}
+                >
+                  Test Pattern
+                </Button>
+                <Button
+                  variant="contained"
+                  color="success"
+                  onClick={handleSave}
+                  disabled={saving || !generatedPattern || !selectedChannelId}
+                  startIcon={saving ? <CircularProgress size={20} /> : <SaveIcon />}
+                >
+                  Save Pattern
+                </Button>
+              </Box>
+            </CardContent>
+          </Card>
+        </Grid>
+
         {/* Ordering Preview */}
         {orderingPreview.length > 0 && (
           <Grid item xs={12}>
@@ -892,7 +1136,7 @@ function EventOrderingConfig() {
                 {/* Header */}
                 <Box
                   display="grid"
-                  gridTemplateColumns="1fr 80px 80px 80px 120px"
+                  gridTemplateColumns="1fr 120px 80px 80px 80px 120px"
                   gap={1}
                   sx={{
                     p: 1,
@@ -903,6 +1147,7 @@ function EventOrderingConfig() {
                   }}
                 >
                   <Typography variant="caption" fontWeight="bold">Name</Typography>
+                  <Typography variant="caption" fontWeight="bold" textAlign="center">Channel</Typography>
                   <Typography variant="caption" fontWeight="bold" textAlign="center">New Order</Typography>
                   <Typography variant="caption" fontWeight="bold" textAlign="center">Change</Typography>
                   <Typography variant="caption" fontWeight="bold" textAlign="center">Old Order</Typography>
@@ -962,11 +1207,18 @@ function EventOrderingConfig() {
                       }
                     }
 
+                    // Get channel name for this stream
+                    const streamChannelId = item.channelId || parseInt(selectedChannelId);
+                    const streamChannel = channels.find(c => c.id === streamChannelId);
+                    const channelName = streamChannel?.name || `Channel ${streamChannelId}`;
+                    const channelColor = getChannelColor(streamChannelId);
+                    const isOverflow = streamChannelId !== parseInt(selectedChannelId);
+
                     return (
                       <Box
                         key={index}
                         display="grid"
-                        gridTemplateColumns="1fr 80px 80px 80px 120px"
+                        gridTemplateColumns="1fr 120px 80px 80px 80px 120px"
                         gap={1}
                         sx={{
                           p: 1,
@@ -986,6 +1238,20 @@ function EventOrderingConfig() {
                         >
                           {item.name}
                         </Typography>
+                        <Box display="flex" justifyContent="center">
+                          <Chip
+                            label={channelName}
+                            size="small"
+                            sx={{
+                              fontSize: '0.65rem',
+                              height: '20px',
+                              backgroundColor: channelColor.bg,
+                              color: channelColor.text,
+                              border: `1px solid ${channelColor.border}`,
+                              fontWeight: isOverflow ? 'bold' : 'normal'
+                            }}
+                          />
+                        </Box>
                         <Typography variant="body2" textAlign="center" fontWeight="bold">
                           {newPos}
                         </Typography>
@@ -1013,47 +1279,178 @@ function EventOrderingConfig() {
           </Grid>
         )}
 
-        {/* Manual Pattern Entry */}
-        <Grid item xs={12}>
-          <Card>
-            <CardContent>
-              <Typography variant="h6" gutterBottom>
-                Manual Pattern Entry
-              </Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                Or enter a custom regex pattern directly. Use named capture groups for time components.
-              </Typography>
-              <TextField
-                fullWidth
-                label="Custom Pattern"
-                value={generatedPattern}
-                onChange={(e) => setGeneratedPattern(e.target.value)}
-                placeholder="e.g., start:(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2}) (?<hour>\d{2}):(?<minute>\d{2})"
-                helperText="Named groups: year, month, day, hour, minute, second, ampm"
-                sx={{ mb: 2 }}
-              />
-              <Box display="flex" gap={2}>
-                <Button
-                  variant="outlined"
-                  onClick={() => testPattern(generatedPattern)}
-                  startIcon={<TestIcon />}
-                  disabled={!generatedPattern}
-                >
-                  Test Pattern
-                </Button>
-                <Button
-                  variant="contained"
-                  color="success"
-                  onClick={handleSave}
-                  disabled={saving || !generatedPattern || !selectedChannelId}
-                  startIcon={saving ? <CircularProgress size={20} /> : <SaveIcon />}
-                >
-                  Save Pattern
-                </Button>
-              </Box>
-            </CardContent>
-          </Card>
-        </Grid>
+        {/* Overflow Settings */}
+        {selectedChannelId && (
+          <Grid item xs={12}>
+            <Card>
+              <CardContent>
+                <Typography variant="h6" gutterBottom>
+                  Overflow Settings
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                  When two different events are scheduled at the same time, move one to an overflow channel.
+                  Streams will be returned to this channel after the specified time.
+                </Typography>
+
+                <Grid container spacing={2}>
+                  <Grid item xs={12} md={6}>
+                    <FormControl fullWidth>
+                      <InputLabel>Overflow Channels</InputLabel>
+                      <Select
+                        multiple
+                        value={overflowChannelIds}
+                        onChange={(e) => setOverflowChannelIds(e.target.value)}
+                        label="Overflow Channels"
+                        renderValue={(selected) => (
+                          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                            {selected.map((id) => {
+                              const ch = channels.find(c => c.id === parseInt(id));
+                              const color = getChannelColor(id);
+                              return (
+                                <Chip
+                                  key={id}
+                                  label={ch?.name || id}
+                                  size="small"
+                                  sx={{
+                                    backgroundColor: color.bg,
+                                    color: color.text,
+                                    border: `1px solid ${color.border}`
+                                  }}
+                                />
+                              );
+                            })}
+                          </Box>
+                        )}
+                      >
+                        {channels
+                          .filter(c => c.id !== parseInt(selectedChannelId))
+                          .map((channel) => (
+                            <MenuItem key={channel.id} value={channel.id}>
+                              {channel.name} (ID: {channel.id})
+                            </MenuItem>
+                          ))}
+                      </Select>
+                    </FormControl>
+                  </Grid>
+                  <Grid item xs={12} md={6}>
+                    <TextField
+                      fullWidth
+                      type="number"
+                      label="Return After (hours)"
+                      value={returnAfterHours}
+                      onChange={(e) => setReturnAfterHours(parseInt(e.target.value) || 6)}
+                      inputProps={{ min: 1, max: 24 }}
+                      helperText="Streams will be moved back after this many hours"
+                    />
+                  </Grid>
+                </Grid>
+
+                <Box mt={2}>
+                  <Button
+                    variant="contained"
+                    color="success"
+                    onClick={handleSave}
+                    disabled={saving || !generatedPattern || !selectedChannelId}
+                    startIcon={saving ? <CircularProgress size={20} /> : <SaveIcon />}
+                  >
+                    Save Configuration
+                  </Button>
+                </Box>
+              </CardContent>
+            </Card>
+          </Grid>
+        )}
+
+        {/* Overflow Preview */}
+        {overflowChannelIds.length > 0 && overflowPreview.conflicts.length > 0 && (
+          <Grid item xs={12}>
+            <Card>
+              <CardContent>
+                <Typography variant="h6" gutterBottom>
+                  Overflow Preview
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                  {overflowPreview.conflicts.length} time conflict(s) detected.
+                  {overflowPreview.moving.length} event(s) ({overflowPreview.moving.reduce((sum, e) => sum + e.streamCount, 0)} streams) will be moved.
+                  Each color represents a different channel.
+                </Typography>
+
+                {overflowPreview.conflicts.map((conflict, idx) => (
+                  <Paper
+                    key={idx}
+                    variant="outlined"
+                    sx={{ p: 2, mb: 2 }}
+                  >
+                    <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 'bold' }}>
+                      Conflict at {conflict.eventTime.toLocaleString('en-US', {
+                        year: 'numeric',
+                        month: '2-digit',
+                        day: '2-digit',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                        hour12: false
+                      })}
+                    </Typography>
+
+                    <Box display="flex" gap={2} flexWrap="wrap">
+                      {/* Staying */}
+                      {overflowPreview.staying
+                        .filter(s => s.eventTime.getTime() === conflict.eventTime.getTime())
+                        .map((event, i) => (
+                          <Paper key={`stay-${i}`} sx={{ p: 1.5, backgroundColor: event.color?.bg || '#2d3748', border: `2px solid ${event.color?.border || '#4a5568'}`, flex: 1, minWidth: 200 }}>
+                            <Typography variant="caption" sx={{ color: event.color?.text || '#e2e8f0', fontWeight: 'bold' }}>
+                              {event.channelName}
+                            </Typography>
+                            <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.75rem', mt: 0.5, color: event.color?.text || '#e2e8f0' }}>
+                              {event.streamNames[0]}
+                            </Typography>
+                            {event.streamCount > 1 && (
+                              <Typography variant="caption" sx={{ color: event.color?.text || '#e2e8f0', opacity: 0.7 }}>
+                                + {event.streamCount - 1} backup stream(s)
+                              </Typography>
+                            )}
+                          </Paper>
+                        ))}
+
+                      {/* Moving */}
+                      {overflowPreview.moving
+                        .filter(m => m.eventTime.getTime() === conflict.eventTime.getTime())
+                        .map((event, i) => (
+                          <Paper key={`move-${i}`} sx={{ p: 1.5, backgroundColor: event.color?.bg || '#2d3748', border: `2px solid ${event.color?.border || '#4a5568'}`, flex: 1, minWidth: 200 }}>
+                            <Typography variant="caption" sx={{ color: event.color?.text || '#e2e8f0', fontWeight: 'bold' }}>
+                              → {event.channelName}
+                            </Typography>
+                            <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.75rem', mt: 0.5, color: event.color?.text || '#e2e8f0' }}>
+                              {event.streamNames[0]}
+                            </Typography>
+                            {event.streamCount > 1 && (
+                              <Typography variant="caption" sx={{ color: event.color?.text || '#e2e8f0', opacity: 0.7 }}>
+                                + {event.streamCount - 1} backup stream(s)
+                              </Typography>
+                            )}
+                          </Paper>
+                        ))}
+                    </Box>
+                  </Paper>
+                ))}
+
+                <Alert severity="info" sx={{ mt: 1 }}>
+                  Streams will return to this channel after {returnAfterHours} hour(s).
+                </Alert>
+              </CardContent>
+            </Card>
+          </Grid>
+        )}
+
+        {/* No conflicts message */}
+        {overflowChannelIds.length > 0 && orderingPreview.length > 0 && overflowPreview.conflicts.length === 0 && (
+          <Grid item xs={12}>
+            <Alert severity="success">
+              No time conflicts detected. All events are at different times.
+            </Alert>
+          </Grid>
+        )}
       </Grid>
     </Box>
   );
