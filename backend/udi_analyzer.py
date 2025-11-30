@@ -29,12 +29,23 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set, Any, Tuple
 from collections import defaultdict
 
+# Optional import for HTTP requests (used in connectivity testing)
+try:
+    import requests
+    REQUESTS_AVAILABLE = True
+except ImportError:
+    REQUESTS_AVAILABLE = False
+
 # Add backend to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from logging_config import setup_logging
 
 logger = setup_logging(__name__)
+
+# Constants
+DEFAULT_CACHE_TTL_SECONDS = 300  # 5 minutes
+HTTP_SUCCESS_CODES = [200, 401, 403]  # 401/403 indicate server is reachable but needs auth
 
 
 @dataclass
@@ -50,7 +61,7 @@ class APIEndpoint:
     data_fields: List[str] = field(default_factory=list)
     estimated_frequency: str = ""  # high, medium, low
     cacheable: bool = True
-    cache_ttl_seconds: int = 300  # Default 5 min cache
+    cache_ttl_seconds: int = DEFAULT_CACHE_TTL_SECONDS
 
 
 @dataclass
@@ -95,31 +106,22 @@ class UDIAnalysisReport:
 class CodebaseAnalyzer:
     """Analyzes the StreamFlow codebase for API endpoint usage."""
     
-    # Known API patterns used in the codebase
-    API_PATTERNS = [
-        # Channels API
-        (r'/api/channels/channels/', 'GET', 'Fetch all channels'),
-        (r'/api/channels/channels/\{.*?\}/', 'GET', 'Fetch single channel'),
-        (r'/api/channels/channels/\{.*?\}/', 'PATCH', 'Update channel'),
-        (r'/api/channels/channels/\{.*?\}/streams/', 'GET', 'Fetch channel streams'),
-        (r'/api/channels/channels/from-stream/', 'POST', 'Create channel from stream'),
-        (r'/api/channels/groups/', 'GET', 'Fetch channel groups'),
-        (r'/api/channels/logos/', 'GET', 'Fetch channel logos'),
-        (r'/api/channels/logos/\{.*?\}/', 'GET', 'Fetch single logo'),
-        
-        # Streams API
-        (r'/api/channels/streams/', 'GET', 'Fetch all streams'),
-        (r'/api/channels/streams/\{.*?\}/', 'GET', 'Fetch single stream'),
-        (r'/api/channels/streams/\{.*?\}/', 'PATCH', 'Update stream'),
-        
-        # M3U API
-        (r'/api/m3u/accounts/', 'GET', 'Fetch M3U accounts'),
-        (r'/api/m3u/refresh/', 'POST', 'Refresh all M3U playlists'),
-        (r'/api/m3u/refresh/\{.*?\}/', 'POST', 'Refresh specific M3U playlist'),
-        
-        # Authentication
-        (r'/api/accounts/token/', 'POST', 'Authentication/login'),
-    ]
+    # Known API patterns - used for enriching discovered endpoints with descriptions
+    KNOWN_ENDPOINT_DESCRIPTIONS = {
+        '/api/channels/channels/': 'Fetch all channels',
+        '/api/channels/channels/{id}/': 'Fetch or update single channel',
+        '/api/channels/channels/{id}/streams/': 'Fetch channel streams',
+        '/api/channels/channels/from-stream/': 'Create channel from stream',
+        '/api/channels/groups/': 'Fetch channel groups',
+        '/api/channels/logos/': 'Fetch channel logos',
+        '/api/channels/logos/{id}/': 'Fetch single logo',
+        '/api/channels/streams/': 'Fetch all streams',
+        '/api/channels/streams/{id}/': 'Fetch or update single stream',
+        '/api/m3u/accounts/': 'Fetch M3U accounts',
+        '/api/m3u/refresh/': 'Refresh all M3U playlists',
+        '/api/m3u/refresh/{id}/': 'Refresh specific M3U playlist',
+        '/api/accounts/token/': 'Authentication/login',
+    }
     
     def __init__(self, backend_dir: Path):
         self.backend_dir = backend_dir
@@ -252,6 +254,9 @@ class CodebaseAnalyzer:
         for endpoint in endpoints:
             key = (endpoint.path, endpoint.method)
             if key not in seen:
+                # Add known description if available and no description found from code
+                if not endpoint.description and endpoint.path in self.KNOWN_ENDPOINT_DESCRIPTIONS:
+                    endpoint.description = self.KNOWN_ENDPOINT_DESCRIPTIONS[endpoint.path]
                 seen[key] = endpoint
             else:
                 # Merge descriptions if different
@@ -382,7 +387,6 @@ class APIConnectivityTester:
     
     def __init__(self):
         self.base_url = os.getenv('DISPATCHARR_BASE_URL', '')
-        self.results = {}
     
     def test_connectivity(self) -> Dict[str, Any]:
         """Test API connectivity without making authenticated requests."""
@@ -409,15 +413,21 @@ class APIConnectivityTester:
             return results
         
         # Try a simple connection test
+        if not REQUESTS_AVAILABLE:
+            results['connection_test'] = {
+                'success': False,
+                'error': 'requests library not available'
+            }
+            return results
+        
         try:
-            import requests
             response = requests.get(
                 f"{self.base_url}/api/",
                 timeout=5,
                 allow_redirects=True
             )
             results['connection_test'] = {
-                'success': response.status_code in [200, 401, 403],  # 401/403 means server is reachable
+                'success': response.status_code in HTTP_SUCCESS_CODES,
                 'status_code': response.status_code,
                 'response_time_ms': response.elapsed.total_seconds() * 1000
             }
@@ -444,7 +454,7 @@ class DataFetchTester:
     """Tests data fetching capability from Dispatcharr API."""
     
     def __init__(self):
-        self.results = {}
+        pass  # No instance state needed
     
     def test_data_fetching(self) -> Dict[str, Any]:
         """Test data fetching from various endpoints."""
@@ -468,6 +478,7 @@ class DataFetchTester:
             return results
         
         # Import API utilities for authenticated requests
+        # Note: Using internal _get_base_url as there's no public alternative
         try:
             from api_utils import (
                 fetch_data_from_url, 

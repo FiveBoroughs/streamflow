@@ -30,7 +30,8 @@ from udi_analyzer import (
     DataFetchTester,
     RecommendationEngine,
     UDIAnalyzer,
-    format_text_report
+    format_text_report,
+    DEFAULT_CACHE_TTL_SECONDS
 )
 
 
@@ -53,7 +54,7 @@ class TestAPIEndpoint(unittest.TestCase):
         self.assertEqual(endpoint.source_line, 62)
         self.assertEqual(endpoint.description, 'Fetch all channels')
         self.assertTrue(endpoint.cacheable)  # Default value
-        self.assertEqual(endpoint.cache_ttl_seconds, 300)  # Default value
+        self.assertEqual(endpoint.cache_ttl_seconds, DEFAULT_CACHE_TTL_SECONDS)  # Default value
     
     def test_endpoint_defaults(self):
         """Test that endpoint defaults are set correctly."""
