@@ -148,6 +148,139 @@ class TestTokenValidation(unittest.TestCase):
         self.assertEqual(headers['Authorization'], 'Bearer new_valid_token')
 
 
+class TestTokenValidationCaching(unittest.TestCase):
+    """Test token validation caching functionality to reduce API calls."""
+    
+    def setUp(self):
+        """Set up test fixtures."""
+        # Clear the token validation cache before each test
+        import api_utils
+        api_utils._token_validation_cache.clear()
+        
+    def tearDown(self):
+        """Clean up after tests."""
+        # Clear the token validation cache after each test
+        import api_utils
+        api_utils._token_validation_cache.clear()
+    
+    @patch('api_utils.requests.get')
+    @patch('api_utils.os.getenv')
+    def test_token_validation_cache_prevents_duplicate_api_calls(self, mock_getenv, mock_get):
+        """Test that cached token validation prevents redundant API calls."""
+        from api_utils import _validate_token, _token_validation_cache
+        
+        # Mock environment variables
+        mock_getenv.side_effect = lambda key: {
+            'DISPATCHARR_BASE_URL': 'http://test.com',
+            'TOKEN_VALIDATION_TTL': '60'
+        }.get(key)
+        
+        # Mock successful API response
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_get.return_value = mock_response
+        
+        # First call should make an API request
+        result1 = _validate_token('valid_token_123')
+        self.assertTrue(result1)
+        self.assertEqual(mock_get.call_count, 1)
+        
+        # Second call should use cache (no additional API request)
+        result2 = _validate_token('valid_token_123')
+        self.assertTrue(result2)
+        self.assertEqual(mock_get.call_count, 1)  # Still only 1 call
+        
+        # Third call should also use cache
+        result3 = _validate_token('valid_token_123')
+        self.assertTrue(result3)
+        self.assertEqual(mock_get.call_count, 1)  # Still only 1 call
+    
+    @patch('api_utils.time.time')
+    @patch('api_utils.requests.get')
+    @patch('api_utils.os.getenv')
+    def test_token_validation_cache_expires(self, mock_getenv, mock_get, mock_time):
+        """Test that token validation cache expires after TTL."""
+        from api_utils import _validate_token, _token_validation_cache, TOKEN_VALIDATION_TTL
+        
+        # Mock environment variables
+        mock_getenv.side_effect = lambda key: {
+            'DISPATCHARR_BASE_URL': 'http://test.com',
+            'TOKEN_VALIDATION_TTL': '60'
+        }.get(key)
+        
+        # Mock successful API response
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_get.return_value = mock_response
+        
+        # First call at time 0
+        mock_time.return_value = 0
+        result1 = _validate_token('valid_token_123')
+        self.assertTrue(result1)
+        self.assertEqual(mock_get.call_count, 1)
+        
+        # Second call at time 30 (within TTL) - should use cache
+        mock_time.return_value = 30
+        result2 = _validate_token('valid_token_123')
+        self.assertTrue(result2)
+        self.assertEqual(mock_get.call_count, 1)
+        
+        # Third call at time 61 (after TTL) - should make new API call
+        mock_time.return_value = 61
+        result3 = _validate_token('valid_token_123')
+        self.assertTrue(result3)
+        self.assertEqual(mock_get.call_count, 2)
+    
+    @patch('api_utils.time.time')
+    @patch('api_utils.requests.get')
+    @patch('api_utils.os.getenv')
+    def test_failed_validation_clears_cache(self, mock_getenv, mock_get, mock_time):
+        """Test that failed validation clears the cache."""
+        from api_utils import _validate_token, _token_validation_cache
+        
+        # Mock environment variables
+        mock_getenv.side_effect = lambda key: {
+            'DISPATCHARR_BASE_URL': 'http://test.com',
+            'TOKEN_VALIDATION_TTL': '60'
+        }.get(key)
+        
+        # First call at time 0 - successful
+        mock_time.return_value = 0
+        mock_response_success = Mock()
+        mock_response_success.status_code = 200
+        mock_get.return_value = mock_response_success
+        
+        result1 = _validate_token('valid_token_123')
+        self.assertTrue(result1)
+        self.assertIn('valid_token_123', _token_validation_cache)
+        
+        # Second call at time 61 (after TTL) - failed (401)
+        mock_time.return_value = 61
+        mock_response_fail = Mock()
+        mock_response_fail.status_code = 401
+        mock_get.return_value = mock_response_fail
+        
+        result2 = _validate_token('valid_token_123')
+        self.assertFalse(result2)
+        # Cache should be cleared on failure
+        self.assertNotIn('valid_token_123', _token_validation_cache)
+    
+    def test_clear_token_validation_cache(self):
+        """Test that _clear_token_validation_cache clears all cached tokens."""
+        from api_utils import _clear_token_validation_cache, _token_validation_cache
+        
+        # Add some tokens to cache
+        _token_validation_cache['token1'] = 100
+        _token_validation_cache['token2'] = 200
+        
+        self.assertEqual(len(_token_validation_cache), 2)
+        
+        # Clear cache
+        _clear_token_validation_cache()
+        
+        self.assertEqual(len(_token_validation_cache), 0)
+
+
 class TestProgressTracking(unittest.TestCase):
     """Test detailed progress tracking functionality."""
     

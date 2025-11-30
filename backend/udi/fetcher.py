@@ -23,6 +23,12 @@ env_path = Path('.') / '.env'
 if env_path.exists():
     load_dotenv(dotenv_path=env_path)
 
+# Token validation cache - stores last validated token and timestamp
+# This reduces redundant API calls for token validation
+_token_validation_cache: Dict[str, float] = {}
+# Default TTL for token validation cache (in seconds)
+TOKEN_VALIDATION_TTL = int(os.getenv("TOKEN_VALIDATION_TTL", "60"))
+
 
 def _get_base_url() -> Optional[str]:
     """Get the base URL from environment variables.
@@ -36,15 +42,32 @@ def _get_base_url() -> Optional[str]:
 def _validate_token(token: str) -> bool:
     """Validate if a token is still valid by making a test API request.
     
+    Uses a cache to avoid redundant API calls for token validation.
+    The cache TTL is controlled by TOKEN_VALIDATION_TTL environment variable
+    (default: 60 seconds).
+    
     Args:
         token: The authentication token to validate
         
     Returns:
         True if token is valid, False otherwise
     """
+    global _token_validation_cache
+    
     base_url = _get_base_url()
     if not base_url or not token:
         return False
+    
+    # Check cache first - if token was recently validated, skip API call
+    cache_check_start = time.time()
+    cached_time = _token_validation_cache.get(token)
+    if cached_time is not None:
+        age = cache_check_start - cached_time
+        if age < TOKEN_VALIDATION_TTL:
+            logger.debug(f"Token validation cached (age: {age:.1f}s, TTL: {TOKEN_VALIDATION_TTL}s)")
+            return True
+        else:
+            logger.debug(f"Token validation cache expired (age: {age:.1f}s, TTL: {TOKEN_VALIDATION_TTL}s)")
     
     try:
         test_url = f"{base_url}/api/channels/channels/"
@@ -53,10 +76,38 @@ def _validate_token(token: str) -> bool:
             "Accept": "application/json",
             "Content-Type": "application/json"
         }
+        log_api_request(logger, "GET", test_url, params={'page_size': 1})
+        start_time = time.time()
         resp = requests.get(test_url, headers=headers, timeout=5, params={'page_size': 1})
-        return resp.status_code == 200
+        elapsed = time.time() - start_time
+        log_api_response(logger, "GET", test_url, resp.status_code, elapsed)
+        
+        result = resp.status_code == 200
+        
+        # Cache successful validation using start_time as the reference point
+        if result:
+            _token_validation_cache[token] = start_time
+            logger.debug(f"Token validation successful, cached for {TOKEN_VALIDATION_TTL}s")
+        else:
+            # Clear cache on failed validation
+            _token_validation_cache.pop(token, None)
+        
+        return result
     except Exception:
+        # Clear cache on error
+        _token_validation_cache.pop(token, None)
         return False
+
+
+def _clear_token_validation_cache() -> None:
+    """Clear the token validation cache.
+    
+    This should be called when the token changes (e.g., after login or token refresh)
+    to ensure the new token is properly validated.
+    """
+    global _token_validation_cache
+    _token_validation_cache.clear()
+    logger.debug("Token validation cache cleared")
 
 
 def _login() -> bool:
@@ -90,6 +141,8 @@ def _login() -> bool:
         token = data.get("access") or data.get("token")
 
         if token:
+            # Clear old token validation cache before saving new token
+            _clear_token_validation_cache()
             if env_path.exists():
                 set_key(env_path, "DISPATCHARR_TOKEN", token)
                 logger.info("Login successful. Token saved.")
