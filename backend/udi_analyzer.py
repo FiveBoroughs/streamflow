@@ -950,6 +950,18 @@ def main():
     
     args = parser.parse_args()
     
+    # For JSON output to stdout, redirect logging to stderr to avoid mixing
+    if args.format == 'json' and not args.output:
+        import logging
+        for handler in logging.root.handlers[:]:
+            logging.root.removeHandler(handler)
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(levelname)s - [%(name)s:%(funcName)s:%(lineno)d] - %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S',
+            stream=sys.stderr
+        )
+    
     # Run analysis
     analyzer = UDIAnalyzer()
     report = analyzer.analyze(
@@ -969,7 +981,7 @@ def main():
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write(output)
-        print(f"Report written to: {args.output}")
+        print(f"Report written to: {args.output}", file=sys.stderr)
     else:
         print(output)
     
