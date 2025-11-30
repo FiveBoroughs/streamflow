@@ -111,6 +111,7 @@ jobs:
   merge:
     runs-on: ubuntu-latest
     if: |
+      github.event_name == 'workflow_dispatch' ||
       github.event_name == 'release' ||
       (github.event_name == 'pull_request' && github.base_ref == 'dev' && github.event.pull_request.merged == true)
     needs:
