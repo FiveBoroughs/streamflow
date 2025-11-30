@@ -289,6 +289,10 @@ class AutomatedStreamManager:
         self.running = False
         self.last_playlist_update = None
         self.automation_start_time = None
+        
+        # Cache for M3U accounts to avoid redundant API calls within a single automation cycle
+        # This is cleared after each cycle completes
+        self._m3u_accounts_cache = None
     
     def _load_config(self) -> Dict:
         """Load automation configuration."""
@@ -381,7 +385,9 @@ class AutomatedStreamManager:
             before_stream_ids = {s.get('id'): s.get('name', '') for s in streams_before if isinstance(s, dict) and s.get('id')}
             
             # Get all M3U accounts and filter out "custom" and non-active accounts
+            # Cache the result to avoid redundant API calls in discover_and_assign_streams
             all_accounts = get_m3u_accounts()
+            self._m3u_accounts_cache = all_accounts  # Cache for use in discover_and_assign_streams
             if all_accounts:
                 # Filter out "custom" account (it doesn't need refresh as it's for locally added streams)
                 # and non-active accounts (per Dispatcharr API spec)
@@ -533,8 +539,14 @@ class AutomatedStreamManager:
                 return {}
             
             # Filter streams by enabled M3U accounts
-            # Get all M3U accounts and filter by enabled and active status
-            all_accounts = get_m3u_accounts()
+            # Use cached M3U accounts if available (from refresh_playlists), otherwise fetch
+            # This optimization ensures M3U accounts are only queried once per playlist refresh cycle
+            if self._m3u_accounts_cache is not None:
+                all_accounts = self._m3u_accounts_cache
+                logger.debug("Using cached M3U accounts from playlist refresh")
+            else:
+                all_accounts = get_m3u_accounts()
+                logger.debug("Fetched M3U accounts (cache not available)")
             enabled_account_ids = set()
             
             if all_accounts:
@@ -779,16 +791,21 @@ class AutomatedStreamManager:
         
         logger.info("Starting automation cycle...")
         
-        # 1. Update playlists
-        success = self.refresh_playlists()
-        if success:
-            # Small delay to allow playlist processing
-            time.sleep(10)
-            
-            # 2. Discover and assign new streams
-            assignments = self.discover_and_assign_streams()
+        try:
+            # 1. Update playlists (also caches M3U accounts for use in discover_and_assign_streams)
+            success = self.refresh_playlists()
+            if success:
+                # Small delay to allow playlist processing
+                time.sleep(10)
+                
+                # 2. Discover and assign new streams (uses cached M3U accounts)
+                assignments = self.discover_and_assign_streams()
+        finally:
+            # Clear the M3U accounts cache after each cycle to ensure fresh data on next cycle
+            self._m3u_accounts_cache = None
         
         logger.info("Automation cycle completed")
+        
     def start_automation(self):
         """Start the automated stream management process."""
         log_function_call(logger, "start_automation")
