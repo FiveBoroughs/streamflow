@@ -136,6 +136,10 @@ class UDIStorage:
     def update_channel(self, channel_id: int, channel_data: Dict[str, Any]) -> bool:
         """Update a specific channel in storage.
         
+        This method writes the entire channels file for each update to maintain
+        data consistency. For high-frequency batch updates, use save_channels()
+        instead to write all changes at once.
+        
         Args:
             channel_id: The channel ID
             channel_data: Updated channel data
