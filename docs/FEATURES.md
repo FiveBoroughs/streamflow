@@ -10,7 +10,7 @@ StreamFlow offers 5 pipeline modes to match different usage scenarios:
 - **Pipeline 2.5**: Pipeline 2 + scheduled complete checks (controlled automation)
 - **Pipeline 3**: Only scheduled operations (maximum control)
 
-See [PIPELINE_SYSTEM.md](../PIPELINE_SYSTEM.md) for detailed pipeline documentation.
+See [PIPELINE_SYSTEM.md](PIPELINE_SYSTEM.md) for detailed pipeline documentation.
 
 ### Automated M3U Playlist Management
 - Automatically refreshes playlists every 5 minutes (configurable)

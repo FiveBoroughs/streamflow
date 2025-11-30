@@ -6,6 +6,8 @@ This module handles the automated process of:
 1. Updating M3U playlists
 2. Discovering new streams and assigning them to channels via regex
 3. Maintaining changelog of updates
+
+Uses the Universal Data Index (UDI) as the single source of truth for data access.
 """
 
 import json
@@ -23,10 +25,12 @@ from api_utils import (
     refresh_m3u_playlists,
     get_m3u_accounts,
     get_streams,
-    fetch_data_from_url,
     add_streams_to_channel,
     _get_base_url
 )
+
+# Import UDI for direct data access
+from udi import get_udi_manager
 
 # Setup centralized logging
 from logging_config import setup_logging, log_function_call, log_function_return, log_exception, log_state_change
@@ -285,6 +289,10 @@ class AutomatedStreamManager:
         self.running = False
         self.last_playlist_update = None
         self.automation_start_time = None
+        
+        # Cache for M3U accounts to avoid redundant API calls within a single automation cycle
+        # This is cleared after each cycle completes
+        self._m3u_accounts_cache = None
     
     def _load_config(self) -> Dict:
         """Load automation configuration."""
@@ -377,7 +385,10 @@ class AutomatedStreamManager:
             before_stream_ids = {s.get('id'): s.get('name', '') for s in streams_before if isinstance(s, dict) and s.get('id')}
             
             # Get all M3U accounts and filter out "custom" and non-active accounts
+            # Cache the result to avoid redundant API calls in discover_and_assign_streams
             all_accounts = get_m3u_accounts()
+            self._m3u_accounts_cache = all_accounts  # Cache for use in discover_and_assign_streams
+            logger.debug(f"M3U accounts fetched from UDI cache and stored in local cache ({len(all_accounts) if all_accounts else 0} accounts)")
             if all_accounts:
                 # Filter out "custom" account (it doesn't need refresh as it's for locally added streams)
                 # and non-active accounts (per Dispatcharr API spec)
@@ -455,17 +466,11 @@ class AutomatedStreamManager:
             # This prevents unnecessary marking of all channels on every refresh
             if len(added_streams) > 0 or len(removed_streams) > 0:
                 try:
-                    # Get all channels that may have been affected
-                    from api_utils import fetch_data_from_url, _get_base_url
-                    base_url = _get_base_url()
-                    channels_data = fetch_data_from_url(f"{base_url}/api/channels/channels/")
+                    # Get all channels from UDI
+                    udi = get_udi_manager()
+                    channels = udi.get_channels()
                     
-                    if channels_data:
-                        if isinstance(channels_data, dict) and 'results' in channels_data:
-                            channels = channels_data['results']
-                        else:
-                            channels = channels_data
-                        
+                    if channels:
                         # Mark all channels for checking with stream counts for 2-hour immunity
                         channel_ids = []
                         stream_counts = {}
@@ -535,8 +540,14 @@ class AutomatedStreamManager:
                 return {}
             
             # Filter streams by enabled M3U accounts
-            # Get all M3U accounts and filter by enabled and active status
-            all_accounts = get_m3u_accounts()
+            # Use cached M3U accounts if available (from refresh_playlists), otherwise fetch
+            # This optimization ensures M3U accounts are only queried once per playlist refresh cycle
+            if self._m3u_accounts_cache is not None:
+                all_accounts = self._m3u_accounts_cache
+                logger.debug(f"Using cached M3U accounts from playlist refresh (no UDI/API call - {len(all_accounts) if all_accounts else 0} accounts)")
+            else:
+                all_accounts = get_m3u_accounts()
+                logger.debug(f"Fetched M3U accounts from UDI cache (cache was empty - {len(all_accounts) if all_accounts else 0} accounts)")
             enabled_account_ids = set()
             
             if all_accounts:
@@ -581,16 +592,11 @@ class AutomatedStreamManager:
             else:
                 logger.warning("Could not fetch M3U accounts, using all streams")
             
-            # Get all channels
-            base_url = _get_base_url()
-            all_channels = fetch_data_from_url(f"{base_url}/api/channels/channels/")
+            # Get all channels from UDI
+            udi = get_udi_manager()
+            all_channels = udi.get_channels()
             if not all_channels:
                 logger.warning("No channels found")
-                return {}
-            
-            # Validate that all_channels is a list
-            if not isinstance(all_channels, list):
-                logger.error(f"Invalid channels response format: expected list, got {type(all_channels).__name__}")
                 return {}
             
             # Create a map of existing channel streams
@@ -604,20 +610,16 @@ class AutomatedStreamManager:
                     
                 channel_id = str(channel['id'])
                 channel_names[channel_id] = channel.get('name', f'Channel {channel_id}')
-                streams = fetch_data_from_url(f"{base_url}/api/channels/channels/{channel_id}/streams/")
+                # Get streams for this channel from UDI
+                streams = udi.get_channel_streams(int(channel_id))
                 if streams:
-                    # Validate that streams is a list and contains dictionaries
-                    if isinstance(streams, list):
-                        valid_stream_ids = set()
-                        for s in streams:
-                            if isinstance(s, dict) and 'id' in s:
-                                valid_stream_ids.add(s['id'])
-                            else:
-                                logger.warning(f"Invalid stream format in channel {channel_id}: {type(s).__name__} - {s}")
-                        channel_streams[channel_id] = valid_stream_ids
-                    else:
-                        logger.warning(f"Invalid streams format for channel {channel_id}: expected list, got {type(streams).__name__}")
-                        channel_streams[channel_id] = set()
+                    valid_stream_ids = set()
+                    for s in streams:
+                        if isinstance(s, dict) and 'id' in s:
+                            valid_stream_ids.add(s['id'])
+                        else:
+                            logger.warning(f"Invalid stream format in channel {channel_id}: {type(s).__name__} - {s}")
+                    channel_streams[channel_id] = valid_stream_ids
                 else:
                     channel_streams[channel_id] = set()
             
@@ -671,11 +673,12 @@ class AutomatedStreamManager:
                         if added_count > 0:
                             try:
                                 time.sleep(0.5)  # Brief delay for API processing
-                                base_url = _get_base_url()
-                                updated_streams = fetch_data_from_url(f"{base_url}/api/channels/channels/{channel_id}/streams/")
+                                # Refresh channels in UDI to get updated data after write
+                                udi.refresh_channels()
+                                updated_channel = udi.get_channel_by_id(int(channel_id))
                                 
-                                if updated_streams and isinstance(updated_streams, list):
-                                    updated_stream_ids = set(s.get('id') for s in updated_streams if isinstance(s, dict) and 'id' in s)
+                                if updated_channel:
+                                    updated_stream_ids = set(updated_channel.get('streams', []))
                                     expected_stream_ids = set(stream_ids)
                                     added_stream_ids = expected_stream_ids & updated_stream_ids
                                     
@@ -684,7 +687,7 @@ class AutomatedStreamManager:
                                     else:
                                         logger.warning(f"⚠ Verification mismatch for channel {channel_id}: expected {added_count} streams, found {len(added_stream_ids)} in channel")
                                 else:
-                                    logger.warning(f"⚠ Could not verify stream addition for channel {channel_id}: invalid response")
+                                    logger.warning(f"⚠ Could not verify stream addition for channel {channel_id}: channel not found")
                             except Exception as verify_error:
                                 logger.warning(f"⚠ Could not verify stream addition for channel {channel_id}: {verify_error}")
                         
@@ -729,11 +732,12 @@ class AutomatedStreamManager:
                     for channel_id in assignment_count.keys():
                         if assignment_count[channel_id] > 0:
                             channel_ids_to_mark.append(int(channel_id))
-                            # Fetch current stream count for this channel
+                            # Get current stream count from UDI
                             try:
-                                ch_streams = fetch_data_from_url(f"{base_url}/api/channels/channels/{channel_id}/streams/")
-                                if ch_streams and isinstance(ch_streams, list):
-                                    stream_counts[int(channel_id)] = len(ch_streams)
+                                channel = udi.get_channel_by_id(int(channel_id))
+                                if channel:
+                                    streams_list = channel.get('streams', [])
+                                    stream_counts[int(channel_id)] = len(streams_list) if isinstance(streams_list, list) else 0
                             except Exception:
                                 pass  # If we can't get count, marking will still work
                     
@@ -788,16 +792,21 @@ class AutomatedStreamManager:
         
         logger.info("Starting automation cycle...")
         
-        # 1. Update playlists
-        success = self.refresh_playlists()
-        if success:
-            # Small delay to allow playlist processing
-            time.sleep(10)
+        try:
+            # 1. Update playlists (also caches M3U accounts for use in discover_and_assign_streams)
+            success = self.refresh_playlists()
+            if success:
+                # Small delay to allow playlist processing
+                time.sleep(10)
+                
+                # 2. Discover and assign new streams (uses cached M3U accounts)
+                assignments = self.discover_and_assign_streams()
             
-            # 2. Discover and assign new streams
-            assignments = self.discover_and_assign_streams()
+            logger.info("Automation cycle completed")
+        finally:
+            # Clear the M3U accounts cache after each cycle to ensure fresh data on next cycle
+            self._m3u_accounts_cache = None
         
-        logger.info("Automation cycle completed")
     def start_automation(self):
         """Start the automated stream management process."""
         log_function_call(logger, "start_automation")

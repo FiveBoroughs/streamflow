@@ -17,8 +17,11 @@ from flask import Flask, request, jsonify, send_from_directory, send_file
 from flask_cors import CORS
 
 from automated_stream_manager import AutomatedStreamManager, RegexChannelMatcher
-from api_utils import fetch_data_from_url, _get_base_url
+from api_utils import _get_base_url
 from stream_checker_service import get_stream_checker_service
+
+# Import UDI for direct data access
+from udi import get_udi_manager
 
 # Import croniter for cron expression validation
 try:
@@ -26,7 +29,6 @@ try:
     CRONITER_AVAILABLE = True
 except ImportError:
     CRONITER_AVAILABLE = False
-    logger.warning("croniter not installed - cron expression validation will be disabled")
 
 
 
@@ -191,10 +193,10 @@ def update_automation_config():
 
 @app.route('/api/channels', methods=['GET'])
 def get_channels():
-    """Get all channels from Dispatcharr."""
+    """Get all channels from UDI."""
     try:
-        base_url = _get_base_url()
-        channels = fetch_data_from_url(f"{base_url}/api/channels/channels/")
+        udi = get_udi_manager()
+        channels = udi.get_channels()
         
         if channels is None:
             return jsonify({"error": "Failed to fetch channels"}), 500
@@ -206,10 +208,10 @@ def get_channels():
 
 @app.route('/api/channels/groups', methods=['GET'])
 def get_channel_groups():
-    """Get all channel groups from Dispatcharr."""
+    """Get all channel groups from UDI."""
     try:
-        base_url = _get_base_url()
-        groups = fetch_data_from_url(f"{base_url}/api/channels/groups/")
+        udi = get_udi_manager()
+        groups = udi.get_channel_groups()
         
         if groups is None:
             return jsonify({"error": "Failed to fetch channel groups"}), 500
@@ -221,10 +223,10 @@ def get_channel_groups():
 
 @app.route('/api/channels/logos/<logo_id>', methods=['GET'])
 def get_channel_logo(logo_id):
-    """Get channel logo from Dispatcharr."""
+    """Get channel logo from UDI."""
     try:
-        base_url = _get_base_url()
-        logo = fetch_data_from_url(f"{base_url}/api/channels/logos/{logo_id}/")
+        udi = get_udi_manager()
+        logo = udi.get_logo_by_id(int(logo_id))
         
         if logo is None:
             return jsonify({"error": "Failed to fetch logo"}), 500
@@ -638,11 +640,10 @@ def get_setup_wizard_status():
             status["has_channels"] = True
         else:
             try:
-                base_url = _get_base_url()
-                if base_url:
-                    channels = fetch_data_from_url(f"{base_url}/api/channels/channels/")
-                    status["dispatcharr_connection"] = channels is not None
-                    status["has_channels"] = bool(channels)
+                udi = get_udi_manager()
+                channels = udi.get_channels()
+                status["dispatcharr_connection"] = channels is not None
+                status["has_channels"] = bool(channels)
             except:
                 pass
         
@@ -1059,18 +1060,12 @@ def queue_all_channels():
     try:
         service = get_stream_checker_service()
         
-        # Fetch all channels
-        from api_utils import fetch_data_from_url, _get_base_url
-        base_url = _get_base_url()
-        channels_data = fetch_data_from_url(f"{base_url}/api/channels/channels/")
+        # Fetch all channels from UDI
+        udi = get_udi_manager()
+        channels = udi.get_channels()
         
-        if not channels_data:
+        if not channels:
             return jsonify({"error": "Could not fetch channels"}), 500
-        
-        if isinstance(channels_data, dict) and 'results' in channels_data:
-            channels = channels_data['results']
-        else:
-            channels = channels_data
         
         channel_ids = [ch['id'] for ch in channels if isinstance(ch, dict) and 'id' in ch]
         

@@ -17,6 +17,9 @@ from unittest.mock import Mock, patch, MagicMock
 import sys
 import os
 
+# Set up CONFIG_DIR before importing modules
+os.environ['CONFIG_DIR'] = tempfile.mkdtemp()
+
 # Add backend to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -76,14 +79,17 @@ class TestQueueLoggingAccuracy(unittest.TestCase):
         with patch('stream_checker_service.CONFIG_DIR', Path(self.temp_dir)):
             service = StreamCheckerService()
             
-            # Mock the API calls
+            # Mock the UDI manager
             mock_channels = [
                 {'id': 1, 'name': 'Channel 1'},
                 {'id': 2, 'name': 'Channel 2'},
                 {'id': 3, 'name': 'Channel 3'}
             ]
             
-            with patch('stream_checker_service.fetch_data_from_url', return_value=mock_channels):
+            mock_udi = MagicMock()
+            mock_udi.get_channels.return_value = mock_channels
+            
+            with patch('stream_checker_service.get_udi_manager', return_value=mock_udi):
                 # Pre-queue one channel to simulate it being already in queue
                 service.check_queue.add_channel(1, priority=5)
                 
@@ -120,7 +126,10 @@ class TestQueueLoggingAccuracy(unittest.TestCase):
                 {'id': i, 'name': f'Channel {i}'} for i in range(1, 6)
             ]
             
-            with patch('stream_checker_service.fetch_data_from_url', return_value=mock_channels):
+            mock_udi = MagicMock()
+            mock_udi.get_channels.return_value = mock_channels
+            
+            with patch('stream_checker_service.get_udi_manager', return_value=mock_udi):
                 # Pre-queue channel 3 to test that it's skipped in batch 2
                 service.check_queue.add_channel(3, priority=5)
                 
@@ -151,7 +160,10 @@ class TestQueueLoggingAccuracy(unittest.TestCase):
                 {'id': i, 'name': f'Channel {i}'} for i in range(1, 4)
             ]
             
-            with patch('stream_checker_service.fetch_data_from_url', return_value=mock_channels):
+            mock_udi = MagicMock()
+            mock_udi.get_channels.return_value = mock_channels
+            
+            with patch('stream_checker_service.get_udi_manager', return_value=mock_udi):
                 # Simulate channels being completed (fully processed through the queue)
                 for ch_id in [1, 2, 3]:
                     # Add to queue

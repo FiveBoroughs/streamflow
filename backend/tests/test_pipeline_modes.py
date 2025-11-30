@@ -198,21 +198,20 @@ class TestForceCheckBehavior(unittest.TestCase):
         with patch('stream_checker_service.CONFIG_DIR', Path(self.temp_dir)):
             service = StreamCheckerService()
             
-            # Mock fetch_data_from_url to return channels
-            with patch('stream_checker_service.fetch_data_from_url') as mock_fetch:
-                mock_fetch.return_value = [
-                    {'id': 1, 'name': 'Channel 1'},
-                    {'id': 2, 'name': 'Channel 2'}
-                ]
+            # Mock UDI manager to return channels
+            mock_udi = MagicMock()
+            mock_udi.get_channels.return_value = [
+                {'id': 1, 'name': 'Channel 1'},
+                {'id': 2, 'name': 'Channel 2'}
+            ]
+            
+            with patch('stream_checker_service.get_udi_manager', return_value=mock_udi):
+                # Queue all channels with force check
+                service._queue_all_channels(force_check=True)
                 
-                # Mock _get_base_url
-                with patch('stream_checker_service._get_base_url', return_value='http://test:8000'):
-                    # Queue all channels with force check
-                    service._queue_all_channels(force_check=True)
-                    
-                    # Verify force check flags were set
-                    self.assertTrue(service.update_tracker.should_force_check(1))
-                    self.assertTrue(service.update_tracker.should_force_check(2))
+                # Verify force check flags were set
+                self.assertTrue(service.update_tracker.should_force_check(1))
+                self.assertTrue(service.update_tracker.should_force_check(2))
 
 
 class TestGlobalAction(unittest.TestCase):

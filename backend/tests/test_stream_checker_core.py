@@ -153,18 +153,20 @@ class TestProgressTracking(unittest.TestCase):
         shutil.rmtree(self.temp_dir, ignore_errors=True)
     
     @patch('stream_checker_service.fetch_channel_streams')
-    @patch('stream_checker_service.fetch_data_from_url')
+    @patch('stream_checker_service.get_udi_manager')
     @patch('stream_checker_service._get_base_url')
-    def test_total_streams_defined_before_use(self, mock_base_url, mock_fetch_data, mock_fetch_streams):
+    def test_total_streams_defined_before_use(self, mock_base_url, mock_get_udi, mock_fetch_streams):
         """Test that total_streams is defined before being used in progress updates."""
         # Setup mocks
         mock_base_url.return_value = "http://test:8000"
         
-        # Mock channel data
-        mock_fetch_data.return_value = {
+        # Mock UDI manager
+        mock_udi = MagicMock()
+        mock_udi.get_channel_by_id.return_value = {
             'id': 1,
             'name': 'Test Channel'
         }
+        mock_get_udi.return_value = mock_udi
         
         # Mock streams - 3 streams to check
         mock_fetch_streams.return_value = [

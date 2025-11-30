@@ -12,6 +12,10 @@ import unittest
 from unittest.mock import Mock, patch, MagicMock
 import sys
 import os
+import tempfile
+
+# Set up CONFIG_DIR before importing modules
+os.environ['CONFIG_DIR'] = tempfile.mkdtemp()
 
 # Add backend to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -30,13 +34,15 @@ class TestStreamValidation(unittest.TestCase):
         ]
     
     @patch('api_utils.patch_request')
-    @patch('api_utils.get_streams')
-    def test_update_channel_streams_filters_invalid_ids(self, mock_get_streams, mock_patch):
+    @patch('api_utils.get_udi_manager')
+    def test_update_channel_streams_filters_invalid_ids(self, mock_get_udi, mock_patch):
         """Test that update_channel_streams filters out non-existent stream IDs."""
         from api_utils import update_channel_streams
         
-        # Mock get_streams to return only valid streams
-        mock_get_streams.return_value = self.valid_streams
+        # Mock UDI manager to return valid stream IDs
+        mock_udi = MagicMock()
+        mock_udi.get_valid_stream_ids.return_value = {1, 2, 3}
+        mock_get_udi.return_value = mock_udi
         
         # Mock successful patch request
         mock_response = Mock()
@@ -57,13 +63,15 @@ class TestStreamValidation(unittest.TestCase):
         self.assertEqual(data['streams'], [1, 2])  # Only valid IDs
     
     @patch('api_utils.patch_request')
-    @patch('api_utils.get_streams')
-    def test_update_channel_streams_with_all_invalid_ids(self, mock_get_streams, mock_patch):
+    @patch('api_utils.get_udi_manager')
+    def test_update_channel_streams_with_all_invalid_ids(self, mock_get_udi, mock_patch):
         """Test update_channel_streams when all stream IDs are invalid."""
         from api_utils import update_channel_streams
         
-        # Mock get_streams to return only valid streams
-        mock_get_streams.return_value = self.valid_streams
+        # Mock UDI manager to return valid stream IDs
+        mock_udi = MagicMock()
+        mock_udi.get_valid_stream_ids.return_value = {1, 2, 3}
+        mock_get_udi.return_value = mock_udi
         
         # Mock successful patch request
         mock_response = Mock()
@@ -84,19 +92,17 @@ class TestStreamValidation(unittest.TestCase):
         self.assertEqual(data['streams'], [])
     
     @patch('api_utils.patch_request')
-    @patch('api_utils.get_streams')
-    @patch('api_utils.fetch_channel_streams')
-    def test_add_streams_filters_invalid_ids(self, mock_fetch, mock_get_streams, mock_patch):
+    @patch('api_utils.get_udi_manager')
+    def test_add_streams_filters_invalid_ids(self, mock_get_udi, mock_patch):
         """Test that add_streams_to_channel filters out non-existent stream IDs."""
         from api_utils import add_streams_to_channel
         
-        # Mock current channel streams
-        mock_fetch.return_value = [
-            {'id': 1, 'name': 'Stream 1'}
-        ]
-        
-        # Mock get_streams to return only valid streams
-        mock_get_streams.return_value = self.valid_streams
+        # Mock UDI manager
+        mock_udi = MagicMock()
+        mock_udi.get_valid_stream_ids.return_value = {1, 2, 3}
+        mock_udi.get_channel_by_id.return_value = {'id': 1, 'name': 'Test Channel', 'streams': [1]}
+        mock_udi.get_channel_streams.return_value = [{'id': 1, 'name': 'Stream 1'}]
+        mock_get_udi.return_value = mock_udi
         
         # Mock successful patch request
         mock_response = Mock()
@@ -118,19 +124,17 @@ class TestStreamValidation(unittest.TestCase):
         self.assertEqual(sorted(data['streams']), [1, 2, 3])
     
     @patch('api_utils.patch_request')
-    @patch('api_utils.get_streams')
-    @patch('api_utils.fetch_channel_streams')
-    def test_add_streams_with_all_invalid_ids(self, mock_fetch, mock_get_streams, mock_patch):
+    @patch('api_utils.get_udi_manager')
+    def test_add_streams_with_all_invalid_ids(self, mock_get_udi, mock_patch):
         """Test add_streams_to_channel when all new stream IDs are invalid."""
         from api_utils import add_streams_to_channel
         
-        # Mock current channel streams
-        mock_fetch.return_value = [
-            {'id': 1, 'name': 'Stream 1'}
-        ]
-        
-        # Mock get_streams to return only valid streams
-        mock_get_streams.return_value = self.valid_streams
+        # Mock UDI manager
+        mock_udi = MagicMock()
+        mock_udi.get_valid_stream_ids.return_value = {1, 2, 3}
+        mock_udi.get_channel_by_id.return_value = {'id': 1, 'name': 'Test Channel', 'streams': [1]}
+        mock_udi.get_channel_streams.return_value = [{'id': 1, 'name': 'Stream 1'}]
+        mock_get_udi.return_value = mock_udi
         
         # Mock successful patch request
         mock_response = Mock()
@@ -148,20 +152,20 @@ class TestStreamValidation(unittest.TestCase):
         mock_patch.assert_not_called()
     
     @patch('api_utils.patch_request')
-    @patch('api_utils.get_streams')
-    @patch('api_utils.fetch_channel_streams')
-    def test_add_streams_handles_removed_current_streams(self, mock_fetch, mock_get_streams, mock_patch):
+    @patch('api_utils.get_udi_manager')
+    def test_add_streams_handles_removed_current_streams(self, mock_get_udi, mock_patch):
         """Test that current channel streams that no longer exist are filtered out."""
         from api_utils import add_streams_to_channel
         
-        # Mock current channel streams - includes a stream that no longer exists
-        mock_fetch.return_value = [
+        # Mock UDI manager - includes a stream that no longer exists in valid IDs
+        mock_udi = MagicMock()
+        mock_udi.get_valid_stream_ids.return_value = {1, 2, 3}
+        mock_udi.get_channel_by_id.return_value = {'id': 1, 'name': 'Test Channel', 'streams': [1, 999]}
+        mock_udi.get_channel_streams.return_value = [
             {'id': 1, 'name': 'Stream 1'},
             {'id': 999, 'name': 'Removed Stream'}  # This stream no longer exists
         ]
-        
-        # Mock get_streams to return only valid streams
-        mock_get_streams.return_value = self.valid_streams
+        mock_get_udi.return_value = mock_udi
         
         # Mock successful patch request
         mock_response = Mock()
@@ -176,58 +180,54 @@ class TestStreamValidation(unittest.TestCase):
         self.assertEqual(result, 1)
         
         # Verify that patch was called
-        # Note: The current implementation keeps existing streams in the channel
-        # even if they're invalid (it doesn't clean them up during add operation)
-        # This test documents this behavior
         mock_patch.assert_called_once()
 
 
 class TestGetValidStreamIds(unittest.TestCase):
     """Test the get_valid_stream_ids helper function."""
     
-    @patch('api_utils.get_streams')
-    def test_get_valid_stream_ids_success(self, mock_get_streams):
+    @patch('api_utils.get_udi_manager')
+    def test_get_valid_stream_ids_success(self, mock_get_udi):
         """Test that get_valid_stream_ids returns correct set of IDs."""
         from api_utils import get_valid_stream_ids
         
-        mock_get_streams.return_value = [
-            {'id': 1, 'name': 'Stream 1'},
-            {'id': 2, 'name': 'Stream 2'},
-            {'id': 3, 'name': 'Stream 3'},
-        ]
+        # Mock UDI manager
+        mock_udi = MagicMock()
+        mock_udi.get_valid_stream_ids.return_value = {1, 2, 3}
+        mock_get_udi.return_value = mock_udi
         
         result = get_valid_stream_ids()
         
         self.assertEqual(result, {1, 2, 3})
     
-    @patch('api_utils.get_streams')
-    def test_get_valid_stream_ids_handles_invalid_data(self, mock_get_streams):
-        """Test that get_valid_stream_ids handles invalid stream data."""
+    @patch('api_utils.get_udi_manager')
+    def test_get_valid_stream_ids_handles_invalid_data(self, mock_get_udi):
+        """Test that get_valid_stream_ids handles data correctly from UDI."""
         from api_utils import get_valid_stream_ids
         
-        mock_get_streams.return_value = [
-            {'id': 1, 'name': 'Stream 1'},
-            'invalid_stream',  # Invalid data
-            {'id': 2, 'name': 'Stream 2'},
-            {},  # Missing id
-            {'id': 3, 'name': 'Stream 3'},
-        ]
+        # UDI already handles invalid data internally, so just return clean set
+        mock_udi = MagicMock()
+        mock_udi.get_valid_stream_ids.return_value = {1, 2, 3}
+        mock_get_udi.return_value = mock_udi
         
         result = get_valid_stream_ids()
         
-        # Should only include valid streams with IDs
+        # Should return whatever UDI returns
         self.assertEqual(result, {1, 2, 3})
     
-    @patch('api_utils.get_streams')
-    def test_get_valid_stream_ids_handles_error(self, mock_get_streams):
+    @patch('api_utils.get_udi_manager')
+    def test_get_valid_stream_ids_handles_error(self, mock_get_udi):
         """Test that get_valid_stream_ids returns empty set on error."""
         from api_utils import get_valid_stream_ids
         
-        mock_get_streams.side_effect = Exception("API error")
+        # UDI returns empty set on error
+        mock_udi = MagicMock()
+        mock_udi.get_valid_stream_ids.return_value = set()
+        mock_get_udi.return_value = mock_udi
         
         result = get_valid_stream_ids()
         
-        # Should return empty set on error for safety
+        # Should return empty set
         self.assertEqual(result, set())
 
 
@@ -236,17 +236,20 @@ class TestDeadStreamFiltering(unittest.TestCase):
     
     @patch('api_utils.get_dead_stream_urls')
     @patch('api_utils.patch_request')
-    @patch('api_utils.get_streams')
-    def test_update_channel_filters_dead_streams(self, mock_get_streams, mock_patch, mock_dead_urls):
+    @patch('api_utils.get_udi_manager')
+    def test_update_channel_filters_dead_streams(self, mock_get_udi, mock_patch, mock_dead_urls):
         """Test that update_channel_streams filters out dead streams by default."""
         from api_utils import update_channel_streams
         
-        # Mock valid streams
-        mock_get_streams.return_value = [
+        # Mock UDI manager
+        mock_udi = MagicMock()
+        mock_udi.get_valid_stream_ids.return_value = {1, 2, 3}
+        mock_udi.get_streams.return_value = [
             {'id': 1, 'name': 'Stream 1', 'url': 'http://example.com/stream1.m3u8'},
             {'id': 2, 'name': 'Stream 2', 'url': 'http://example.com/stream2.m3u8'},
             {'id': 3, 'name': 'Dead Stream', 'url': 'http://example.com/dead.m3u8'},
         ]
+        mock_get_udi.return_value = mock_udi
         
         # Mock dead stream URLs
         mock_dead_urls.return_value = {'http://example.com/dead.m3u8'}
@@ -270,17 +273,15 @@ class TestDeadStreamFiltering(unittest.TestCase):
     
     @patch('api_utils.get_dead_stream_urls')
     @patch('api_utils.patch_request')
-    @patch('api_utils.get_streams')
-    def test_update_channel_allows_dead_streams_in_global_check(self, mock_get_streams, mock_patch, mock_dead_urls):
+    @patch('api_utils.get_udi_manager')
+    def test_update_channel_allows_dead_streams_in_global_check(self, mock_get_udi, mock_patch, mock_dead_urls):
         """Test that update_channel_streams allows dead streams during global checks."""
         from api_utils import update_channel_streams
         
-        # Mock valid streams
-        mock_get_streams.return_value = [
-            {'id': 1, 'name': 'Stream 1', 'url': 'http://example.com/stream1.m3u8'},
-            {'id': 2, 'name': 'Stream 2', 'url': 'http://example.com/stream2.m3u8'},
-            {'id': 3, 'name': 'Dead Stream', 'url': 'http://example.com/dead.m3u8'},
-        ]
+        # Mock UDI manager
+        mock_udi = MagicMock()
+        mock_udi.get_valid_stream_ids.return_value = {1, 2, 3}
+        mock_get_udi.return_value = mock_udi
         
         # Mock dead stream URLs
         mock_dead_urls.return_value = {'http://example.com/dead.m3u8'}
@@ -304,23 +305,22 @@ class TestDeadStreamFiltering(unittest.TestCase):
     
     @patch('api_utils.get_dead_stream_urls')
     @patch('api_utils.patch_request')
-    @patch('api_utils.get_streams')
-    @patch('api_utils.fetch_channel_streams')
-    def test_add_streams_filters_dead_streams(self, mock_fetch, mock_get_streams, mock_patch, mock_dead_urls):
+    @patch('api_utils.get_udi_manager')
+    def test_add_streams_filters_dead_streams(self, mock_get_udi, mock_patch, mock_dead_urls):
         """Test that add_streams_to_channel filters out dead streams by default."""
         from api_utils import add_streams_to_channel
         
-        # Mock current channel streams
-        mock_fetch.return_value = [
-            {'id': 1, 'name': 'Stream 1'}
-        ]
-        
-        # Mock valid streams
-        mock_get_streams.return_value = [
+        # Mock UDI manager
+        mock_udi = MagicMock()
+        mock_udi.get_valid_stream_ids.return_value = {1, 2, 3}
+        mock_udi.get_channel_by_id.return_value = {'id': 1, 'name': 'Test Channel', 'streams': [1]}
+        mock_udi.get_channel_streams.return_value = [{'id': 1, 'name': 'Stream 1'}]
+        mock_udi.get_streams.return_value = [
             {'id': 1, 'name': 'Stream 1', 'url': 'http://example.com/stream1.m3u8'},
             {'id': 2, 'name': 'Stream 2', 'url': 'http://example.com/stream2.m3u8'},
             {'id': 3, 'name': 'Dead Stream', 'url': 'http://example.com/dead.m3u8'},
         ]
+        mock_get_udi.return_value = mock_udi
         
         # Mock dead stream URLs
         mock_dead_urls.return_value = {'http://example.com/dead.m3u8'}
