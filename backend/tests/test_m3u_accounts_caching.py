@@ -288,5 +288,108 @@ class TestM3UAccountsCachingEdgeCases(unittest.TestCase):
             self.assertEqual(result, {})
 
 
+class TestM3UAccountsCachingDebugLogs(unittest.TestCase):
+    """Test debug logging for M3U accounts caching."""
+    
+    def setUp(self):
+        """Set up test fixtures."""
+        self.temp_dir = tempfile.mkdtemp()
+        import logging
+        from io import StringIO
+        
+        # Set up logging capture
+        self.log_stream = StringIO()
+        self.handler = logging.StreamHandler(self.log_stream)
+        self.handler.setLevel(logging.DEBUG)
+        
+        # Get the logger used by automated_stream_manager
+        self.logger = logging.getLogger('automated_stream_manager')
+        self.original_level = self.logger.level
+        self.logger.setLevel(logging.DEBUG)
+        self.logger.addHandler(self.handler)
+        
+    def tearDown(self):
+        """Clean up test fixtures."""
+        import shutil
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+        
+        # Restore logging
+        self.logger.removeHandler(self.handler)
+        self.logger.setLevel(self.original_level)
+    
+    @patch('automated_stream_manager.add_streams_to_channel')
+    @patch('automated_stream_manager.get_udi_manager')
+    @patch('automated_stream_manager.refresh_m3u_playlists')
+    @patch('automated_stream_manager.get_streams')
+    @patch('automated_stream_manager.get_m3u_accounts')
+    def test_debug_log_when_using_cached_accounts(self, mock_get_accounts, mock_get_streams, 
+                                                    mock_refresh, mock_udi, mock_add_streams):
+        """Test that debug log correctly indicates when cached M3U accounts are used."""
+        test_accounts = [
+            {'id': 1, 'name': 'Account 1', 'is_active': True},
+            {'id': 2, 'name': 'Account 2', 'is_active': True}
+        ]
+        mock_get_accounts.return_value = test_accounts
+        mock_get_streams.return_value = [
+            {'id': 1, 'name': 'Stream 1', 'm3u_account': 1}
+        ]
+        
+        # Mock UDI manager
+        mock_udi_instance = MagicMock()
+        mock_udi_instance.get_channels.return_value = []
+        mock_udi.return_value = mock_udi_instance
+        
+        with patch('automated_stream_manager.CONFIG_DIR', Path(self.temp_dir)):
+            manager = AutomatedStreamManager()
+            manager.config['enabled_features']['changelog_tracking'] = False
+            
+            # First call refresh_playlists which should cache accounts
+            manager.refresh_playlists()
+            
+            # Then call discover_and_assign_streams which should use cached accounts
+            manager.discover_and_assign_streams()
+            
+            # Check log output
+            log_output = self.log_stream.getvalue()
+            
+            # Should have logged that cached accounts are being used
+            self.assertIn("Using cached M3U accounts", log_output)
+            self.assertIn("no UDI/API call", log_output)
+    
+    @patch('automated_stream_manager.add_streams_to_channel')
+    @patch('automated_stream_manager.get_udi_manager')
+    @patch('automated_stream_manager.get_streams')
+    @patch('automated_stream_manager.get_m3u_accounts')
+    def test_debug_log_when_fetching_accounts(self, mock_get_accounts, mock_get_streams,
+                                               mock_udi, mock_add_streams):
+        """Test that debug log correctly indicates when M3U accounts are fetched from UDI."""
+        test_accounts = [
+            {'id': 1, 'name': 'Account 1', 'is_active': True}
+        ]
+        mock_get_accounts.return_value = test_accounts
+        mock_get_streams.return_value = [
+            {'id': 1, 'name': 'Stream 1', 'm3u_account': 1}
+        ]
+        
+        # Mock UDI manager
+        mock_udi_instance = MagicMock()
+        mock_udi_instance.get_channels.return_value = []
+        mock_udi.return_value = mock_udi_instance
+        
+        with patch('automated_stream_manager.CONFIG_DIR', Path(self.temp_dir)):
+            manager = AutomatedStreamManager()
+            manager.config['enabled_features']['changelog_tracking'] = False
+            
+            # Call discover_and_assign_streams without refresh_playlists first (cache empty)
+            manager.discover_and_assign_streams()
+            
+            # Check log output
+            log_output = self.log_stream.getvalue()
+            
+            # Should have logged that accounts were fetched from UDI cache
+            self.assertIn("Fetched M3U accounts from UDI cache", log_output)
+            self.assertIn("cache was empty", log_output)
+
+
 if __name__ == '__main__':
     unittest.main()

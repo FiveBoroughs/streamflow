@@ -280,6 +280,7 @@ class UDIManager:
             List of M3U account dictionaries
         """
         self._ensure_initialized()
+        logger.debug(f"Returning {len(self._m3u_accounts_cache)} M3U accounts from UDI cache")
         return self._m3u_accounts_cache.copy()
     
     def has_custom_streams(self) -> bool:

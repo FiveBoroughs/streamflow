@@ -388,6 +388,7 @@ class AutomatedStreamManager:
             # Cache the result to avoid redundant API calls in discover_and_assign_streams
             all_accounts = get_m3u_accounts()
             self._m3u_accounts_cache = all_accounts  # Cache for use in discover_and_assign_streams
+            logger.debug(f"M3U accounts fetched from UDI cache and stored in local cache ({len(all_accounts) if all_accounts else 0} accounts)")
             if all_accounts:
                 # Filter out "custom" account (it doesn't need refresh as it's for locally added streams)
                 # and non-active accounts (per Dispatcharr API spec)
@@ -543,10 +544,10 @@ class AutomatedStreamManager:
             # This optimization ensures M3U accounts are only queried once per playlist refresh cycle
             if self._m3u_accounts_cache is not None:
                 all_accounts = self._m3u_accounts_cache
-                logger.debug("Using cached M3U accounts from playlist refresh")
+                logger.debug(f"Using cached M3U accounts from playlist refresh (no UDI/API call - {len(all_accounts) if all_accounts else 0} accounts)")
             else:
                 all_accounts = get_m3u_accounts()
-                logger.debug("Fetched M3U accounts (cache not available)")
+                logger.debug(f"Fetched M3U accounts from UDI cache (cache was empty - {len(all_accounts) if all_accounts else 0} accounts)")
             enabled_account_ids = set()
             
             if all_accounts:
@@ -800,11 +801,11 @@ class AutomatedStreamManager:
                 
                 # 2. Discover and assign new streams (uses cached M3U accounts)
                 assignments = self.discover_and_assign_streams()
+            
+            logger.info("Automation cycle completed")
         finally:
             # Clear the M3U accounts cache after each cycle to ensure fresh data on next cycle
             self._m3u_accounts_cache = None
-        
-        logger.info("Automation cycle completed")
         
     def start_automation(self):
         """Start the automated stream management process."""

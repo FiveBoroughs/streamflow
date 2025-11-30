@@ -514,6 +514,7 @@ def get_m3u_accounts() -> Optional[List[Dict[str, Any]]]:
         Optional[List[Dict[str, Any]]]: List of M3U account objects
             or None if not available.
     """
+    logger.debug("get_m3u_accounts() called - fetching from UDI cache")
     udi = get_udi_manager()
     accounts = udi.get_m3u_accounts()
     return accounts if accounts else None
