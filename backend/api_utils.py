@@ -214,7 +214,9 @@ def _get_auth_headers() -> Dict[str, str]:
     Get authorization headers for API requests.
     
     Retrieves the authentication token from environment variables.
-    If no token is found or token is invalid, attempts to log in first.
+    If no token is found, attempts to log in first. Token validation
+    is not done proactively - invalid tokens are handled by the 401
+    retry logic in API request functions.
     
     Returns:
         Dict[str, str]: Dictionary containing authorization headers.
@@ -225,20 +227,18 @@ def _get_auth_headers() -> Dict[str, str]:
     log_function_call(logger, "_get_auth_headers")
     current_token = os.getenv("DISPATCHARR_TOKEN")
     
-    # If token exists, validate it before using
-    if current_token and _validate_token(current_token):
-        logger.debug("Using existing valid token")
+    # If token exists, use it directly (validation happens on 401 response)
+    if current_token:
+        logger.debug("Using existing token")
+        log_function_return(logger, "_get_auth_headers", "<headers with token>")
         return {
             "Authorization": f"Bearer {current_token}",
             "Accept": "application/json",
             "Content-Type": "application/json"
         }
     
-    # Token is missing or invalid, need to login
-    if current_token:
-        logger.info("Existing token is invalid. Attempting to log in...")
-    else:
-        logger.info("DISPATCHARR_TOKEN not found. Attempting to log in...")
+    # Token is missing, need to login
+    logger.info("DISPATCHARR_TOKEN not found. Attempting to log in...")
     
     if login():
         # Reload from .env file only if it exists

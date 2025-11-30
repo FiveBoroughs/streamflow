@@ -164,6 +164,10 @@ def _login() -> bool:
 def _get_auth_headers() -> Dict[str, str]:
     """Get authorization headers for API requests.
     
+    Token validation is not done proactively - invalid tokens are 
+    handled by the 401 retry logic in the calling functions (e.g.,
+    _fetch_url, fetch_data_from_url) that make requests with these headers.
+    
     Returns:
         Dictionary containing authorization headers.
         
@@ -172,17 +176,16 @@ def _get_auth_headers() -> Dict[str, str]:
     """
     current_token = os.getenv("DISPATCHARR_TOKEN")
     
-    if current_token and _validate_token(current_token):
+    # If token exists, use it directly (validation happens on 401 response)
+    if current_token:
         return {
             "Authorization": f"Bearer {current_token}",
             "Accept": "application/json",
             "Content-Type": "application/json"
         }
     
-    if current_token:
-        logger.info("Existing token is invalid. Attempting to log in...")
-    else:
-        logger.info("DISPATCHARR_TOKEN not found. Attempting to log in...")
+    # Token is missing, need to login
+    logger.info("DISPATCHARR_TOKEN not found. Attempting to log in...")
     
     if _login():
         if env_path.exists():
