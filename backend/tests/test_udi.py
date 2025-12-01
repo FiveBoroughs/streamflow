@@ -334,8 +334,69 @@ class TestUDIManager(unittest.TestCase):
         self.assertIsNotNone(channel)
         self.assertEqual(channel['name'], 'Channel 2')
         
-        # Non-existent channel
-        self.assertIsNone(self.manager.get_channel_by_id(999))
+        # Non-existent channel with fetch_if_missing=False
+        self.assertIsNone(self.manager.get_channel_by_id(999, fetch_if_missing=False))
+    
+    def test_get_channel_by_id_fetch_if_missing(self):
+        """Test that get_channel_by_id fetches from API when channel not in cache."""
+        self.manager._initialized = True
+        self.manager._channels_cache = [
+            {'id': 1, 'name': 'Channel 1'}
+        ]
+        self.manager._build_indexes()
+        
+        # Mock the fetcher's fetch_channel_by_id method
+        self.manager.fetcher = Mock()
+        self.manager.fetcher.fetch_channel_by_id.return_value = {'id': 999, 'name': 'Fetched Channel'}
+        
+        # Channel not in cache, should fetch from API
+        channel = self.manager.get_channel_by_id(999)
+        
+        self.assertIsNotNone(channel)
+        self.assertEqual(channel['id'], 999)
+        self.assertEqual(channel['name'], 'Fetched Channel')
+        
+        # Verify it was added to cache
+        self.assertIn(999, self.manager._channels_by_id)
+        self.assertTrue(any(ch.get('id') == 999 for ch in self.manager._channels_cache))
+        
+        # Verify API was called
+        self.manager.fetcher.fetch_channel_by_id.assert_called_once_with(999)
+    
+    def test_get_channel_by_id_fetch_if_missing_api_returns_none(self):
+        """Test that get_channel_by_id returns None when API also returns None."""
+        self.manager._initialized = True
+        self.manager._channels_cache = [
+            {'id': 1, 'name': 'Channel 1'}
+        ]
+        self.manager._build_indexes()
+        
+        # Mock the fetcher to return None (channel doesn't exist)
+        self.manager.fetcher = Mock()
+        self.manager.fetcher.fetch_channel_by_id.return_value = None
+        
+        # Channel not in cache and not in API
+        channel = self.manager.get_channel_by_id(999)
+        
+        self.assertIsNone(channel)
+        self.manager.fetcher.fetch_channel_by_id.assert_called_once_with(999)
+    
+    def test_get_channel_by_id_fetch_if_missing_api_error(self):
+        """Test that get_channel_by_id handles API errors gracefully."""
+        self.manager._initialized = True
+        self.manager._channels_cache = [
+            {'id': 1, 'name': 'Channel 1'}
+        ]
+        self.manager._build_indexes()
+        
+        # Mock the fetcher to raise an exception
+        self.manager.fetcher = Mock()
+        self.manager.fetcher.fetch_channel_by_id.side_effect = Exception("API Error")
+        
+        # Should return None on error
+        channel = self.manager.get_channel_by_id(999)
+        
+        self.assertIsNone(channel)
     
     def test_get_stream_by_id(self):
         """Test getting stream by ID."""

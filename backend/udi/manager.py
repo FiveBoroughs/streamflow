@@ -164,17 +164,40 @@ class UDIManager:
         self._ensure_initialized()
         return self._channels_cache.copy()
     
-    def get_channel_by_id(self, channel_id: int) -> Optional[Dict[str, Any]]:
+    def get_channel_by_id(self, channel_id: int, fetch_if_missing: bool = True) -> Optional[Dict[str, Any]]:
         """Get a specific channel by ID.
+        
+        If the channel is not in the cache and fetch_if_missing is True,
+        attempts to fetch it from the API and add it to the cache.
         
         Args:
             channel_id: The channel ID
+            fetch_if_missing: If True, fetch from API when not in cache (default: True)
             
         Returns:
             Channel dictionary or None if not found
         """
         self._ensure_initialized()
-        return self._channels_by_id.get(channel_id)
+        channel = self._channels_by_id.get(channel_id)
+        
+        if channel is None and fetch_if_missing:
+            # Channel not in cache, try fetching from API
+            logger.debug(f"Channel {channel_id} not in cache, fetching from API")
+            try:
+                channel = self.fetcher.fetch_channel_by_id(channel_id)
+                if channel:
+                    # Add to cache
+                    with self._lock:
+                        self._channels_by_id[channel_id] = channel
+                        # Also add to the list cache if not already present
+                        if not any(ch.get('id') == channel_id for ch in self._channels_cache):
+                            self._channels_cache.append(channel)
+                    logger.info(f"Fetched and cached channel {channel_id}")
+            except Exception as e:
+                logger.warning(f"Failed to fetch channel {channel_id} from API: {e}")
+                channel = None
+        
+        return channel
     
     def get_channel_streams(self, channel_id: int) -> List[Dict[str, Any]]:
         """Get streams for a specific channel.
