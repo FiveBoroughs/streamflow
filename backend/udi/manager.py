@@ -391,6 +391,49 @@ class UDIManager:
             logger.error(f"Error refreshing channels: {e}")
             return False
     
+    def refresh_channel_by_id(self, channel_id: int) -> bool:
+        """Refresh a single channel by ID from the API.
+        
+        This is more efficient than refreshing all channels when only one channel
+        needs to be updated (e.g., after modifying its stream list).
+        
+        Args:
+            channel_id: The channel ID to refresh
+            
+        Returns:
+            True if refresh successful
+        """
+        logger.info(f"Refreshing channel {channel_id}...")
+        try:
+            channel = self.fetcher.fetch_channel_by_id(channel_id)
+            if channel:
+                # Update in-memory caches
+                with self._lock:
+                    self._channels_by_id[channel_id] = channel
+                    
+                    # Update list cache
+                    found = False
+                    for i, ch in enumerate(self._channels_cache):
+                        if ch.get('id') == channel_id:
+                            self._channels_cache[i] = channel
+                            found = True
+                            break
+                    
+                    if not found:
+                        self._channels_cache.append(channel)
+                    
+                    # Update storage
+                    self.storage.update_channel(channel_id, channel)
+                
+                logger.info(f"Channel {channel_id} refreshed successfully")
+                return True
+            else:
+                logger.warning(f"Failed to refresh channel {channel_id}: channel not found")
+                return False
+        except Exception as e:
+            logger.error(f"Error refreshing channel {channel_id}: {e}")
+            return False
+    
     def refresh_streams(self) -> bool:
         """Refresh only streams data.
         

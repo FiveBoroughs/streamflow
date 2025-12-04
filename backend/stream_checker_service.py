@@ -1504,8 +1504,8 @@ class StreamCheckerService:
                 step_detail='Confirming stream order was applied'
             )
             time.sleep(0.5)  # Brief delay to ensure API has processed the update
-            # Refresh channels in UDI to get updated data after write
-            udi.refresh_channels()
+            # Refresh this specific channel in UDI to get updated data after write
+            udi.refresh_channel_by_id(channel_id)
             updated_channel_data = udi.get_channel_by_id(channel_id)
             if updated_channel_data:
                 updated_stream_ids = updated_channel_data.get('streams', [])

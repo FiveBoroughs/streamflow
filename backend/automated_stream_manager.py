@@ -681,8 +681,8 @@ class AutomatedStreamManager:
                         if added_count > 0:
                             try:
                                 time.sleep(0.5)  # Brief delay for API processing
-                                # Refresh channels in UDI to get updated data after write
-                                udi.refresh_channels()
+                                # Refresh this specific channel in UDI to get updated data after write
+                                udi.refresh_channel_by_id(int(channel_id))
                                 updated_channel = udi.get_channel_by_id(int(channel_id))
                                 
                                 if updated_channel:
