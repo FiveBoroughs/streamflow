@@ -990,9 +990,10 @@ class StreamCheckerService:
         return cron_expression
     
     def _perform_global_action(self):
-        """Perform a complete global action: Update M3U, Match streams, and Check all channels.
+        """Perform a complete global action: Refresh UDI, Update M3U, Match streams, and Check all channels.
         
         This is the comprehensive global action that:
+        0. Refreshes UDI cache to ensure current data from Dispatcharr
         1. Reloads enabled M3U accounts
         2. Matches new streams with regex patterns
         3. Checks every channel from every stream (bypassing 2-hour immunity)
@@ -1007,10 +1008,23 @@ class StreamCheckerService:
             logger.info("Regular automation paused during global action")
             logger.info("=" * 80)
             
+            # Step 0: Refresh UDI cache to ensure we have current data from Dispatcharr
+            logger.info("Step 1/4: Refreshing UDI cache...")
+            try:
+                from udi import get_udi_manager
+                udi = get_udi_manager()
+                refresh_success = udi.refresh_all()
+                if refresh_success:
+                    logger.info("✓ UDI cache refreshed successfully")
+                else:
+                    logger.warning("⚠ UDI cache refresh had issues")
+            except Exception as e:
+                logger.error(f"✗ Failed to refresh UDI cache: {e}")
+            
             automation_manager = None
             
             # Step 1: Update M3U playlists
-            logger.info("Step 1/3: Updating M3U playlists...")
+            logger.info("Step 2/4: Updating M3U playlists...")
             try:
                 from automated_stream_manager import AutomatedStreamManager
                 automation_manager = AutomatedStreamManager()
@@ -1023,7 +1037,7 @@ class StreamCheckerService:
                 logger.error(f"✗ Failed to update M3U playlists: {e}")
             
             # Step 2: Match and assign streams
-            logger.info("Step 2/3: Matching and assigning streams...")
+            logger.info("Step 3/4: Matching and assigning streams...")
             try:
                 if automation_manager is not None:
                     assignments = automation_manager.discover_and_assign_streams()
@@ -1037,7 +1051,7 @@ class StreamCheckerService:
                 logger.error(f"✗ Failed to match streams: {e}")
             
             # Step 3: Check all channels (force check to bypass immunity)
-            logger.info("Step 3/3: Queueing all channels for checking...")
+            logger.info("Step 4/4: Queueing all channels for checking...")
             self._queue_all_channels(force_check=True)
             
             logger.info("=" * 80)
