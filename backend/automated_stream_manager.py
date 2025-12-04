@@ -423,6 +423,14 @@ class AutomatedStreamManager:
                 logger.warning("Could not fetch M3U accounts, refreshing all as fallback")
                 refresh_m3u_playlists()
             
+            # Refresh UDI cache to get updated streams and channels after playlist update
+            # This ensures deleted/added streams are reflected in the cache
+            logger.info("Refreshing UDI cache after playlist update...")
+            udi = get_udi_manager()
+            udi.refresh_streams()
+            udi.refresh_channels()
+            logger.info("UDI cache refreshed successfully")
+            
             # Get streams after refresh - log this one since it shows the final result
             streams_after = get_streams(log_result=True) if self.config.get("enabled_features", {}).get("changelog_tracking", True) else []
             after_stream_ids = {s.get('id'): s.get('name', '') for s in streams_after if isinstance(s, dict) and s.get('id')}
