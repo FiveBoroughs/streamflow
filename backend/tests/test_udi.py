@@ -526,6 +526,66 @@ class TestUDIManager(unittest.TestCase):
         stream = self.manager.get_stream_by_id(1)
         self.assertEqual(stream['name'], 'Updated')
         self.assertEqual(stream['url'], 'http://new.com')
+    
+    def test_refresh_channel_by_id(self):
+        """Test refreshing a single channel by ID."""
+        self.manager._initialized = True
+        self.manager._channels_cache = [
+            {'id': 1, 'name': 'Original Channel', 'streams': [10]}
+        ]
+        self.manager._build_indexes()
+        
+        # Mock the fetcher to return updated channel data
+        self.manager.fetcher = Mock()
+        self.manager.fetcher.fetch_channel_by_id.return_value = {
+            'id': 1, 
+            'name': 'Updated Channel', 
+            'streams': [10, 20, 30]
+        }
+        
+        # Refresh the channel
+        result = self.manager.refresh_channel_by_id(1)
+        
+        self.assertTrue(result)
+        self.manager.fetcher.fetch_channel_by_id.assert_called_once_with(1)
+        
+        # Verify the channel was updated in cache
+        channel = self.manager.get_channel_by_id(1)
+        self.assertEqual(channel['name'], 'Updated Channel')
+        self.assertEqual(channel['streams'], [10, 20, 30])
+    
+    def test_refresh_channel_by_id_not_found(self):
+        """Test refreshing a channel that doesn't exist."""
+        self.manager._initialized = True
+        self.manager._channels_cache = []
+        self.manager._build_indexes()
+        
+        # Mock the fetcher to return None (channel not found)
+        self.manager.fetcher = Mock()
+        self.manager.fetcher.fetch_channel_by_id.return_value = None
+        
+        # Try to refresh non-existent channel
+        result = self.manager.refresh_channel_by_id(999)
+        
+        self.assertFalse(result)
+        self.manager.fetcher.fetch_channel_by_id.assert_called_once_with(999)
+    
+    def test_refresh_channel_by_id_error(self):
+        """Test handling errors during channel refresh."""
+        self.manager._initialized = True
+        self.manager._channels_cache = [
+            {'id': 1, 'name': 'Test Channel'}
+        ]
+        self.manager._build_indexes()
+        
+        # Mock the fetcher to raise an exception
+        self.manager.fetcher = Mock()
+        self.manager.fetcher.fetch_channel_by_id.side_effect = Exception("API Error")
+        
+        # Should return False on error
+        result = self.manager.refresh_channel_by_id(1)
+        
+        self.assertFalse(result)
 
 
 if __name__ == '__main__':
