@@ -1680,10 +1680,22 @@ class StreamCheckerService:
         queue_status = self.check_queue.get_status()
         progress = self.progress.get()
         
+        # Stream checking mode is active when:
+        # - A global action is in progress, OR
+        # - An individual channel is being checked, OR
+        # - There are channels in the queue waiting to be checked
+        stream_checking_mode = (
+            self.global_action_in_progress or 
+            self.checking or 
+            queue_status.get('queue_size', 0) > 0 or
+            queue_status.get('in_progress', 0) > 0
+        )
+        
         return {
             'running': self.running,
             'checking': self.checking,
             'global_action_in_progress': self.global_action_in_progress,
+            'stream_checking_mode': stream_checking_mode,
             'enabled': self.config.get('enabled', True),
             'queue': queue_status,
             'progress': progress,

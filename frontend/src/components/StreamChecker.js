@@ -158,6 +158,13 @@ function StreamChecker() {
         </Alert>
       )}
 
+      {status?.stream_checking_mode && (
+        <Alert severity="warning" sx={{ mb: 2 }}>
+          <strong>Stream Checking Mode Active:</strong> Stream checks are in progress. 
+          All Quick Actions and other processes are paused to prevent UDI inconsistency.
+        </Alert>
+      )}
+
       <Grid container spacing={3}>
         <Grid item xs={12} md={3}>
           <Card>
@@ -305,11 +312,11 @@ function StreamChecker() {
                       variant="contained"
                       color="secondary"
                       onClick={handleGlobalAction}
-                      disabled={actionLoading === 'globalAction' || !status?.running}
+                      disabled={actionLoading === 'globalAction' || !status?.running || status?.stream_checking_mode}
                       startIcon={<GlobalActionIcon />}
                       sx={{ mr: 1 }}
                     >
-                      {actionLoading === 'globalAction' ? 'Running...' : 'Global Action'}
+                      {status?.stream_checking_mode ? 'Checking...' : actionLoading === 'globalAction' ? 'Running...' : 'Global Action'}
                     </Button>
                   </Tooltip>
                   <Button

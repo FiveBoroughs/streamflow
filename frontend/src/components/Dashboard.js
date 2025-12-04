@@ -268,11 +268,16 @@ function Dashboard() {
               <Typography variant="h6" gutterBottom>
                 Quick Actions
               </Typography>
+              {streamCheckerStatus?.stream_checking_mode && (
+                <Alert severity="info" sx={{ mb: 2 }}>
+                  Stream checking mode active - Quick Actions disabled
+                </Alert>
+              )}
               <Box display="flex" flexDirection="column" gap={2}>
                 <Button
                   variant="outlined"
                   onClick={handleRefreshPlaylist}
-                  disabled={actionLoading === 'playlist'}
+                  disabled={actionLoading === 'playlist' || streamCheckerStatus?.stream_checking_mode}
                   startIcon={
                     actionLoading === 'playlist' ? (
                       <CircularProgress size={20} />
@@ -287,7 +292,7 @@ function Dashboard() {
                 <Button
                   variant="outlined"
                   onClick={handleDiscoverStreams}
-                  disabled={actionLoading === 'discover'}
+                  disabled={actionLoading === 'discover' || streamCheckerStatus?.stream_checking_mode}
                   startIcon={
                     actionLoading === 'discover' ? (
                       <CircularProgress size={20} />
@@ -302,7 +307,7 @@ function Dashboard() {
                 <Button
                   variant="outlined"
                   onClick={handleRunCycle}
-                  disabled={actionLoading === 'cycle'}
+                  disabled={actionLoading === 'cycle' || streamCheckerStatus?.stream_checking_mode}
                   startIcon={
                     actionLoading === 'cycle' ? <CircularProgress size={20} /> : <StartIcon />
                   }
