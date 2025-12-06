@@ -9,6 +9,7 @@ and global level using Redis for distributed state tracking.
 import json
 import time
 from typing import Optional, Dict, List
+import redis
 from redis import Redis
 from logging_config import setup_logging
 import os
@@ -56,6 +57,95 @@ class ConcurrencyManager:
         
         logger.info("Concurrency manager initialized")
     
+    def can_start_task_and_register(
+        self,
+        task_id: str,
+        m3u_account_id: Optional[int],
+        stream_id: int,
+        account_limit: int,
+        global_limit: int,
+        ttl: int = 3600
+    ) -> bool:
+        """
+        Atomically check if a task can start AND register it if allowed.
+        
+        This combines the check and registration in a single atomic operation
+        to prevent race conditions.
+        
+        Args:
+            task_id: Celery task ID
+            m3u_account_id: M3U account ID (None for streams without account)
+            stream_id: Stream ID being checked
+            account_limit: Maximum concurrent streams for this account
+                          (0 = unlimited, N > 0 = limit to N streams)
+            global_limit: Maximum global concurrent streams
+                         (0 = unlimited, N > 0 = limit to N streams)
+            ttl: Time-to-live for task mapping in seconds
+            
+        Returns:
+            True if task was registered, False if limits prevent starting
+        """
+        try:
+            # Use Redis pipeline with WATCH for optimistic locking
+            with self.redis.pipeline() as pipe:
+                while True:
+                    try:
+                        # Watch keys for changes
+                        pipe.watch(self.GLOBAL_KEY)
+                        if m3u_account_id is not None:
+                            account_key = f"{self.ACCOUNT_PREFIX}{m3u_account_id}"
+                            pipe.watch(account_key)
+                        
+                        # Check global limit (0 = unlimited, skip check)
+                        if global_limit > 0:
+                            global_count = int(pipe.get(self.GLOBAL_KEY) or 0)
+                            if global_count >= global_limit:
+                                pipe.unwatch()
+                                return False
+                        
+                        # Check account limit (0 = unlimited, skip check)
+                        if m3u_account_id is not None and account_limit > 0:
+                            account_key = f"{self.ACCOUNT_PREFIX}{m3u_account_id}"
+                            account_count = int(pipe.get(account_key) or 0)
+                            if account_count >= account_limit:
+                                pipe.unwatch()
+                                return False
+                        
+                        # Begin transaction (MULTI)
+                        pipe.multi()
+                        
+                        # Increment counters
+                        pipe.incr(self.GLOBAL_KEY)
+                        if m3u_account_id is not None:
+                            pipe.incr(account_key)
+                        
+                        # Store task mapping
+                        task_map_key = f"{self.TASK_MAP_PREFIX}{task_id}"
+                        task_data = {
+                            'm3u_account_id': m3u_account_id,
+                            'stream_id': stream_id,
+                            'start_time': time.time()
+                        }
+                        pipe.setex(task_map_key, ttl, json.dumps(task_data))
+                        
+                        # Execute transaction
+                        pipe.execute()
+                        
+                        logger.debug(
+                            f"Registered task {task_id} for stream {stream_id} "
+                            f"(account: {m3u_account_id})"
+                        )
+                        return True
+                        
+                    except redis.WatchError:
+                        # Key was modified by another client, retry
+                        logger.debug(f"WatchError for task {task_id}, retrying...")
+                        continue
+                        
+        except Exception as e:
+            logger.error(f"Error in atomic can_start_and_register: {e}")
+            return False
+    
     def can_start_task(
         self,
         m3u_account_id: Optional[int],
@@ -67,14 +157,16 @@ class ConcurrencyManager:
         
         Args:
             m3u_account_id: M3U account ID (None for streams without account)
-            account_limit: Maximum concurrent streams for this account (0 = unlimited)
-            global_limit: Maximum global concurrent streams (0 = unlimited)
+            account_limit: Maximum concurrent streams for this account
+                          (0 = unlimited, N > 0 = limit to N streams)
+            global_limit: Maximum global concurrent streams
+                         (0 = unlimited, N > 0 = limit to N streams)
             
         Returns:
             True if task can start, False otherwise
         """
         try:
-            # Check global limit
+            # Check global limit (0 = unlimited, skip check)
             if global_limit > 0:
                 global_count = int(self.redis.get(self.GLOBAL_KEY) or 0)
                 if global_count >= global_limit:
@@ -83,7 +175,7 @@ class ConcurrencyManager:
                     )
                     return False
             
-            # Check account limit (if account specified and limit is set)
+            # Check account limit (0 = unlimited, skip check)
             if m3u_account_id is not None and account_limit > 0:
                 account_key = f"{self.ACCOUNT_PREFIX}{m3u_account_id}"
                 account_count = int(self.redis.get(account_key) or 0)

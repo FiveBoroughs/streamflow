@@ -23,6 +23,15 @@ from stream_checker_service import get_stream_checker_service
 # Import UDI for direct data access
 from udi import get_udi_manager
 
+# Lazy imports for optional dependencies that may not be available
+try:
+    from concurrency_manager import get_concurrency_manager
+    from celery_tasks import health_check_task
+    from celery import states
+    CELERY_AVAILABLE = True
+except ImportError:
+    CELERY_AVAILABLE = False
+
 # Import croniter for cron expression validation
 try:
     from croniter import croniter
@@ -1120,9 +1129,10 @@ def trigger_global_action():
 @app.route('/api/stream-checker/concurrency/status', methods=['GET'])
 def get_concurrency_status():
     """Get current concurrency status and limits."""
+    if not CELERY_AVAILABLE:
+        return jsonify({"error": "Celery/Redis not available"}), 503
+    
     try:
-        from concurrency_manager import get_concurrency_manager
-        
         concurrency_mgr = get_concurrency_manager()
         service = get_stream_checker_service()
         
@@ -1203,9 +1213,10 @@ def update_concurrency_config():
 @app.route('/api/stream-checker/concurrency/reset', methods=['POST'])
 def reset_concurrency_counters():
     """Reset concurrency counters (useful for recovering from inconsistent state)."""
+    if not CELERY_AVAILABLE:
+        return jsonify({"error": "Celery/Redis not available"}), 503
+    
     try:
-        from concurrency_manager import get_concurrency_manager
-        
         concurrency_mgr = get_concurrency_manager()
         success = concurrency_mgr.reset_counts()
         
@@ -1221,10 +1232,13 @@ def reset_concurrency_counters():
 @app.route('/api/stream-checker/celery/health', methods=['GET'])
 def check_celery_health():
     """Check if Celery workers are available and healthy."""
+    if not CELERY_AVAILABLE:
+        return jsonify({
+            "healthy": False,
+            "message": "Celery/Redis not available"
+        }), 503
+    
     try:
-        from celery_tasks import health_check_task
-        from celery import states
-        
         # Send a health check task
         task = health_check_task.apply_async()
         

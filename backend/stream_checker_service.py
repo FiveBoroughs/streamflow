@@ -1342,37 +1342,39 @@ class StreamCheckerService:
                         m3u_account_id = stream.get('m3u_account')
                         account_limit = account_limits.get(m3u_account_id, 0)
                         
-                        # Check if we can dispatch this task
-                        if concurrency_mgr.can_start_task(m3u_account_id, account_limit, global_limit):
-                            # Dispatch the task
-                            task = check_stream_task.apply_async(
-                                kwargs={
-                                    'stream_id': stream['id'],
-                                    'stream_url': stream.get('url', ''),
-                                    'stream_name': stream.get('name', 'Unknown'),
-                                    'channel_id': channel_id,
-                                    'channel_name': channel_name,
-                                    'm3u_account_id': m3u_account_id,
-                                    'ffmpeg_duration': analysis_params.get('ffmpeg_duration', 30),
-                                    'timeout': analysis_params.get('timeout', 30),
-                                    'retries': analysis_params.get('retries', 1),
-                                    'retry_delay': analysis_params.get('retry_delay', 10),
-                                    'user_agent': analysis_params.get('user_agent', 'VLC/3.0.14')
-                                }
-                            )
-                            
-                            # Register task start for concurrency tracking
-                            concurrency_mgr.register_task_start(
-                                task.id, 
-                                m3u_account_id, 
-                                stream['id']
-                            )
-                            
+                        # Dispatch the task - it will return immediately
+                        task = check_stream_task.apply_async(
+                            kwargs={
+                                'stream_id': stream['id'],
+                                'stream_url': stream.get('url', ''),
+                                'stream_name': stream.get('name', 'Unknown'),
+                                'channel_id': channel_id,
+                                'channel_name': channel_name,
+                                'm3u_account_id': m3u_account_id,
+                                'ffmpeg_duration': analysis_params.get('ffmpeg_duration', 30),
+                                'timeout': analysis_params.get('timeout', 30),
+                                'retries': analysis_params.get('retries', 1),
+                                'retry_delay': analysis_params.get('retry_delay', 10),
+                                'user_agent': analysis_params.get('user_agent', 'VLC/3.0.14')
+                            }
+                        )
+                        
+                        # Atomically check limits and register if allowed
+                        if concurrency_mgr.can_start_task_and_register(
+                            task.id,
+                            m3u_account_id,
+                            stream['id'],
+                            account_limit,
+                            global_limit
+                        ):
                             task_futures.append((task, stream, m3u_account_id))
                             pending_streams.remove(stream)
                             streams_dispatched += 1
                         else:
-                            # Can't dispatch right now due to limits
+                            # Task was dispatched but couldn't be registered due to limits
+                            # Revoke the task
+                            task.revoke()
+                            # Can't dispatch more right now due to limits
                             break
                     
                     if streams_dispatched > 0:

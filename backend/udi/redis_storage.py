@@ -236,9 +236,9 @@ class UDIRedisStorage:
                     
                     if stream_url:
                         # URL index (for dead stream tracking)
-                        # Use hash of URL to avoid special characters
+                        # Use SHA-256 hash of URL to create a safe cache key
                         import hashlib
-                        url_hash = hashlib.md5(stream_url.encode()).hexdigest()
+                        url_hash = hashlib.sha256(stream_url.encode()).hexdigest()
                         url_index_key = f'{self.STREAM_URL_INDEX_KEY}{url_hash}'
                         pipe.set(url_index_key, self._serialize(stream))
                 

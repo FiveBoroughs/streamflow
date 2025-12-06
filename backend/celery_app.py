@@ -39,7 +39,6 @@ celery_app.conf.update(
     
     # Task result settings
     result_expires=3600,  # Results expire after 1 hour
-    result_backend_transport_options={'master_name': 'mymaster'},
     
     # Worker settings
     worker_prefetch_multiplier=1,  # Disable prefetching for better concurrency control
