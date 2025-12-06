@@ -89,9 +89,9 @@ done
 
 # Wait for supervisor log file to be created
 echo "[INFO] Waiting for supervisor log file..."
-max_wait=10
+max_wait_seconds=10
 wait_count=0
-while [ $wait_count -lt $max_wait ]; do
+while [ $wait_count -lt $max_wait_seconds ]; do
     if [ -f /app/logs/supervisord.log ]; then
         echo "[INFO] Supervisor log file is ready!"
         break
@@ -102,7 +102,8 @@ done
 
 # Create log file if it doesn't exist after waiting
 if [ ! -f /app/logs/supervisord.log ]; then
-    echo "[WARNING] Supervisor log file not found after $max_wait seconds, creating empty file"
+    echo "[WARNING] Supervisor log file not found after $max_wait_seconds seconds, creating empty file"
+    mkdir -p /app/logs
     touch /app/logs/supervisord.log
 fi
 
