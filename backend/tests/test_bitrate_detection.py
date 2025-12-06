@@ -18,14 +18,8 @@ import os
 # Add backend to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Import the function we're testing
-import importlib.util
-spec = importlib.util.spec_from_file_location(
-    "stream_sorter",
-    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "dispatcharr-stream-sorter.py")
-)
-stream_sorter = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(stream_sorter)
+# Import the function we're testing from the new module
+from stream_check_utils import get_stream_bitrate
 
 
 class TestBitrateDetection(unittest.TestCase):
@@ -42,17 +36,17 @@ Statistics: 15000000 bytes read; 0 seeks
         """
         mock_run.return_value = mock_result
         
-        bitrate, frames, dropped, status, elapsed = stream_sorter._get_bitrate_and_frame_stats(
+        bitrate, status, elapsed = get_stream_bitrate(
             'http://test.com/stream.m3u8', 
-            ffmpeg_duration=30,
+            duration=30,
             timeout=10
         )
         
-        # Calculate expected: (15000000 bytes * 8 bits) / 1000 / 30 seconds = 4000 kbps
-        self.assertNotEqual(bitrate, "N/A", "Bitrate should be detected")
-        self.assertAlmostEqual(bitrate, 4000.0, places=1, msg="Bitrate calculation incorrect")
-        self.assertEqual(frames, 500, "Frame count should be detected")
-        self.assertEqual(dropped, 0, "Dropped frames should be detected")
+        # Should detect bitrate from Statistics line
+        # Expected: (15000000 bytes * 8 bits) / 1000 / 30 seconds = 4000 kbps
+        self.assertIsNotNone(bitrate, "Bitrate should be detected from Statistics line")
+        self.assertAlmostEqual(bitrate, 4000.0, places=1, msg="Bitrate calculation should be accurate")
+        self.assertEqual(status, "OK", "Status should be OK")
 
     @patch('subprocess.run')
     def test_bitrate_method_2_progress_output(self, mock_run):
@@ -62,20 +56,18 @@ Statistics: 15000000 bytes read; 0 seeks
         mock_result.stderr = """
 frame=  500 fps= 25 q=-1.0 size=   12000kB time=00:00:20.00 bitrate=4800.0kbits/s speed=1.0x
 frame=  750 fps= 25 q=-1.0 size=   18000kB time=00:00:30.00 bitrate=4800.0kbits/s speed=1.0x
-[debug] Input stream #0:0: 750 frames decoded; 0 decode errors
         """
         mock_run.return_value = mock_result
         
-        bitrate, frames, dropped, status, elapsed = stream_sorter._get_bitrate_and_frame_stats(
+        bitrate, status, elapsed = get_stream_bitrate(
             'http://test.com/stream.m3u8',
-            ffmpeg_duration=30,
+            duration=30,
             timeout=10
         )
         
         # Should detect bitrate from progress output
-        self.assertNotEqual(bitrate, "N/A", "Bitrate should be detected from progress output")
+        self.assertIsNotNone(bitrate, "Bitrate should be detected from progress output")
         self.assertAlmostEqual(bitrate, 4800.0, places=1, msg="Bitrate should match progress value")
-        self.assertEqual(frames, 750, "Frame count should be detected")
 
     @patch('subprocess.run')
     def test_bitrate_method_3_bytes_read_without_statistics(self, mock_run):
@@ -84,44 +76,38 @@ frame=  750 fps= 25 q=-1.0 size=   18000kB time=00:00:30.00 bitrate=4800.0kbits/
         mock_result = MagicMock()
         mock_result.stderr = """
 [debug] 12000000 bytes read from input
-[debug] Input stream #0:0: 600 frames decoded; 5 decode errors
         """
         mock_run.return_value = mock_result
         
-        bitrate, frames, dropped, status, elapsed = stream_sorter._get_bitrate_and_frame_stats(
+        bitrate, status, elapsed = get_stream_bitrate(
             'http://test.com/stream.m3u8',
-            ffmpeg_duration=30,
+            duration=30,
             timeout=10
         )
         
         # Calculate expected: (12000000 bytes * 8 bits) / 1000 / 30 seconds = 3200 kbps
-        self.assertNotEqual(bitrate, "N/A", "Bitrate should be detected from bytes read")
+        self.assertIsNotNone(bitrate, "Bitrate should be detected from bytes read")
         self.assertAlmostEqual(bitrate, 3200.0, places=1, msg="Bitrate calculation should work")
-        self.assertEqual(frames, 600, "Frame count should be detected")
-        self.assertEqual(dropped, 5, "Dropped frames should be detected")
 
     @patch('subprocess.run')
     def test_bitrate_all_methods_fail(self, mock_run):
-        """Test that bitrate remains N/A when all detection methods fail."""
+        """Test that bitrate remains None when all detection methods fail."""
         # Simulate ffmpeg output with no recognizable bitrate patterns
         mock_result = MagicMock()
         mock_result.stderr = """
 [info] Stream started
-[debug] Input stream #0:0: 400 frames decoded; 0 decode errors
 [info] Stream ended
         """
         mock_run.return_value = mock_result
         
-        bitrate, frames, dropped, status, elapsed = stream_sorter._get_bitrate_and_frame_stats(
+        bitrate, status, elapsed = get_stream_bitrate(
             'http://test.com/stream.m3u8',
-            ffmpeg_duration=30,
+            duration=30,
             timeout=10
         )
         
-        # Bitrate should remain N/A when no patterns match
-        self.assertEqual(bitrate, "N/A", "Bitrate should be N/A when detection fails")
-        self.assertEqual(frames, 400, "Frame count should still be detected")
-        self.assertEqual(dropped, 0, "Dropped frames should still be detected")
+        # Bitrate should remain None when no patterns match
+        self.assertIsNone(bitrate, "Bitrate should be None when detection fails")
 
     @patch('subprocess.run')
     def test_bitrate_multiple_progress_lines(self, mock_run):
@@ -132,18 +118,17 @@ frame=  750 fps= 25 q=-1.0 size=   18000kB time=00:00:30.00 bitrate=4800.0kbits/
 frame=  250 fps= 25 q=-1.0 size=    6000kB time=00:00:10.00 bitrate=4800.0kbits/s speed=1.0x
 frame=  500 fps= 25 q=-1.0 size=   11000kB time=00:00:20.00 bitrate=4400.0kbits/s speed=1.0x
 frame=  750 fps= 25 q=-1.0 size=   15000kB time=00:00:30.00 bitrate=4000.0kbits/s speed=1.0x
-[debug] Input stream #0:0: 750 frames decoded; 0 decode errors
         """
         mock_run.return_value = mock_result
         
-        bitrate, frames, dropped, status, elapsed = stream_sorter._get_bitrate_and_frame_stats(
+        bitrate, status, elapsed = get_stream_bitrate(
             'http://test.com/stream.m3u8',
-            ffmpeg_duration=30,
+            duration=30,
             timeout=10
         )
         
         # Should use the last progress bitrate
-        self.assertNotEqual(bitrate, "N/A", "Bitrate should be detected")
+        self.assertIsNotNone(bitrate, "Bitrate should be detected")
         self.assertAlmostEqual(bitrate, 4000.0, places=1, msg="Should use last progress bitrate")
 
     @patch('subprocess.run')
@@ -154,34 +139,33 @@ frame=  750 fps= 25 q=-1.0 size=   15000kB time=00:00:30.00 bitrate=4000.0kbits/
         mock_result.stderr = """
 frame=  750 fps= 25 q=-1.0 size=   15000kB time=00:00:30.00 bitrate=4000.0kbits/s speed=1.0x
 Statistics: 18000000 bytes read; 0 seeks
-[debug] Input stream #0:0: 750 frames decoded; 0 decode errors
         """
         mock_run.return_value = mock_result
         
-        bitrate, frames, dropped, status, elapsed = stream_sorter._get_bitrate_and_frame_stats(
+        bitrate, status, elapsed = get_stream_bitrate(
             'http://test.com/stream.m3u8',
-            ffmpeg_duration=30,
+            duration=30,
             timeout=10
         )
         
         # Should use Statistics method: (18000000 * 8) / 1000 / 30 = 4800 kbps
-        self.assertNotEqual(bitrate, "N/A", "Bitrate should be detected")
+        self.assertIsNotNone(bitrate, "Bitrate should be detected")
         self.assertAlmostEqual(bitrate, 4800.0, places=1, msg="Should prioritize Statistics method")
 
     @patch('subprocess.run')
     def test_bitrate_timeout_handling(self, mock_run):
         """Test that timeout is handled gracefully."""
         test_timeout = 10
-        expected_timeout = test_timeout + 30 + 10  # timeout + ffmpeg_duration + buffer
+        expected_timeout = test_timeout + 30 + 10  # timeout + duration + buffer
         mock_run.side_effect = subprocess.TimeoutExpired(cmd='ffmpeg', timeout=expected_timeout)
         
-        bitrate, frames, dropped, status, elapsed = stream_sorter._get_bitrate_and_frame_stats(
+        bitrate, status, elapsed = get_stream_bitrate(
             'http://test.com/stream.m3u8',
-            ffmpeg_duration=30,
+            duration=30,
             timeout=test_timeout
         )
         
-        self.assertEqual(bitrate, "N/A", "Bitrate should be N/A on timeout")
+        self.assertIsNone(bitrate, "Bitrate should be None on timeout")
         self.assertEqual(status, "Timeout", "Status should indicate timeout")
 
     @patch('subprocess.run')
@@ -189,13 +173,13 @@ Statistics: 18000000 bytes read; 0 seeks
         """Test that general errors are handled gracefully."""
         mock_run.side_effect = Exception("Network error")
         
-        bitrate, frames, dropped, status, elapsed = stream_sorter._get_bitrate_and_frame_stats(
+        bitrate, status, elapsed = get_stream_bitrate(
             'http://test.com/stream.m3u8',
-            ffmpeg_duration=30,
+            duration=30,
             timeout=10
         )
         
-        self.assertEqual(bitrate, "N/A", "Bitrate should be N/A on error")
+        self.assertIsNone(bitrate, "Bitrate should be None on error")
         self.assertEqual(status, "Error", "Status should indicate error")
 
 

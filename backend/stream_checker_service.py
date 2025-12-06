@@ -16,8 +16,7 @@ Features:
 
 The service runs continuously in the background, monitoring for channel
 updates and maintaining a queue of channels that need checking. It
-integrates with the dispatcharr-stream-sorter.py module for actual
-stream analysis.
+integrates with the stream_check_utils.py module for stream analysis.
 """
 
 import json
@@ -77,7 +76,6 @@ class StreamCheckConfig:
         },
         'stream_analysis': {
             'ffmpeg_duration': 30,  # seconds to analyze each stream
-            'idet_frames': 500,  # frames to check for interlacing
             'timeout': 30,  # timeout for operations
             'retries': 1,  # retry attempts
             'retry_delay': 10,  # seconds between retries
@@ -85,16 +83,13 @@ class StreamCheckConfig:
         },
         'scoring': {
             'weights': {
-                'bitrate': 0.30,
-                'resolution': 0.25,
+                'bitrate': 0.40,
+                'resolution': 0.35,
                 'fps': 0.15,
-                'codec': 0.10,
-                'errors': 0.20
+                'codec': 0.10
             },
             'min_score': 0.0,  # minimum score to keep stream
-            'prefer_h265': True,  # prefer h265 over h264
-            'penalize_interlaced': True,
-            'penalize_dropped_frames': True
+            'prefer_h265': True  # prefer h265 over h264
         },
         'queue': {
             'max_size': 1000,
@@ -1279,21 +1274,8 @@ class StreamCheckerService:
                 else:
                     logger.info(f"All {len(streams)} streams have been recently checked, using cached scores")
             
-            # Import stream analysis functions from dispatcharr-stream-sorter
-            # Note: The file has a dash in the name, so we need to import it specially
-            import importlib.util
-            spec = importlib.util.spec_from_file_location(
-                "stream_sorter", 
-                Path(__file__).parent / "dispatcharr-stream-sorter.py"
-            )
-            stream_sorter = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(stream_sorter)
-            
-            load_sorter_config = stream_sorter.load_config
-            _analyze_stream_task = stream_sorter._analyze_stream_task
-            
-            # Load sorter configuration
-            sorter_config = load_sorter_config()
+            # Import stream analysis functions from stream_check_utils
+            from stream_check_utils import analyze_stream
             
             # Analyze new/unchecked streams
             analyzed_streams = []
@@ -1313,25 +1295,16 @@ class StreamCheckerService:
                     step_detail=f'Checking bitrate, resolution, codec ({idx}/{total_streams})'
                 )
                 
-                # Prepare stream row for analysis
-                stream_row = {
-                    'channel_id': channel_id,
-                    'channel_name': channel_name,
-                    'stream_id': stream['id'],
-                    'stream_name': stream.get('name', 'Unknown'),
-                    'stream_url': stream.get('url', '')
-                }
-                
                 # Analyze stream
                 analysis_params = self.config.get('stream_analysis', {})
-                analyzed = _analyze_stream_task(
-                    stream_row,
+                analyzed = analyze_stream(
+                    stream_url=stream.get('url', ''),
+                    stream_id=stream['id'],
+                    stream_name=stream.get('name', 'Unknown'),
                     ffmpeg_duration=analysis_params.get('ffmpeg_duration', 20),
-                    idet_frames=analysis_params.get('idet_frames', 500),
                     timeout=analysis_params.get('timeout', 30),
                     retries=analysis_params.get('retries', 1),
                     retry_delay=analysis_params.get('retry_delay', 10),
-                    config=sorter_config,
                     user_agent=analysis_params.get('user_agent', 'VLC/3.0.14')
                 )
                 
@@ -1428,22 +1401,15 @@ class StreamCheckerService:
                 else:
                     # If we can't fetch cached data, analyze this stream
                     logger.warning(f"Could not fetch cached data for stream {stream['id']}, will analyze")
-                    stream_row = {
-                        'channel_id': channel_id,
-                        'channel_name': channel_name,
-                        'stream_id': stream['id'],
-                        'stream_name': stream.get('name', 'Unknown'),
-                        'stream_url': stream.get('url', '')
-                    }
                     analysis_params = self.config.get('stream_analysis', {})
-                    analyzed = _analyze_stream_task(
-                        stream_row,
+                    analyzed = analyze_stream(
+                        stream_url=stream.get('url', ''),
+                        stream_id=stream['id'],
+                        stream_name=stream.get('name', 'Unknown'),
                         ffmpeg_duration=analysis_params.get('ffmpeg_duration', 20),
-                        idet_frames=analysis_params.get('idet_frames', 500),
                         timeout=analysis_params.get('timeout', 30),
                         retries=analysis_params.get('retries', 1),
                         retry_delay=analysis_params.get('retry_delay', 10),
-                        config=sorter_config,
                         user_agent=analysis_params.get('user_agent', 'VLC/3.0.14')
                     )
                     self._update_stream_stats(analyzed)
@@ -1605,7 +1571,7 @@ class StreamCheckerService:
         bitrate = stream_data.get('bitrate_kbps', 0)
         if isinstance(bitrate, (int, float)) and bitrate > 0:
             bitrate_score = min(bitrate / 8000, 1.0)
-            score += bitrate_score * weights.get('bitrate', 0.30)
+            score += bitrate_score * weights.get('bitrate', 0.40)
         
         # Resolution score (0-1)
         resolution = stream_data.get('resolution', 'N/A')
@@ -1624,7 +1590,7 @@ class StreamCheckerService:
                     resolution_score = 0.3
             except (ValueError, AttributeError):
                 pass
-        score += resolution_score * weights.get('resolution', 0.25)
+        score += resolution_score * weights.get('resolution', 0.35)
         
         # FPS score (0-1)
         fps = stream_data.get('fps', 0)
@@ -1643,35 +1609,6 @@ class StreamCheckerService:
             elif codec != 'n/a':
                 codec_score = 0.5
         score += codec_score * weights.get('codec', 0.10)
-        
-        # Error penalty (0-1, inverted - fewer errors = higher score)
-        error_score = 1.0
-        if stream_data.get('status') != 'OK':
-            error_score -= 0.5
-        if stream_data.get('err_decode', False):
-            error_score -= 0.2
-        if stream_data.get('err_discontinuity', False):
-            error_score -= 0.2
-        if stream_data.get('err_timeout', False):
-            error_score -= 0.3
-        
-        # Interlaced penalty
-        if self.config.get('scoring.penalize_interlaced', True):
-            interlaced = stream_data.get('interlaced_status', 'N/A')
-            if 'interlaced' in str(interlaced).lower():
-                error_score -= 0.1
-        
-        # Dropped frames penalty
-        if self.config.get('scoring.penalize_dropped_frames', True):
-            dropped = stream_data.get('frames_dropped', 0)
-            decoded = stream_data.get('frames_decoded', 0)
-            if isinstance(dropped, (int, float)) and isinstance(decoded, (int, float)) and decoded > 0:
-                drop_rate = dropped / decoded
-                if drop_rate > 0.01:  # More than 1% dropped
-                    error_score -= min(drop_rate * 5, 0.3)  # Up to 0.3 penalty
-        
-        error_score = max(error_score, 0.0)
-        score += error_score * weights.get('errors', 0.20)
         
         return round(score, 2)
     
