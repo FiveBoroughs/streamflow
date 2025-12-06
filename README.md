@@ -35,14 +35,16 @@ See [Deployment Guide](docs/DEPLOYMENT.md) for detailed instructions.
 
 ## Architecture
 
-Single Docker deployment with:
+**All-In-One Docker deployment** with:
 - Flask backend (Python) serving REST API
 - React frontend for web interface
-- **Redis** for Celery task queue and distributed data storage
-- **Celery workers** for concurrent stream checking
+- **Redis** for Celery task queue and distributed data storage (embedded)
+- **Celery workers** for concurrent stream checking (embedded)
 - Persistent configuration storage via Docker volumes
 - Single port (5000) for all web access
 - Multi-platform support: linux/amd64, linux/arm64
+
+All services run within a single container managed by Supervisor for simplified deployment.
 
 ## Configuration
 

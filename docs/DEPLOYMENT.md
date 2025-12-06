@@ -1,14 +1,16 @@
 # Deployment Guide
 
-## 🚀 Simplified Single-Container Deployment
+## 🚀 All-In-One Single-Container Deployment
 
-The application now uses a **simplified single-container architecture** that is much easier to deploy and maintain:
+The application uses an **All-In-One single-container architecture** that is much easier to deploy and maintain:
 
-- **Single Service**: Python Flask serves both API and React frontend
-- **Single Port**: Everything accessible at http://localhost:3000
-- **No nginx**: Eliminated complex reverse proxy configuration
+- **Single Container**: All services in one Docker container managed by Supervisor
+- **Embedded Redis**: Redis server runs locally within the container
+- **Embedded Celery**: Celery workers run within the container for concurrent stream checking
+- **Single Port**: Everything accessible at http://localhost:5000
+- **No External Dependencies**: No need for separate Redis or worker containers
 - **Faster Builds**: Pre-built frontend reduces Docker build time
-- **Persistent Storage**: Configuration files stored in Docker volumes
+- **Persistent Storage**: Configuration and Redis data stored in Docker volumes
 
 ## Quick Start
 
@@ -26,9 +28,9 @@ The application now uses a **simplified single-container architecture** that is 
    ```
 
 3. **Access the application**:
-   - **Web Interface**: http://localhost:3000
-   - **API Endpoints**: http://localhost:3000/api/health
-   - **Health Check**: `curl http://localhost:3000/api/health`
+   - **Web Interface**: http://localhost:5000
+   - **API Endpoints**: http://localhost:5000/api/health
+   - **Health Check**: `curl http://localhost:5000/api/health`
 
 ## Data Persistence
 
@@ -52,6 +54,7 @@ The following files are stored in the mounted volume:
 - `changelog.json` - Activity history
 - `stream_checker_config.json` - Stream quality checking configuration
 - `channel_updates.json` - Channel update tracking
+- `dump.rdb` - Redis database snapshot (auto-saved)
 
 ### Customizing the Volume Path
 
@@ -69,15 +72,19 @@ chmod 755 /your/custom/path
 
 ## Architecture
 
-The simplified application uses a single Docker container that includes:
-- **Backend**: Python Flask API (internal port 5000)
+The All-In-One application uses a single Docker container that includes:
+- **Redis Server**: Embedded Redis for task queue and data storage (localhost:6379)
+- **Celery Workers**: 4 concurrent workers for stream checking
+- **Backend**: Python Flask API (port 5000)
 - **Frontend**: React application served by Flask
 - **Static Files**: React build served from Flask `/static` directory
 - **Configuration**: JSON files in `/app/data` (mounted volume)
+- **Process Manager**: Supervisor manages all services within the container
 
 ### Port Mapping
-- **External**: http://localhost:3000 → **Internal**: Flask port 5000
+- **External**: http://localhost:5000 → **Internal**: Flask port 5000
 - All frontend routes and API calls go through the same port
+- Redis (localhost:6379) and Celery workers are internal only
 
 ## Docker Deployment Options
 
@@ -145,13 +152,16 @@ All environment variables should be configured in the `.env` file:
 - `API_HOST`: API host (default: 0.0.0.0)
 - `API_PORT`: API port (default: 5000)
 - `CONFIG_DIR`: Configuration directory (default: /app/data)
+- `REDIS_HOST`: Redis host (default: localhost for All-In-One)
+- `REDIS_PORT`: Redis port (default: 6379)
+- `REDIS_DB`: Redis database number (default: 0)
 
 ### Option 2: Direct Environment Variables (Docker Compose)
 For containerized deployments, you can specify environment variables directly in docker-compose.yml:
 
 ```yaml
 services:
-  streamflow:
+  stream-checker:
     # ... other config ...
     environment:
       - DISPATCHARR_BASE_URL=http://your-dispatcharr-instance.com:9191
@@ -161,21 +171,18 @@ services:
       - API_HOST=0.0.0.0
       - API_PORT=5000
       - CONFIG_DIR=/app/data
+      - REDIS_HOST=localhost
+      - REDIS_PORT=6379
+      - REDIS_DB=0
 ```
 
 > **Note**: When using direct environment variables, comment out or remove the `env_file` section in docker-compose.yml. JWT tokens will be refreshed automatically on startup as they cannot be persisted without a .env file.
 
-## Architecture
-
-The application now uses a single Docker container that includes:
-- **Backend**: Python Flask API (port 5000)
-- **Frontend**: React application served via nginx (port 80)
-- **Reverse Proxy**: nginx routes frontend requests and proxies API calls
-
 ## Accessing the Application
 
-- **Web Interface & API**: http://localhost:3000
+- **Web Interface & API**: http://localhost:5000
 - All endpoints are accessible through the single port
+- Redis and Celery workers are internal to the container
 
 ## GitHub Container Registry
 

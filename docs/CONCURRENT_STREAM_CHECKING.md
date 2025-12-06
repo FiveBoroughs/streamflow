@@ -85,42 +85,46 @@ Settings are stored in `/app/data/stream_checker_config.json`:
 
 ## Deployment
 
-### Docker Compose
+### All-In-One Container (Default)
 
-The system requires three services:
+The All-In-One container includes all required services in a single container:
 
 ```yaml
 services:
-  redis:
-    image: redis:7-alpine
-    # Redis for Celery broker and UDI storage
-    
   stream-checker:
     image: ghcr.io/krinkuto11/streamflow:latest
-    # Main web application
-    depends_on:
-      - redis
-      
-  celery-worker:
-    image: ghcr.io/krinkuto11/streamflow:latest
-    command: celery -A celery_app worker --loglevel=info --concurrency=4
-    # Celery worker for stream checking
-    depends_on:
-      - redis
+    ports:
+      - "5000:5000"
+    volumes:
+      - /srv/docker/databases/stream_checker:/app/data
+    environment:
+      - REDIS_HOST=localhost
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+      # Other environment variables...
 ```
+
+The container automatically starts:
+- Redis server (localhost:6379)
+- Celery worker with 4 concurrent workers
+- Flask API (port 5000)
+
+All services are managed by Supervisor within the container.
 
 ### Environment Variables
 
-Required environment variables:
+Required environment variables (set via .env file or docker-compose.yml):
 
 ```bash
-REDIS_HOST=redis           # Redis hostname
-REDIS_PORT=6379            # Redis port
-REDIS_DB=0                 # Redis database number
-DISPATCHARR_BASE_URL=...   # Dispatcharr API URL
-DISPATCHARR_USER=...       # Dispatcharr username
-DISPATCHARR_PASS=...       # Dispatcharr password
+REDIS_HOST=localhost          # Redis hostname (localhost for All-In-One)
+REDIS_PORT=6379               # Redis port
+REDIS_DB=0                    # Redis database number
+DISPATCHARR_BASE_URL=...      # Dispatcharr API URL
+DISPATCHARR_USER=...          # Dispatcharr username
+DISPATCHARR_PASS=...          # Dispatcharr password
 ```
+
+> **Note**: In the All-In-One container, Redis runs on localhost within the container. No external Redis server is needed.
 
 ## How It Works
 
@@ -290,36 +294,51 @@ Use the web UI or API to monitor:
 
 ### Celery Worker Status
 
-View Celery worker logs:
+View Celery worker logs from the All-In-One container:
 ```bash
-docker compose logs -f celery-worker
+docker compose logs -f stream-checker
+# Or access specific log files inside the container
+docker compose exec stream-checker tail -f /app/logs/celery.log
 ```
 
 ### Redis Status
 
-Check Redis health:
+Check Redis health within the All-In-One container:
 ```bash
-docker compose exec redis redis-cli ping
+docker compose exec stream-checker redis-cli ping
 # Should respond: PONG
+```
+
+### Supervisor Status
+
+Check status of all services within the container:
+```bash
+docker compose exec stream-checker supervisorctl status
+# Shows: redis, celery-worker, flask-api
 ```
 
 ## Troubleshooting
 
 ### Workers Not Processing Tasks
 
-1. Check worker is running:
+1. Check all services are running in the container:
    ```bash
-   docker compose ps celery-worker
+   docker compose exec stream-checker supervisorctl status
    ```
 
-2. Check worker logs:
+2. Check Celery worker logs:
    ```bash
-   docker compose logs celery-worker
+   docker compose exec stream-checker tail -f /app/logs/celery.log
    ```
 
 3. Verify Redis connection:
    ```http
    GET /api/stream-checker/celery/health
+   ```
+
+4. Restart the container if needed:
+   ```bash
+   docker compose restart stream-checker
    ```
 
 ### Counters Stuck
@@ -357,8 +376,28 @@ Or adjust stream analysis timeout in config:
 
 1. **M3U Account Limits**: Requires accurate `max_streams` values in Dispatcharr
 2. **Network Bandwidth**: Concurrent checks require more bandwidth
-3. **CPU Usage**: Multiple ffmpeg processes run simultaneously
-4. **Redis Dependency**: System requires Redis to be available
+3. **CPU Usage**: Multiple ffmpeg processes run simultaneously within the container
+4. **Redis Internal**: Redis runs within the container (not suitable for multi-container deployments)
+
+## Migration from Multi-Container Setup
+
+If you were using the old multi-container setup (separate Redis and Celery containers), migration to All-In-One is simple:
+
+1. Stop and remove old containers:
+   ```bash
+   docker compose down
+   ```
+
+2. Update your docker-compose.yml to the new single-container format (see example above)
+
+3. Update environment variables to use `REDIS_HOST=localhost`
+
+4. Start the new All-In-One container:
+   ```bash
+   docker compose up -d
+   ```
+
+Your data will be preserved as it's stored in the mounted volume.
 
 ## Migration from Sequential
 
