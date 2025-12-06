@@ -1626,15 +1626,15 @@ class StreamCheckerService:
             self.progress.clear()
     
     def _check_channel_sequential(self, channel_id: int):
-        """Check and reorder streams for a specific channel."""
+        """Check and reorder streams for a specific channel using sequential checking."""
         import time as time_module
         start_time = time_module.time()
-        log_function_call(logger, "_check_channel", channel_id=channel_id)
+        log_function_call(logger, "_check_channel_sequential", channel_id=channel_id)
         
         log_state_change(logger, f"channel_{channel_id}", "queued", "checking")
         self.checking = True
         logger.info(f"=" * 80)
-        logger.info(f"Checking channel {channel_id}")
+        logger.info(f"Checking channel {channel_id} (sequential mode)")
         logger.info(f"=" * 80)
         
         try:

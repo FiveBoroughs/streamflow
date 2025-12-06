@@ -48,9 +48,36 @@ class UDIManager:
     - Thread-safe operations
     """
     
-    def __init__(self):
-        """Initialize the UDI Manager."""
-        self.storage = UDIStorage()
+    def __init__(self, use_redis: bool = True):
+        """Initialize the UDI Manager.
+        
+        Args:
+            use_redis: If True, use Redis storage; if False, use file-based storage
+        """
+        # Try to use Redis storage, fallback to file storage if Redis is unavailable
+        self.storage = None
+        self.use_redis = use_redis
+        
+        if use_redis:
+            try:
+                from udi.redis_storage import UDIRedisStorage
+                self.storage = UDIRedisStorage()
+                # Test connection
+                if self.storage.health_check():
+                    logger.info("Using Redis storage for UDI")
+                else:
+                    logger.warning("Redis health check failed, falling back to file storage")
+                    self.storage = None
+            except Exception as e:
+                logger.warning(f"Failed to initialize Redis storage: {e}, falling back to file storage")
+                self.storage = None
+        
+        # Fallback to file storage if Redis not available or not requested
+        if self.storage is None:
+            from udi.storage import UDIStorage
+            self.storage = UDIStorage()
+            logger.info("Using file storage for UDI")
+        
         self.fetcher = UDIFetcher()
         self.cache = UDICache()
         
@@ -309,6 +336,31 @@ class UDIManager:
         self._ensure_initialized()
         logger.debug(f"Returning {len(self._m3u_accounts_cache)} M3U accounts from UDI cache")
         return self._m3u_accounts_cache.copy()
+    
+    def get_m3u_account_by_id(self, account_id: int) -> Optional[Dict[str, Any]]:
+        """Get a specific M3U account by ID.
+        
+        Args:
+            account_id: M3U account ID
+            
+        Returns:
+            M3U account dictionary or None if not found
+        """
+        self._ensure_initialized()
+        
+        # Try fast lookup from storage if using Redis
+        if hasattr(self.storage, 'get_m3u_account_by_id'):
+            account = self.storage.get_m3u_account_by_id(account_id)
+            if account:
+                return account
+        
+        # Fallback to in-memory cache
+        for account in self._m3u_accounts_cache:
+            if account.get('id') == account_id:
+                return account.copy()
+        
+        logger.debug(f"M3U account {account_id} not found in UDI")
+        return None
     
     def has_custom_streams(self) -> bool:
         """Check if any custom streams exist.
