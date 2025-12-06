@@ -87,6 +87,27 @@ while [ $attempt -lt $max_attempts ]; do
     fi
 done
 
+# Wait for supervisor log file to be created
+echo "[INFO] Waiting for supervisor log file..."
+max_wait_attempts=10
+wait_count=0
+while [ $wait_count -lt $max_wait_attempts ]; do
+    if [ -f /app/logs/supervisord.log ]; then
+        echo "[INFO] Supervisor log file is ready!"
+        break
+    fi
+    wait_count=$((wait_count + 1))
+    sleep 1
+done
+
+# Create log file if it doesn't exist after waiting
+if [ ! -f /app/logs/supervisord.log ]; then
+    echo "[WARNING] Supervisor log file not found after $max_wait_attempts attempts"
+    echo "[INFO] Creating temporary log file (will be populated by supervisord)"
+    mkdir -p /app/logs
+    touch /app/logs/supervisord.log
+fi
+
 # Keep the container running by tailing supervisor logs
 # Use exec to ensure tail becomes PID 1 and receives signals properly
 exec tail -f /app/logs/supervisord.log
