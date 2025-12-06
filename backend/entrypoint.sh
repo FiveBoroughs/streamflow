@@ -97,13 +97,14 @@ while [ $wait_count -lt $max_wait ]; do
         break
     fi
     wait_count=$((wait_count + 1))
-    if [ $wait_count -lt $max_wait ]; then
-        sleep 1
-    else
-        echo "[WARNING] Supervisor log file not found after $max_wait seconds, creating empty file"
-        touch /app/logs/supervisord.log
-    fi
+    sleep 1
 done
+
+# Create log file if it doesn't exist after waiting
+if [ ! -f /app/logs/supervisord.log ]; then
+    echo "[WARNING] Supervisor log file not found after $max_wait seconds, creating empty file"
+    touch /app/logs/supervisord.log
+fi
 
 # Keep the container running by tailing supervisor logs
 # Use exec to ensure tail becomes PID 1 and receives signals properly
