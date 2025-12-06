@@ -64,6 +64,30 @@ echo "[INFO] Access the web interface at http://localhost:${API_PORT}"
 echo "[INFO] API documentation available at http://localhost:${API_PORT}/api/health"
 echo "[INFO] ============================================"
 
-# Start supervisor to manage all processes
-exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf
+# Start supervisor in the background
+echo "[INFO] Starting supervisor to manage all processes..."
+/usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf
+
+# Wait for Redis to be ready before continuing
+echo "[INFO] Waiting for Redis to be ready..."
+max_attempts=30
+attempt=0
+while [ $attempt -lt $max_attempts ]; do
+    if redis-cli -h localhost -p ${REDIS_PORT} ping > /dev/null 2>&1; then
+        echo "[INFO] Redis is ready!"
+        break
+    fi
+    attempt=$((attempt + 1))
+    if [ $attempt -lt $max_attempts ]; then
+        echo "[INFO] Redis not ready yet, waiting... (attempt $attempt/$max_attempts)"
+        sleep 1
+    else
+        echo "[WARNING] Redis did not become ready after $max_attempts seconds"
+        echo "[WARNING] Services will continue but may experience initial connection issues"
+    fi
+done
+
+# Keep the container running by tailing supervisor logs
+# Use exec to ensure tail becomes PID 1 and receives signals properly
+exec tail -f /app/logs/supervisord.log
 
