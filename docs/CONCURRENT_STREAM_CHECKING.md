@@ -32,6 +32,21 @@ The concurrent stream checking system consists of several components:
 
 ## Configuration
 
+### Via Web UI (Configuration Page)
+
+The Configuration page (formerly Automation Settings) now provides UI controls for configuring concurrent stream checking:
+
+1. Navigate to the **Configuration** page in the web interface
+2. Scroll to the **Concurrent Stream Checking** section
+3. Configure:
+   - **Enable Concurrent Checking**: Toggle to enable/disable Celery-based concurrent checking
+   - **Global Concurrent Limit**: Set the maximum number of concurrent stream checks (0-100, 0 = unlimited)
+   - **Stagger Delay**: Set the delay in seconds between starting each worker (0-10 seconds, recommended: 0.5-2)
+
+Changes are saved to `/app/data/stream_checker_config.json` when you click "Save Settings".
+
+**Note**: Lowering the global limit helps reduce load on streaming providers and can prevent connection resets when multiple workers access the same provider simultaneously. The stagger delay prevents all workers from starting stream checks at the exact same time, which further reduces the risk of overwhelming streaming providers.
+
 ### Global Concurrent Limit
 
 Configure the maximum number of concurrent stream checks globally:
@@ -40,13 +55,15 @@ Configure the maximum number of concurrent stream checks globally:
 {
   "concurrent_streams": {
     "enabled": true,
-    "global_limit": 10
+    "global_limit": 10,
+    "stagger_delay": 1.0
   }
 }
 ```
 
 - `enabled`: Set to `false` to use sequential checking instead
 - `global_limit`: Maximum concurrent streams globally (0 = unlimited)
+- `stagger_delay`: Delay in seconds between dispatching tasks (default: 1.0 second). This prevents all workers from connecting to streams simultaneously, reducing the load spike on streaming providers.
 
 ### M3U Account Limits
 

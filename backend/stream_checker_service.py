@@ -98,7 +98,8 @@ class StreamCheckConfig:
         },
         'concurrent_streams': {
             'global_limit': 10,  # Maximum concurrent stream checks globally (0 = unlimited)
-            'enabled': True  # Enable concurrent checking via Celery
+            'enabled': True,  # Enable concurrent checking via Celery
+            'stagger_delay': 1.0  # Delay in seconds between dispatching tasks to prevent simultaneous starts
         }
     }
     
@@ -1335,6 +1336,9 @@ class StreamCheckerService:
                 pending_streams = list(streams_to_check)
                 completed_count = 0
                 
+                # Get stagger delay configuration
+                stagger_delay = concurrent_config.get('stagger_delay', 1.0)
+                
                 while pending_streams or task_futures:
                     # Try to dispatch new tasks within limits
                     streams_dispatched = 0
@@ -1370,6 +1374,12 @@ class StreamCheckerService:
                             task_futures.append((task, stream, m3u_account_id))
                             pending_streams.remove(stream)
                             streams_dispatched += 1
+                            
+                            # Add stagger delay after successfully dispatching a task
+                            # This prevents all workers from starting simultaneously
+                            if stagger_delay > 0 and pending_streams:
+                                logger.debug(f"Staggering next task dispatch by {stagger_delay}s")
+                                time.sleep(stagger_delay)
                         else:
                             # Task was dispatched but couldn't be registered due to limits
                             # Revoke the task
