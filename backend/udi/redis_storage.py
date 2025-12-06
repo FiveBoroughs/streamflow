@@ -43,7 +43,7 @@ class UDIRedisStorage:
                          creates a new connection pool and client.
         """
         if redis_client is None:
-            redis_host = os.environ.get('REDIS_HOST', 'redis')
+            redis_host = os.environ.get('REDIS_HOST', 'localhost')
             redis_port = int(os.environ.get('REDIS_PORT', 6379))
             redis_db = int(os.environ.get('REDIS_DB', 0))
             

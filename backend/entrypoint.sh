@@ -1,24 +1,29 @@
 #!/bin/bash
 
-# Dispatcharr Stream Manager - New Automated System Entrypoint
-# This replaces the old watchdog pattern with the new automated stream management system
+# StreamFlow All-In-One Entrypoint
+# Starts Redis, Celery worker, and Flask API in a single container
 
 set -e
 
-echo "[INFO] Starting Dispatcharr Automated Stream Management System: $(date)"
+echo "[INFO] Starting StreamFlow All-In-One Container: $(date)"
 
 # Environment variables with defaults
 API_HOST="${API_HOST:-0.0.0.0}"
 API_PORT="${API_PORT:-5000}"
 DEBUG_MODE="${DEBUG_MODE:-false}"
 CONFIG_DIR="${CONFIG_DIR:-/app/data}"
+REDIS_HOST="${REDIS_HOST:-localhost}"
+REDIS_PORT="${REDIS_PORT:-6379}"
+REDIS_DB="${REDIS_DB:-0}"
+
+# Export environment variables for supervisor programs
+export API_HOST API_PORT DEBUG_MODE CONFIG_DIR REDIS_HOST REDIS_PORT REDIS_DB
 
 # Deprecated: Old manual interval approach (kept for backward compatibility warnings)
 if [ -n "$INTERVAL_SECONDS" ]; then
     echo "[WARNING] INTERVAL_SECONDS environment variable is deprecated."
     echo "[WARNING] The system now uses automated scheduling via the web API."
     echo "[WARNING] Please configure automation via the web interface or API endpoints."
-    echo "[WARNING] The old manual triggering pattern is no longer recommended."
 fi
 
 # Check if configuration files exist, create defaults if needed
@@ -46,16 +51,19 @@ else
     echo "[INFO] Using .env file for configuration."
 fi
 
-# Start the automated stream management web API
-echo "[INFO] Starting Web API server on ${API_HOST}:${API_PORT}"
+# Start All-In-One services
+echo "[INFO] ============================================"
+echo "[INFO] Starting All-In-One StreamFlow Container"
+echo "[INFO] ============================================"
+echo "[INFO] Redis: localhost:${REDIS_PORT}"
+echo "[INFO] Celery Worker: 4 concurrent workers"
+echo "[INFO] Flask API: ${API_HOST}:${API_PORT}"
 echo "[INFO] Debug mode: ${DEBUG_MODE}"
+echo "[INFO] ============================================"
 echo "[INFO] Access the web interface at http://localhost:${API_PORT}"
 echo "[INFO] API documentation available at http://localhost:${API_PORT}/api/health"
+echo "[INFO] ============================================"
 
-# Add health endpoint for Docker health checks
-if [ "$DEBUG_MODE" = "true" ]; then
-    exec python3 web_api.py --host "$API_HOST" --port "$API_PORT" --debug
-else
-    exec python3 web_api.py --host "$API_HOST" --port "$API_PORT"
-fi
+# Start supervisor to manage all processes
+exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf
 

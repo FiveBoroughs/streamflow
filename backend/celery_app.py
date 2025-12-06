@@ -13,7 +13,8 @@ from logging_config import setup_logging
 logger = setup_logging(__name__)
 
 # Get Redis connection details from environment
-REDIS_HOST = os.environ.get('REDIS_HOST', 'redis')
+# Default to localhost for All-In-One deployment
+REDIS_HOST = os.environ.get('REDIS_HOST', 'localhost')
 REDIS_PORT = int(os.environ.get('REDIS_PORT', 6379))
 REDIS_DB = int(os.environ.get('REDIS_DB', 0))
 
