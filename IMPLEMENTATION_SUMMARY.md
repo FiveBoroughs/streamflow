@@ -49,10 +49,13 @@ New `concurrent_streams` section in stream_checker_config.json:
 ```
 
 ### 7. Docker Deployment
-Three-service architecture:
-- **redis**: Message broker and data storage
-- **stream-checker**: Main web application  
-- **celery-worker**: Task execution (configurable --concurrency)
+**All-In-One container architecture**:
+- **Single Container**: All services managed by Supervisor
+- **Embedded Redis**: Redis server (localhost:6379)
+- **Embedded Celery**: 4 concurrent workers
+- **Flask API**: Web application (port 5000)
+
+All services run within one container, eliminating the need for separate Redis and Celery worker containers.
 
 ## Performance Improvements
 
@@ -149,31 +152,46 @@ Potential improvements for future work:
 
 ## Files Changed
 
-### New Files
+### New Files (All-In-One Architecture)
 - backend/celery_app.py
 - backend/celery_tasks.py  
 - backend/concurrency_manager.py
 - backend/udi/redis_storage.py
 - backend/tests/test_concurrent_stream_checking.py
+- backend/tests/test_allinone_config.py
+- backend/supervisord.conf
 - docs/CONCURRENT_STREAM_CHECKING.md
 
-### Modified Files
+### Modified Files (All-In-One Architecture)
+- Dockerfile (added Redis server and Supervisor)
 - backend/requirements.txt (added Celery, Redis)
 - backend/stream_checker_service.py (concurrent checking logic)
 - backend/udi/manager.py (Redis storage support)
 - backend/web_api.py (new API endpoints)
-- docker-compose.yml (Redis + Celery worker services)
-- README.md (feature documentation)
+- backend/entrypoint.sh (starts Supervisor to manage all services)
+- backend/celery_app.py (defaults to localhost Redis)
+- backend/concurrency_manager.py (defaults to localhost Redis)
+- backend/udi/redis_storage.py (defaults to localhost Redis)
+- docker-compose.yml (single container deployment)
+- .env.template (added Redis configuration variables)
+- README.md (updated architecture description)
+- docs/DEPLOYMENT.md (All-In-One deployment guide)
+- docs/CONCURRENT_STREAM_CHECKING.md (updated for All-In-One)
 
 ## Deployment Checklist
 
-- [ ] Update docker-compose.yml with Redis and Celery worker
-- [ ] Set environment variables (REDIS_HOST, REDIS_PORT, REDIS_DB)
-- [ ] Configure global_limit based on server resources
+- [x] Update Dockerfile with Redis server and Supervisor
+- [x] Create supervisord.conf to manage all services
+- [x] Update entrypoint.sh to start Supervisor
+- [x] Update docker-compose.yml for single container deployment
+- [x] Set environment variables to use localhost Redis
+- [x] Update all Python modules to default to localhost Redis
+- [x] Configure global_limit based on server resources
+- [x] Update documentation for All-In-One architecture
 - [ ] Verify M3U account max_streams values are accurate
 - [ ] Test health endpoint: GET /api/stream-checker/celery/health
 - [ ] Monitor logs for first concurrent channel check
-- [ ] Adjust worker --concurrency if needed
+- [ ] Adjust worker concurrency in supervisord.conf if needed
 - [ ] Document any custom configuration for team
 
 ## Support
