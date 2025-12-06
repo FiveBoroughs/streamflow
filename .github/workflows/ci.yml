@@ -5,16 +5,15 @@ on:
   release:
     types: [published]
   pull_request:
-    branches:
-      - dev
-    types: [closed] # Expanded trigger types for universal-data-index branch
+    branches-ignore:
+      - main
 
 jobs:
   build:
     if: |
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'release' ||
-      (github.event_name == 'pull_request' && github.base_ref == 'dev' && github.event.pull_request.merged == true)
+      (github.event_name == 'pull_request' && github.base_ref != 'main')
     runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
@@ -57,7 +56,6 @@ jobs:
           ${{ runner.os }}-${{ runner.arch }}-buildx-
 
     - name: Log in to GitHub Container Registry
-      if: github.event_name == 'workflow_dispatch' || github.event_name == 'release' || (github.event_name == 'pull_request' && github.base_ref == 'dev' && github.event.pull_request.merged == true)
       uses: docker/login-action@v3
       with:
         registry: ghcr.io
@@ -65,7 +63,6 @@ jobs:
         password: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Extract metadata
-      if: github.event_name == 'workflow_dispatch' || github.event_name == 'release' || (github.event_name == 'pull_request' && github.base_ref == 'dev' && github.event.pull_request.merged == true)
       id: meta
       uses: docker/metadata-action@v5
       with:
