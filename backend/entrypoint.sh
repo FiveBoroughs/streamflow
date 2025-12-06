@@ -64,51 +64,12 @@ echo "[INFO] Access the web interface at http://localhost:${API_PORT}"
 echo "[INFO] API documentation available at http://localhost:${API_PORT}/api/health"
 echo "[INFO] ============================================"
 
-# Start supervisor in the background
+# Start supervisor in foreground mode (nodaemon=true)
+# This will become PID 1 and properly forward all logs to Docker stdout
 echo "[INFO] Starting supervisor to manage all processes..."
-/usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf
 
-# Wait for Redis to be ready before continuing
-echo "[INFO] Waiting for Redis to be ready..."
-max_attempts=30
-attempt=0
-while [ $attempt -lt $max_attempts ]; do
-    if redis-cli -h localhost -p ${REDIS_PORT} ping > /dev/null 2>&1; then
-        echo "[INFO] Redis is ready!"
-        break
-    fi
-    attempt=$((attempt + 1))
-    if [ $attempt -lt $max_attempts ]; then
-        echo "[INFO] Redis not ready yet, waiting... (attempt $attempt/$max_attempts)"
-        sleep 1
-    else
-        echo "[WARNING] Redis did not become ready after $max_attempts seconds"
-        echo "[WARNING] Services will continue but may experience initial connection issues"
-    fi
-done
-
-# Wait for supervisor log file to be created
-echo "[INFO] Waiting for supervisor log file..."
-max_wait_attempts=10
-wait_count=0
-while [ $wait_count -lt $max_wait_attempts ]; do
-    if [ -f /app/logs/supervisord.log ]; then
-        echo "[INFO] Supervisor log file is ready!"
-        break
-    fi
-    wait_count=$((wait_count + 1))
-    sleep 1
-done
-
-# Create log file if it doesn't exist after waiting
-if [ ! -f /app/logs/supervisord.log ]; then
-    echo "[WARNING] Supervisor log file not found after $max_wait_attempts attempts"
-    echo "[INFO] Creating temporary log file (will be populated by supervisord)"
-    mkdir -p /app/logs
-    touch /app/logs/supervisord.log
-fi
-
-# Keep the container running by tailing supervisor logs
-# Use exec to ensure tail becomes PID 1 and receives signals properly
-exec tail -f /app/logs/supervisord.log
+# Note: Supervisor will run in foreground and manage all processes
+# All logs will be forwarded to stdout/stderr automatically
+# Use exec to ensure supervisor becomes PID 1 and receives signals properly
+exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf
 

@@ -81,6 +81,51 @@ The All-In-One application uses a single Docker container that includes:
 - **Configuration**: JSON files in `/app/data` (mounted volume)
 - **Process Manager**: Supervisor manages all services within the container
 
+### Logging
+
+All application logs are forwarded to Docker's stdout/stderr and can be viewed using:
+
+```bash
+# View all logs
+docker compose logs -f
+
+# View logs from a specific time
+docker compose logs --since 10m
+
+# View only the last 100 lines
+docker compose logs --tail 100
+```
+
+The logging system includes:
+- **Supervisor**: Process management logs
+- **Redis**: Database operation logs (warning level)
+- **Celery Workers**: Task execution and concurrent stream checking logs
+- **Flask API**: HTTP requests, API calls, and application events
+- **Stream Checker**: Stream quality analysis and channel update logs
+
+All logs use `/proc/1/fd/1` (stdout) and `/proc/1/fd/2` (stderr) to ensure proper forwarding to Docker's logging system.
+
+### Debug Mode
+
+Enable debug mode for more verbose logging:
+
+```bash
+# In .env file
+DEBUG_MODE=true
+```
+
+Or via environment variable:
+```bash
+docker compose up -d -e DEBUG_MODE=true
+```
+
+Debug mode provides detailed information about:
+- API request/response details
+- Stream analysis steps
+- Concurrency management
+- Queue processing
+- Configuration changes
+
 ### Port Mapping
 - **External**: http://localhost:5000 → **Internal**: Flask port 5000
 - All frontend routes and API calls go through the same port

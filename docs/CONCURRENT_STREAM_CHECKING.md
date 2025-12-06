@@ -285,6 +285,40 @@ Response:
 
 ## Monitoring
 
+### Web UI
+
+The Stream Checker page in the web UI provides comprehensive information about concurrent stream checking:
+
+#### Status Cards
+- **Status**: Shows if the service is running and the checking mode (concurrent/sequential)
+- **Queue Size**: Number of channels pending check
+- **Completed**: Total channels checked successfully
+- **Failed**: Channels that failed during checking
+
+#### Concurrent Checking Status Card (when enabled)
+- **Global Concurrent Streams**: Current number vs limit with visual progress indicator
+- **Per-Account Activity**: Shows which M3U accounts have active concurrent checks
+- **Progress Bar**: Visual representation of concurrent capacity usage
+
+#### Current Check Progress (when checking)
+- **Channel Information**: Name and ID of channel being checked
+- **Stream Progress**: Current stream number out of total
+- **Overall Progress**: Percentage complete with progress bar
+- **Current Step**: Shows detailed step information:
+  - Fetching streams
+  - Analyzing streams concurrently
+  - Calculating scores
+  - Reordering streams
+  - Verifying update
+- **Concurrent Mode Indicator**: Shows when concurrent mode is active with capacity limit
+
+#### Pipeline Information
+- Displays active pipeline mode
+- Shows scheduled global action time (if configured)
+- Last global action timestamp
+
+All information auto-refreshes every 10 seconds to provide real-time status updates.
+
 ### Check Concurrency Status
 
 Use the web UI or API to monitor:
@@ -294,12 +328,22 @@ Use the web UI or API to monitor:
 
 ### Celery Worker Status
 
-View Celery worker logs from the All-In-One container:
+View all logs from the All-In-One container (all services including Celery):
 ```bash
 docker compose logs -f stream-checker
-# Or access specific log files inside the container
-docker compose exec stream-checker tail -f /app/logs/celery.log
+# All logs from Redis, Celery, Flask API, and Supervisor are forwarded to stdout
 ```
+
+View specific time ranges:
+```bash
+# Last 10 minutes
+docker compose logs --since 10m stream-checker
+
+# Last 100 lines
+docker compose logs --tail 100 stream-checker
+```
+
+All services (Redis, Celery workers, Flask API) output to the container's stdout/stderr, making it easy to monitor all activity in one place.
 
 ### Redis Status
 
@@ -326,9 +370,9 @@ docker compose exec stream-checker supervisorctl status
    docker compose exec stream-checker supervisorctl status
    ```
 
-2. Check Celery worker logs:
+2. Check all logs (includes Celery, Redis, Flask API):
    ```bash
-   docker compose exec stream-checker tail -f /app/logs/celery.log
+   docker compose logs --tail 200 stream-checker
    ```
 
 3. Verify Redis connection:
@@ -340,6 +384,8 @@ docker compose exec stream-checker supervisorctl status
    ```bash
    docker compose restart stream-checker
    ```
+
+Note: All logs are forwarded to Docker stdout, so you don't need to access individual log files inside the container.
 
 ### Counters Stuck
 

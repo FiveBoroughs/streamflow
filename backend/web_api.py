@@ -46,8 +46,10 @@ from logging_config import setup_logging, log_function_call, log_function_return
 
 logger = setup_logging(__name__)
 
-# Configuration directory - persisted via Docker volume
+# Configuration constants
 CONFIG_DIR = Path(os.environ.get('CONFIG_DIR', '/app/data'))
+CONCURRENT_STREAMS_GLOBAL_LIMIT_KEY = 'concurrent_streams.global_limit'
+CONCURRENT_STREAMS_ENABLED_KEY = 'concurrent_streams.enabled'
 
 # Initialize Flask app with static file serving
 # Note: static_folder set to None to disable Flask's built-in static route
@@ -854,10 +856,43 @@ def test_dispatcharr_connection():
 
 @app.route('/api/stream-checker/status', methods=['GET'])
 def get_stream_checker_status():
-    """Get current stream checker status."""
+    """Get current stream checker status with concurrency information."""
     try:
         service = get_stream_checker_service()
         status = service.get_status()
+        
+        # Add concurrency information if available
+        if CELERY_AVAILABLE:
+            try:
+                concurrency_mgr = get_concurrency_manager()
+                counts = concurrency_mgr.get_current_counts()
+                
+                # Get configured limits
+                global_limit = service.config.get(CONCURRENT_STREAMS_GLOBAL_LIMIT_KEY, 10)
+                concurrent_enabled = service.config.get(CONCURRENT_STREAMS_ENABLED_KEY, True)
+                
+                # Add concurrency info to status
+                status['concurrency'] = {
+                    'enabled': concurrent_enabled,
+                    'global_limit': global_limit,
+                    'current_concurrent': counts['global'],
+                    'accounts': counts['accounts'],
+                    'mode': 'concurrent' if concurrent_enabled else 'sequential'
+                }
+            except Exception as e:
+                logger.warning(f"Could not get concurrency info: {e}")
+                status['concurrency'] = {
+                    'enabled': False,
+                    'mode': 'sequential',
+                    'error': str(e)
+                }
+        else:
+            status['concurrency'] = {
+                'enabled': False,
+                'mode': 'sequential',
+                'reason': 'Celery/Redis not available'
+            }
+        
         return jsonify(status)
     except Exception as e:
         logger.error(f"Error getting stream checker status: {e}")
@@ -1140,8 +1175,8 @@ def get_concurrency_status():
         counts = concurrency_mgr.get_current_counts()
         
         # Get configured limits
-        global_limit = service.config.get('concurrent_streams.global_limit', 10)
-        concurrent_enabled = service.config.get('concurrent_streams.enabled', True)
+        global_limit = service.config.get(CONCURRENT_STREAMS_GLOBAL_LIMIT_KEY, 10)
+        concurrent_enabled = service.config.get(CONCURRENT_STREAMS_ENABLED_KEY, True)
         
         # Get M3U account limits from UDI
         udi = get_udi_manager()
