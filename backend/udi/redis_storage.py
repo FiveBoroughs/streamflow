@@ -8,6 +8,7 @@ replacing the file-based JSON storage for better performance and distributed acc
 import json
 import os
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Any
@@ -499,8 +500,6 @@ class UDIRedisStorage:
         Returns:
             True if Redis is accessible and working
         """
-        import time
-        
         delay = initial_delay
         for attempt in range(max_retries):
             try:

@@ -88,5 +88,6 @@ while [ $attempt -lt $max_attempts ]; do
 done
 
 # Keep the container running by tailing supervisor logs
-tail -f /app/logs/supervisord.log
+# Use exec to ensure tail becomes PID 1 and receives signals properly
+exec tail -f /app/logs/supervisord.log
 
