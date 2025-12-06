@@ -1,4 +1,18 @@
 services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    command: redis-server --save 60 1 --loglevel warning
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    networks:
+      - streamflow-network
+
   stream-checker:
     image: ghcr.io/krinkuto11/streamflow:latest
     ports:
@@ -11,12 +25,18 @@ services:
       - API_HOST=0.0.0.0
       - API_PORT=5000
       - CONFIG_DIR=/app/data
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
       # Alternative: Specify environment variables directly instead of using .env file
       # Uncomment the lines below and comment out 'env_file' section to use env vars only
       # - DISPATCHARR_BASE_URL=http://your-dispatcharr-instance.com:9191
       # - DISPATCHARR_USER=your-username
       # - DISPATCHARR_PASS=your-password
       # - DEBUG_MODE=false
+    depends_on:
+      redis:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/api/health"]
       interval: 30s
@@ -24,3 +44,31 @@ services:
       retries: 3
       start_period: 40s
     restart: unless-stopped
+    networks:
+      - streamflow-network
+
+  celery-worker:
+    image: ghcr.io/krinkuto11/streamflow:latest
+    command: celery -A celery_app worker --loglevel=info --concurrency=4
+    volumes:
+      - /srv/docker/databases/stream_checker:/app/data
+    env_file:
+      - .env
+    environment:
+      - CONFIG_DIR=/app/data
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - streamflow-network
+
+volumes:
+  redis-data:
+
+networks:
+  streamflow-network:
+    driver: bridge
