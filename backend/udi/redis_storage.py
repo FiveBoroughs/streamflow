@@ -180,6 +180,47 @@ class UDIRedisStorage:
             logger.error(f"Failed to get channel {channel_id} from Redis: {e}")
             return None
     
+    def update_channel(self, channel_id: int, channel_data: Dict[str, Any]) -> bool:
+        """Update a specific channel in Redis storage.
+        
+        This method updates both the main channels list and the index for the channel.
+        For high-frequency batch updates, use save_channels() instead to write all
+        changes at once.
+        
+        Args:
+            channel_id: The channel ID
+            channel_data: Updated channel data
+            
+        Returns:
+            True if successful
+        """
+        with self._channels_lock:
+            try:
+                # Load all channels
+                channels = self.load_channels()
+                
+                # Update or append the channel
+                updated = False
+                for i, channel in enumerate(channels):
+                    if channel.get('id') == channel_id:
+                        channels[i] = channel_data
+                        updated = True
+                        break
+                
+                if not updated:
+                    channels.append(channel_data)
+                
+                # Save all channels (this will also update the index)
+                success = self.save_channels(channels)
+                
+                if success:
+                    logger.debug(f"Updated channel {channel_id} in Redis")
+                
+                return success
+            except Exception as e:
+                logger.error(f"Failed to update channel {channel_id} in Redis: {e}")
+                return False
+    
     # Streams
     def load_streams(self) -> List[Dict[str, Any]]:
         """Load all streams from Redis storage.
@@ -267,6 +308,47 @@ class UDIRedisStorage:
         except Exception as e:
             logger.error(f"Failed to get stream {stream_id} from Redis: {e}")
             return None
+    
+    def update_stream(self, stream_id: int, stream_data: Dict[str, Any]) -> bool:
+        """Update a specific stream in Redis storage.
+        
+        This method updates both the main streams list and the indexes for the stream.
+        For high-frequency batch updates, use save_streams() instead to write all
+        changes at once.
+        
+        Args:
+            stream_id: The stream ID
+            stream_data: Updated stream data
+            
+        Returns:
+            True if successful
+        """
+        with self._streams_lock:
+            try:
+                # Load all streams
+                streams = self.load_streams()
+                
+                # Update or append the stream
+                updated = False
+                for i, stream in enumerate(streams):
+                    if stream.get('id') == stream_id:
+                        streams[i] = stream_data
+                        updated = True
+                        break
+                
+                if not updated:
+                    streams.append(stream_data)
+                
+                # Save all streams (this will also update the indexes)
+                success = self.save_streams(streams)
+                
+                if success:
+                    logger.debug(f"Updated stream {stream_id} in Redis")
+                
+                return success
+            except Exception as e:
+                logger.error(f"Failed to update stream {stream_id} in Redis: {e}")
+                return False
     
     # Channel Groups
     def load_channel_groups(self) -> List[Dict[str, Any]]:

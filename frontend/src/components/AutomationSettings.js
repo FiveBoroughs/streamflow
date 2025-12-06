@@ -549,6 +549,45 @@ function AutomationSettings() {
           </Card>
           </Grid>
         )}
+
+        {/* Concurrent Stream Checking Settings - Only show when a pipeline is selected */}
+        {pipelineMode && (
+          <Grid item xs={12} md={6}>
+            <Card>
+              <CardContent>
+                <Typography variant="h6" gutterBottom>
+                  Concurrent Stream Checking
+                </Typography>
+              
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={streamCheckerConfig.concurrent_streams?.enabled !== false}
+                    onChange={(e) => handleStreamCheckerConfigChange('concurrent_streams.enabled', e.target.checked)}
+                  />
+                }
+                label="Enable Concurrent Checking"
+                sx={{ mt: 2 }}
+              />
+              
+              <Typography variant="body2" color="text.secondary" sx={{ mt: 1, mb: 2 }}>
+                Use Celery workers to check multiple streams in parallel for faster processing.
+              </Typography>
+              
+              <TextField
+                label="Global Concurrent Limit"
+                type="number"
+                value={streamCheckerConfig.concurrent_streams?.global_limit ?? 10}
+                onChange={(e) => handleStreamCheckerConfigChange('concurrent_streams.global_limit', parseInt(e.target.value))}
+                fullWidth
+                margin="normal"
+                helperText="Maximum concurrent stream checks across all workers (0 = unlimited). Lower values reduce load on streaming providers."
+                inputProps={{ min: 0, max: 100 }}
+              />
+            </CardContent>
+          </Card>
+          </Grid>
+        )}
       </Grid>
 
       <Box sx={{ mt: 2, display: 'flex', justifyContent: 'flex-end' }}>
