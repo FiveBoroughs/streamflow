@@ -25,6 +25,11 @@ from logging_config import setup_logging
 
 logger = setup_logging(__name__)
 
+# Constants for error detection and logging
+EARLY_EXIT_THRESHOLD = 0.8  # Consider ffmpeg exited early if elapsed < 80% of expected duration
+MAX_ERROR_LINES_TO_LOG = 5  # Maximum number of error lines to log from ffmpeg output
+MAX_DEBUG_LINES_TO_LOG = 10  # Maximum number of debug lines to log from ffmpeg output
+
 
 def check_ffmpeg_installed() -> bool:
     """
@@ -195,10 +200,48 @@ def get_stream_bitrate(url: str, duration: int = 30, timeout: int = 30, user_age
             bitrate = progress_bitrate
             logger.debug(f"  → Using last progress bitrate as fallback: {bitrate:.2f} kbps")
 
+        # Check if ffmpeg exited early with errors
+        # If elapsed time is much less than duration, ffmpeg likely encountered an error
+        expected_min_time = duration * EARLY_EXIT_THRESHOLD
+        exited_early = elapsed < expected_min_time
+        
         # Log if bitrate detection failed
         if bitrate is None:
-            logger.warning(f"  ⚠ Failed to detect bitrate from ffmpeg output (analyzed for {duration}s)")
+            logger.warning(f"  ⚠ Failed to detect bitrate from ffmpeg output (analyzed for {elapsed:.2f}s, expected ~{duration}s)")
             logger.debug(f"  → Searched {len(output.splitlines())} lines of output")
+            
+            # If ffmpeg exited early or returned non-zero, provide more details
+            if exited_early or result.returncode != 0:
+                if result.returncode != 0:
+                    logger.warning(f"  ⚠ ffmpeg exited with code {result.returncode}")
+                else:
+                    logger.warning(f"  ⚠ ffmpeg completed in {elapsed:.2f}s (expected ~{duration}s) - stream may have ended early or encountered an error")
+                
+                # Look for and log specific error messages from ffmpeg output
+                error_patterns = [
+                    "Connection refused", "Connection timed out", "Invalid data found",
+                    "Server returned", "404 Not Found", "403 Forbidden", "401 Unauthorized",
+                    "No route to host", "could not find codec", "Protocol not found",
+                    "Error opening input", "Operation timed out", "I/O error",
+                    "HTTP error", "SSL", "TLS", "Certificate"
+                ]
+                
+                error_lines = []
+                for line in output.splitlines():
+                    line_lower = line.lower()
+                    if any(pattern.lower() in line_lower for pattern in error_patterns):
+                        error_lines.append(line.strip())
+                
+                if error_lines:
+                    logger.warning(f"  ⚠ ffmpeg error details:")
+                    for error_line in error_lines[:MAX_ERROR_LINES_TO_LOG]:
+                        logger.warning(f"     {error_line}")
+                else:
+                    # Log last few lines of output for debugging
+                    logger.debug(f"  → Last lines of ffmpeg output:")
+                    for line in output.splitlines()[-MAX_DEBUG_LINES_TO_LOG:]:
+                        if line.strip():
+                            logger.debug(f"     {line.strip()}")
 
         logger.debug(f"  → Analysis completed in {elapsed:.2f}s")
 

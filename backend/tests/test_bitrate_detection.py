@@ -30,6 +30,7 @@ class TestBitrateDetection(unittest.TestCase):
         """Test Method 1: Primary detection via Statistics: line with bytes read."""
         # Simulate ffmpeg output with Statistics line
         mock_result = MagicMock()
+        mock_result.returncode = 0
         mock_result.stderr = """
 [debug] Input stream #0:0: 500 frames decoded; 0 decode errors
 Statistics: 15000000 bytes read; 0 seeks
@@ -53,6 +54,7 @@ Statistics: 15000000 bytes read; 0 seeks
         """Test Method 2: Fallback detection via progress output with bitrate= pattern."""
         # Simulate ffmpeg output with progress lines but no Statistics
         mock_result = MagicMock()
+        mock_result.returncode = 0
         mock_result.stderr = """
 frame=  500 fps= 25 q=-1.0 size=   12000kB time=00:00:20.00 bitrate=4800.0kbits/s speed=1.0x
 frame=  750 fps= 25 q=-1.0 size=   18000kB time=00:00:30.00 bitrate=4800.0kbits/s speed=1.0x
@@ -74,6 +76,7 @@ frame=  750 fps= 25 q=-1.0 size=   18000kB time=00:00:30.00 bitrate=4800.0kbits/
         """Test Method 3: Alternative bytes read pattern without Statistics: prefix."""
         # Simulate ffmpeg output with bytes read but no Statistics: prefix
         mock_result = MagicMock()
+        mock_result.returncode = 0
         mock_result.stderr = """
 [debug] 12000000 bytes read from input
         """
@@ -94,6 +97,7 @@ frame=  750 fps= 25 q=-1.0 size=   18000kB time=00:00:30.00 bitrate=4800.0kbits/
         """Test that bitrate remains None when all detection methods fail."""
         # Simulate ffmpeg output with no recognizable bitrate patterns
         mock_result = MagicMock()
+        mock_result.returncode = 0
         mock_result.stderr = """
 [info] Stream started
 [info] Stream ended
@@ -114,6 +118,7 @@ frame=  750 fps= 25 q=-1.0 size=   18000kB time=00:00:30.00 bitrate=4800.0kbits/
         """Test that the last progress bitrate is used when Statistics is missing."""
         # Simulate multiple progress updates - should use the last one
         mock_result = MagicMock()
+        mock_result.returncode = 0
         mock_result.stderr = """
 frame=  250 fps= 25 q=-1.0 size=    6000kB time=00:00:10.00 bitrate=4800.0kbits/s speed=1.0x
 frame=  500 fps= 25 q=-1.0 size=   11000kB time=00:00:20.00 bitrate=4400.0kbits/s speed=1.0x
@@ -136,6 +141,7 @@ frame=  750 fps= 25 q=-1.0 size=   15000kB time=00:00:30.00 bitrate=4000.0kbits/
         """Test that Statistics method takes priority over progress output."""
         # Both methods should work, but Statistics should be preferred
         mock_result = MagicMock()
+        mock_result.returncode = 0
         mock_result.stderr = """
 frame=  750 fps= 25 q=-1.0 size=   15000kB time=00:00:30.00 bitrate=4000.0kbits/s speed=1.0x
 Statistics: 18000000 bytes read; 0 seeks
@@ -181,6 +187,106 @@ Statistics: 18000000 bytes read; 0 seeks
         
         self.assertIsNone(bitrate, "Bitrate should be None on error")
         self.assertEqual(status, "Error", "Status should indicate error")
+
+    @patch('subprocess.run')
+    @patch('stream_check_utils.logger')
+    def test_bitrate_failure_warning_uses_elapsed_time(self, mock_logger, mock_run):
+        """Test that the warning message uses actual elapsed time, not intended duration."""
+        # Simulate ffmpeg completing quickly with no bitrate data
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stderr = """
+[info] Stream started
+[info] Stream ended
+        """
+        mock_run.return_value = mock_result
+        
+        bitrate, status, elapsed = get_stream_bitrate(
+            'http://test.com/stream.m3u8',
+            duration=30,  # Intended duration
+            timeout=10
+        )
+        
+        # Bitrate should remain None when detection fails
+        self.assertIsNone(bitrate, "Bitrate should be None when detection fails")
+        self.assertEqual(status, "OK", "Status should be OK even if bitrate is None")
+        
+        # Verify that warning was called
+        mock_logger.warning.assert_called()
+        
+        # Get all warning messages
+        warning_calls = [str(call) for call in mock_logger.warning.call_args_list]
+        warning_text = ' '.join(warning_calls)
+        
+        # Should mention analysis time and expected duration
+        self.assertIn("analyzed for", warning_text, "Warning should mention analysis time")
+        self.assertIn("expected ~30s", warning_text, "Warning should mention expected duration")
+        
+        # Verify that elapsed time is actually small (< 1 second)
+        self.assertLess(elapsed, 1.0, "Elapsed time should be very small when ffmpeg returns quickly")
+
+    @patch('subprocess.run')
+    @patch('stream_check_utils.logger')
+    def test_verbose_error_logging_on_ffmpeg_failure(self, mock_logger, mock_run):
+        """Test that ffmpeg errors are logged verbosely when it exits early."""
+        # Simulate ffmpeg failing with connection error
+        mock_result = MagicMock()
+        mock_result.returncode = 1
+        mock_result.stderr = """
+[http @ 0x7f8b9c000c00] HTTP error 404 Not Found
+http://test.com/stream.m3u8: Server returned 404 Not Found
+[info] Connection refused
+        """
+        mock_run.return_value = mock_result
+        
+        bitrate, status, elapsed = get_stream_bitrate(
+            'http://test.com/stream.m3u8',
+            duration=30,
+            timeout=10
+        )
+        
+        # Bitrate should be None, status OK (since subprocess didn't timeout/crash)
+        self.assertIsNone(bitrate, "Bitrate should be None when ffmpeg fails")
+        self.assertEqual(status, "OK", "Status should be OK")
+        
+        # Verify that warnings were called
+        self.assertTrue(mock_logger.warning.called, "Warning should be logged")
+        
+        # Check that error details were logged
+        warning_calls = [str(call) for call in mock_logger.warning.call_args_list]
+        warning_text = ' '.join(warning_calls)
+        
+        # Should mention non-zero exit code
+        self.assertIn("exited with code 1", warning_text, "Should log non-zero exit code")
+        
+        # Should log error details
+        self.assertIn("error details", warning_text.lower(), "Should mention error details")
+
+    @patch('subprocess.run')
+    @patch('stream_check_utils.logger')
+    def test_early_completion_warning(self, mock_logger, mock_run):
+        """Test that early completion without errors is also flagged."""
+        # Simulate ffmpeg completing very quickly with exit code 0 but no data
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stderr = """
+[info] Stream started
+[info] Stream ended
+        """
+        mock_run.return_value = mock_result
+        
+        bitrate, status, elapsed = get_stream_bitrate(
+            'http://test.com/stream.m3u8',
+            duration=30,
+            timeout=10
+        )
+        
+        # Should warn about early completion
+        warning_calls = [str(call) for call in mock_logger.warning.call_args_list]
+        warning_text = ' '.join(warning_calls)
+        
+        # Should mention that it completed early
+        self.assertIn("expected ~30s", warning_text, "Should mention expected duration")
 
 
 if __name__ == '__main__':
