@@ -182,6 +182,43 @@ Statistics: 18000000 bytes read; 0 seeks
         self.assertIsNone(bitrate, "Bitrate should be None on error")
         self.assertEqual(status, "Error", "Status should indicate error")
 
+    @patch('subprocess.run')
+    @patch('stream_check_utils.logger')
+    def test_bitrate_failure_warning_uses_elapsed_time(self, mock_logger, mock_run):
+        """Test that the warning message uses actual elapsed time, not intended duration."""
+        # Simulate ffmpeg completing quickly with no bitrate data
+        mock_result = MagicMock()
+        mock_result.stderr = """
+[info] Stream started
+[info] Stream ended
+        """
+        mock_run.return_value = mock_result
+        
+        bitrate, status, elapsed = get_stream_bitrate(
+            'http://test.com/stream.m3u8',
+            duration=30,  # Intended duration
+            timeout=10
+        )
+        
+        # Bitrate should remain None when detection fails
+        self.assertIsNone(bitrate, "Bitrate should be None when detection fails")
+        self.assertEqual(status, "OK", "Status should be OK even if bitrate is None")
+        
+        # Verify that warning was called
+        mock_logger.warning.assert_called()
+        
+        # Get the warning message
+        warning_call = mock_logger.warning.call_args[0][0]
+        
+        # The warning should contain "analyzed for {elapsed}s" not "analyzed for 30s"
+        # The elapsed time should be very small (< 1s) since ffmpeg returned quickly
+        self.assertIn("analyzed for", warning_call, "Warning should mention analysis time")
+        self.assertNotIn("analyzed for 30", warning_call, "Warning should NOT use intended duration (30s)")
+        self.assertNotIn("analyzed for 30.0", warning_call, "Warning should NOT use intended duration (30.0s)")
+        
+        # Verify that elapsed time is actually small (< 1 second)
+        self.assertLess(elapsed, 1.0, "Elapsed time should be very small when ffmpeg returns quickly")
+
 
 if __name__ == '__main__':
     unittest.main()

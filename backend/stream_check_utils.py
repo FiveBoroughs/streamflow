@@ -197,7 +197,7 @@ def get_stream_bitrate(url: str, duration: int = 30, timeout: int = 30, user_age
 
         # Log if bitrate detection failed
         if bitrate is None:
-            logger.warning(f"  ⚠ Failed to detect bitrate from ffmpeg output (analyzed for {duration}s)")
+            logger.warning(f"  ⚠ Failed to detect bitrate from ffmpeg output (analyzed for {elapsed:.2f}s)")
             logger.debug(f"  → Searched {len(output.splitlines())} lines of output")
 
         logger.debug(f"  → Analysis completed in {elapsed:.2f}s")
