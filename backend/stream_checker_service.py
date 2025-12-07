@@ -1481,15 +1481,28 @@ class StreamCheckerService:
                 try:
                     stream_stats = []
                     for analyzed in analyzed_streams[:10]:  # Limit to first 10
+                        stream_id = analyzed.get('stream_id')
+                        is_dead = stream_id in dead_stream_ids
+                        is_revived = stream_id in revived_stream_ids
+                        
                         stream_stat = {
-                            'stream_id': analyzed.get('stream_id'),
+                            'stream_id': stream_id,
                             'stream_name': analyzed.get('stream_name'),
-                            'score': round(analyzed.get('score', 0), 2),
                             'resolution': analyzed.get('resolution'),
                             'fps': analyzed.get('fps'),
                             'video_codec': analyzed.get('video_codec'),
                             'bitrate_kbps': analyzed.get('bitrate_kbps'),
                         }
+                        
+                        # Mark dead streams as "dead" instead of showing score:0
+                        if is_dead and not force_check:
+                            stream_stat['status'] = 'dead'
+                        elif is_revived:
+                            stream_stat['status'] = 'revived'
+                            stream_stat['score'] = round(analyzed.get('score', 0), 2)
+                        else:
+                            stream_stat['score'] = round(analyzed.get('score', 0), 2)
+                        
                         stream_stats.append({k: v for k, v in stream_stat.items() if v not in [None, "N/A"]})
                     
                     self.changelog.add_entry('stream_check', {
@@ -1836,18 +1849,33 @@ class StreamCheckerService:
                 try:
                     # Prepare stream stats summary for changelog
                     stream_stats = []
-                    for analyzed in analyzed_streams:
+                    for analyzed in analyzed_streams[:10]:  # Limit to top 10
+                        stream_id = analyzed.get('stream_id')
+                        is_dead = stream_id in dead_stream_ids
+                        is_revived = stream_id in revived_stream_ids
+                        
                         stream_stat = {
-                            'stream_id': analyzed.get('stream_id'),
+                            'stream_id': stream_id,
                             'stream_name': analyzed.get('stream_name'),
-                            'score': round(analyzed.get('score', 0), 2),
                             'resolution': analyzed.get('resolution'),
                             'fps': analyzed.get('fps'),
                             'video_codec': analyzed.get('video_codec'),
                             'audio_codec': analyzed.get('audio_codec'),
                             'bitrate_kbps': analyzed.get('bitrate_kbps'),
-                            'status': analyzed.get('status')
                         }
+                        
+                        # Mark dead streams as "dead" instead of showing score:0
+                        if is_dead and not force_check:
+                            stream_stat['status'] = 'dead'
+                        elif is_revived:
+                            stream_stat['status'] = 'revived'
+                            stream_stat['score'] = round(analyzed.get('score', 0), 2)
+                        else:
+                            stream_stat['score'] = round(analyzed.get('score', 0), 2)
+                            # Include original status from analysis if present
+                            if 'status' in analyzed:
+                                stream_stat['analysis_status'] = analyzed.get('status')
+                        
                         # Clean up N/A values for cleaner output
                         stream_stat = {k: v for k, v in stream_stat.items() if v not in [None, "N/A"]}
                         stream_stats.append(stream_stat)
