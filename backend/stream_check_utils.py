@@ -25,6 +25,11 @@ from logging_config import setup_logging
 
 logger = setup_logging(__name__)
 
+# Constants for error detection and logging
+EARLY_EXIT_THRESHOLD = 0.8  # Consider ffmpeg exited early if elapsed < 80% of expected duration
+MAX_ERROR_LINES_TO_LOG = 5  # Maximum number of error lines to log from ffmpeg output
+MAX_DEBUG_LINES_TO_LOG = 10  # Maximum number of debug lines to log from ffmpeg output
+
 
 def check_ffmpeg_installed() -> bool:
     """
@@ -197,7 +202,7 @@ def get_stream_bitrate(url: str, duration: int = 30, timeout: int = 30, user_age
 
         # Check if ffmpeg exited early with errors
         # If elapsed time is much less than duration, ffmpeg likely encountered an error
-        expected_min_time = duration * 0.8  # Allow 20% variance for normal completion
+        expected_min_time = duration * EARLY_EXIT_THRESHOLD
         exited_early = elapsed < expected_min_time
         
         # Log if bitrate detection failed
@@ -229,12 +234,12 @@ def get_stream_bitrate(url: str, duration: int = 30, timeout: int = 30, user_age
                 
                 if error_lines:
                     logger.warning(f"  ⚠ ffmpeg error details:")
-                    for error_line in error_lines[:5]:  # Limit to first 5 error lines
+                    for error_line in error_lines[:MAX_ERROR_LINES_TO_LOG]:
                         logger.warning(f"     {error_line}")
                 else:
                     # Log last few lines of output for debugging
                     logger.debug(f"  → Last lines of ffmpeg output:")
-                    for line in output.splitlines()[-10:]:  # Last 10 lines
+                    for line in output.splitlines()[-MAX_DEBUG_LINES_TO_LOG:]:
                         if line.strip():
                             logger.debug(f"     {line.strip()}")
 
