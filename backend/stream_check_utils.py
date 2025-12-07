@@ -238,22 +238,25 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
             # Example with wrapped codec: "Stream #0:0(und): Video: wrapped_avframe (avc1 / 0x31637661), yuv420p, 1920x1080, 25 fps"
             if 'Stream #' in line and 'Video:' in line:
                 try:
-                    # Extract codec - try to get actual codec from parentheses first
-                    # Pattern: wrapped_avframe (avc1 / 0x...) -> extract "avc1"
-                    parenthesis_codec_match = re.search(r'Video:\s*\w+\s*\(([a-zA-Z0-9]+)', line)
-                    if parenthesis_codec_match:
-                        codec = parenthesis_codec_match.group(1)
-                        codec = _sanitize_codec_name(codec)
-                        if codec != 'N/A':
-                            result_data['video_codec'] = codec
-                            logger.debug(f"  → Detected video codec from parentheses: {result_data['video_codec']}")
-                    
-                    # Fallback: extract first word after "Video:"
-                    if result_data['video_codec'] == 'N/A':
-                        codec_match = re.search(r'Video:\s*(\w+)', line)
-                        if codec_match:
-                            codec = codec_match.group(1)
-                            codec = _sanitize_codec_name(codec)
+                    # Extract codec - first get the primary codec name
+                    codec_match = re.search(r'Video:\s*(\w+)', line)
+                    if codec_match:
+                        primary_codec = codec_match.group(1)
+                        
+                        # For wrapped codecs (e.g., "wrapped_avframe"), extract the actual codec from parentheses
+                        # Pattern: wrapped_avframe (avc1 / 0x...) -> extract "avc1"
+                        if 'wrapped' in primary_codec.lower():
+                            parenthesis_codec_match = re.search(r'\(([a-zA-Z0-9]+)', line)
+                            if parenthesis_codec_match:
+                                codec = parenthesis_codec_match.group(1)
+                                codec = _sanitize_codec_name(codec)
+                                if codec != 'N/A':
+                                    result_data['video_codec'] = codec
+                                    logger.debug(f"  → Detected video codec from wrapped parentheses: {result_data['video_codec']}")
+                        
+                        # For normal codecs, use the primary codec name (ignoring profile in parentheses)
+                        if result_data['video_codec'] == 'N/A':
+                            codec = _sanitize_codec_name(primary_codec)
                             result_data['video_codec'] = codec
                             logger.debug(f"  → Detected video codec: {result_data['video_codec']}")
                     
