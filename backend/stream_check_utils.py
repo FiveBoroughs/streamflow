@@ -257,32 +257,12 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
             # Example with wrapped codec: "Stream #0:0(und): Video: wrapped_avframe (avc1 / 0x31637661), yuv420p, 1920x1080, 25 fps"
             if 'Stream #' in line and 'Video:' in line:
                 try:
-                    # Extract codec - first get the primary codec name
-                    codec_match = re.search(r'Video:\s*(\w+)', line)
-                    if codec_match:
-                        primary_codec = codec_match.group(1)
-                        primary_codec_lower = primary_codec.lower()
-                        
-                        # For wrapped codecs (e.g., "wrapped_avframe"), extract the actual codec from parentheses
-                        # Pattern: wrapped_avframe (avc1 / 0x...) -> extract "avc1"
-                        if 'wrapped' in primary_codec_lower:
-                            # Search for parentheses after "Video:" to avoid matching stream metadata like "(und)"
-                            video_pos = line.find('Video:')
-                            if video_pos >= 0:
-                                after_video = line[video_pos:]
-                                parenthesis_codec_match = re.search(r'\(([a-zA-Z0-9]+)', after_video)
-                                if parenthesis_codec_match:
-                                    codec = parenthesis_codec_match.group(1)
-                                    codec = _sanitize_codec_name(codec)
-                                    if codec != 'N/A':
-                                        result_data['video_codec'] = codec
-                                        logger.debug(f"  → Detected video codec from wrapped parentheses: {result_data['video_codec']}")
-                        
-                        # For normal codecs, use the primary codec name (ignoring profile in parentheses)
-                        if result_data['video_codec'] == 'N/A':
-                            codec = _sanitize_codec_name(primary_codec)
-                            result_data['video_codec'] = codec
-                            logger.debug(f"  → Detected video codec: {result_data['video_codec']}")
+                    # Replace codec parsing logic
+                    codec_match = re.search(r'Video:\s*([a-zA-Z0-9_]+)', line)
+                    video_codec = codec_match.group(1) if codec_match else None
+                    if video_codec:
+                        result_data['video_codec'] = video_codec
+                        logger.debug(f"  → Detected video codec: {result_data['video_codec']}")
                     
                     # Extract resolution
                     res_match = re.search(r'(\d{2,5})x(\d{2,5})', line)
@@ -592,7 +572,8 @@ def analyze_stream(
     """
     logger.info(f"▶ Analyzing stream: {stream_name} (ID: {stream_id})")
 
-    for attempt in range(retries + 1):
+    result = {'status': 'FAILED'}  # Default result in case of failure
+    for attempt in range(retries):
         if attempt > 0:
             logger.info(f"  Retry attempt {attempt}/{retries} for {stream_name}")
             time.sleep(retry_delay)
