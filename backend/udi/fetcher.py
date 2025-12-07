@@ -134,7 +134,8 @@ def _login() -> bool:
         resp = requests.post(
             login_url,
             headers={"Content-Type": "application/json"},
-            json={"username": username, "password": password}
+            json={"username": username, "password": password},
+            timeout=10
         )
         resp.raise_for_status()
         data = resp.json()
@@ -241,7 +242,7 @@ class UDIFetcher:
         try:
             start_time = time.time()
             log_api_request(logger, "GET", url)
-            resp = requests.get(url, headers=_get_auth_headers())
+            resp = requests.get(url, headers=_get_auth_headers(), timeout=30)
             elapsed = time.time() - start_time
             log_api_response(logger, "GET", url, resp.status_code, elapsed)
             
@@ -251,7 +252,7 @@ class UDIFetcher:
             if e.response.status_code == 401:
                 if _refresh_token():
                     logger.info("Retrying request with new token...")
-                    resp = requests.get(url, headers=_get_auth_headers())
+                    resp = requests.get(url, headers=_get_auth_headers(), timeout=30)
                     resp.raise_for_status()
                     return resp.json()
             logger.error(f"Error fetching {url}: {e}")

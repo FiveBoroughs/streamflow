@@ -102,7 +102,8 @@ def login() -> bool:
         resp = requests.post(
             login_url,
             headers={"Content-Type": "application/json"},
-            json={"username": username, "password": password}
+            json={"username": username, "password": password},
+            timeout=10
         )
         resp.raise_for_status()
         data = resp.json()

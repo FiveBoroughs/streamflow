@@ -166,7 +166,8 @@ def login() -> bool:
         resp = requests.post(
             login_url,
             headers={"Content-Type": "application/json"},
-            json={"username": username, "password": password}
+            json={"username": username, "password": password},
+            timeout=10
         )
         elapsed = time.time() - start_time
         log_api_response(logger, "POST", login_url, resp.status_code, elapsed)
@@ -304,7 +305,7 @@ def fetch_data_from_url(url: str) -> Optional[Any]:
     
     try:
         log_api_request(logger, "GET", url)
-        resp = requests.get(url, headers=_get_auth_headers())
+        resp = requests.get(url, headers=_get_auth_headers(), timeout=30)
         elapsed = time.time() - start_time
         log_api_response(logger, "GET", url, resp.status_code, elapsed)
         
@@ -326,7 +327,7 @@ def fetch_data_from_url(url: str) -> Optional[Any]:
                 logger.info("Retrying request with new token...")
                 retry_start = time.time()
                 log_api_request(logger, "GET", url)
-                resp = requests.get(url, headers=_get_auth_headers())
+                resp = requests.get(url, headers=_get_auth_headers(), timeout=30)
                 retry_elapsed = time.time() - retry_start
                 log_api_response(logger, "GET", url, resp.status_code, retry_elapsed)
                 
@@ -365,7 +366,7 @@ def patch_request(url: str, payload: Dict[str, Any]) -> requests.Response:
     """
     try:
         resp = requests.patch(
-            url, json=payload, headers=_get_auth_headers()
+            url, json=payload, headers=_get_auth_headers(), timeout=30
         )
         resp.raise_for_status()
         return resp
@@ -374,7 +375,7 @@ def patch_request(url: str, payload: Dict[str, Any]) -> requests.Response:
             if _refresh_token():
                 logger.info("Retrying PATCH request with new token...")
                 resp = requests.patch(
-                    url, json=payload, headers=_get_auth_headers()
+                    url, json=payload, headers=_get_auth_headers(), timeout=30
                 )
                 resp.raise_for_status()
                 return resp
@@ -409,7 +410,7 @@ def post_request(url: str, payload: Dict[str, Any]) -> requests.Response:
     """
     try:
         resp = requests.post(
-            url, json=payload, headers=_get_auth_headers()
+            url, json=payload, headers=_get_auth_headers(), timeout=30
         )
         resp.raise_for_status()
         return resp
@@ -418,7 +419,7 @@ def post_request(url: str, payload: Dict[str, Any]) -> requests.Response:
             if _refresh_token():
                 logger.info("Retrying POST request with new token...")
                 resp = requests.post(
-                    url, json=payload, headers=_get_auth_headers()
+                    url, json=payload, headers=_get_auth_headers(), timeout=30
                 )
                 resp.raise_for_status()
                 return resp
