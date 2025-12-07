@@ -149,24 +149,19 @@ class TestGetStreamBitrate(unittest.TestCase):
 class TestAnalyzeStream(unittest.TestCase):
     """Test complete stream analysis."""
     
-    @patch('stream_check_utils.get_stream_bitrate')
-    @patch('stream_check_utils.get_stream_info')
-    def test_successful_analysis(self, mock_get_info, mock_get_bitrate):
+    @patch('stream_check_utils.get_stream_info_and_bitrate')
+    def test_successful_analysis(self, mock_get_info_and_bitrate):
         """Test successful complete stream analysis."""
-        # Mock stream info
-        mock_video_info = {
-            'codec_name': 'h264',
-            'width': 1920,
-            'height': 1080,
-            'avg_frame_rate': '30/1'
+        # Mock the combined function
+        mock_get_info_and_bitrate.return_value = {
+            'video_codec': 'h264',
+            'audio_codec': 'aac',
+            'resolution': '1920x1080',
+            'fps': 30.0,
+            'bitrate_kbps': 5000.0,
+            'status': 'OK',
+            'elapsed_time': 30.5
         }
-        mock_audio_info = {
-            'codec_name': 'aac'
-        }
-        mock_get_info.return_value = (mock_video_info, mock_audio_info)
-        
-        # Mock bitrate
-        mock_get_bitrate.return_value = (5000.0, "OK", 30.5)
         
         result = analyze_stream(
             stream_url='http://test.stream',
@@ -188,12 +183,18 @@ class TestAnalyzeStream(unittest.TestCase):
         self.assertEqual(result['bitrate_kbps'], 5000.0)
         self.assertEqual(result['status'], 'OK')
     
-    @patch('stream_check_utils.get_stream_bitrate')
-    @patch('stream_check_utils.get_stream_info')
-    def test_no_video_info(self, mock_get_info, mock_get_bitrate):
+    @patch('stream_check_utils.get_stream_info_and_bitrate')
+    def test_no_video_info(self, mock_get_info_and_bitrate):
         """Test handling when no video info is available."""
-        mock_get_info.return_value = (None, None)
-        mock_get_bitrate.return_value = (None, "Error", 0)
+        mock_get_info_and_bitrate.return_value = {
+            'video_codec': 'N/A',
+            'audio_codec': 'N/A',
+            'resolution': '0x0',
+            'fps': 0,
+            'bitrate_kbps': None,
+            'status': 'Error',
+            'elapsed_time': 0
+        }
         
         result = analyze_stream(
             stream_url='http://test.stream',
@@ -206,23 +207,30 @@ class TestAnalyzeStream(unittest.TestCase):
         self.assertEqual(result['resolution'], '0x0')
         self.assertEqual(result['fps'], 0)
     
-    @patch('stream_check_utils.get_stream_bitrate')
-    @patch('stream_check_utils.get_stream_info')
+    @patch('stream_check_utils.get_stream_info_and_bitrate')
     @patch('time.sleep')
-    def test_retry_on_failure(self, mock_sleep, mock_get_info, mock_get_bitrate):
+    def test_retry_on_failure(self, mock_sleep, mock_get_info_and_bitrate):
         """Test retry logic when stream analysis fails."""
-        mock_video_info = {
-            'codec_name': 'h264',
-            'width': 1920,
-            'height': 1080,
-            'avg_frame_rate': '30/1'
-        }
-        mock_get_info.return_value = (mock_video_info, None)
-        
         # First call fails, second succeeds
-        mock_get_bitrate.side_effect = [
-            (None, "Timeout", 40),
-            (5000.0, "OK", 30.5)
+        mock_get_info_and_bitrate.side_effect = [
+            {
+                'video_codec': 'h264',
+                'audio_codec': 'N/A',
+                'resolution': '1920x1080',
+                'fps': 30.0,
+                'bitrate_kbps': None,
+                'status': 'Timeout',
+                'elapsed_time': 40
+            },
+            {
+                'video_codec': 'h264',
+                'audio_codec': 'N/A',
+                'resolution': '1920x1080',
+                'fps': 30.0,
+                'bitrate_kbps': 5000.0,
+                'status': 'OK',
+                'elapsed_time': 30.5
+            }
         ]
         
         result = analyze_stream(
@@ -234,7 +242,7 @@ class TestAnalyzeStream(unittest.TestCase):
         )
         
         # Should have retried
-        self.assertEqual(mock_get_bitrate.call_count, 2)
+        self.assertEqual(mock_get_info_and_bitrate.call_count, 2)
         self.assertEqual(mock_sleep.call_count, 1)
         
         # Final result should be successful
