@@ -1337,7 +1337,7 @@ class StreamCheckerService:
                 completed_count = 0
                 
                 # Get stagger delay configuration
-                stagger_delay = concurrent_config.get('stagger_delay', 1.0)
+                stagger_delay = self.config.get('concurrent_streams.stagger_delay', 1.0)
                 
                 while pending_streams or task_futures:
                     # Try to dispatch new tasks within limits
