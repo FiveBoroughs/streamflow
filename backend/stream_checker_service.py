@@ -1426,12 +1426,25 @@ class StreamCheckerService:
                     is_dead = self._is_stream_dead(analyzed)
                     was_dead = self.dead_streams_tracker.is_dead(stream_url)
                     
-                    if is_dead or was_dead:
-                        if was_dead:
+                    # Handle dead/alive state transitions (same logic as newly-checked streams)
+                    if is_dead and not was_dead:
+                        # Newly detected as dead
+                        if self.dead_streams_tracker.mark_as_dead(stream_url, stream['id'], stream_name):
                             dead_stream_ids.add(stream['id'])
-                        elif not was_dead:
-                            if self.dead_streams_tracker.mark_as_dead(stream_url, stream['id'], stream_name):
-                                dead_stream_ids.add(stream['id'])
+                            logger.warning(f"Cached stream {stream['id']} detected as DEAD: {stream_name}")
+                        else:
+                            logger.error(f"Failed to mark cached stream {stream['id']} as dead in tracker")
+                    elif not is_dead and was_dead:
+                        # Stream was revived!
+                        if self.dead_streams_tracker.mark_as_alive(stream_url):
+                            revived_stream_ids.append(stream['id'])
+                            logger.info(f"Cached stream {stream['id']} REVIVED: {stream_name}")
+                        else:
+                            logger.error(f"Failed to mark cached stream {stream['id']} as alive")
+                    elif is_dead and was_dead:
+                        # Stream remains dead (already marked)
+                        logger.debug(f"Cached stream {stream['id']} remains dead (already marked)")
+                        dead_stream_ids.add(stream['id'])
                     
                     score = self._calculate_stream_score(analyzed)
                     analyzed['score'] = score
@@ -1745,26 +1758,31 @@ class StreamCheckerService:
                         'status': 'OK'  # Assume OK for previously checked streams
                     }
                     
-                    # Check if this cached stream is dead and add to dead_stream_ids
+                    # Check if this cached stream is dead and handle state transitions
                     stream_url = stream.get('url', '')
                     stream_name = stream.get('name', 'Unknown')
                     is_dead = self._is_stream_dead(analyzed)
                     was_dead = self.dead_streams_tracker.is_dead(stream_url)
                     
-                    # If stream is dead (either was already marked or is detected as dead), track it
-                    if is_dead or was_dead:
-                        # Only add to dead_stream_ids if either:
-                        # 1. Stream was already marked (safe to remove)
-                        # 2. Stream is newly detected as dead AND marking succeeds
-                        if was_dead:
+                    # Handle dead/alive state transitions (same logic as newly-checked streams)
+                    if is_dead and not was_dead:
+                        # Newly detected as dead
+                        if self.dead_streams_tracker.mark_as_dead(stream_url, stream['id'], stream_name):
                             dead_stream_ids.add(stream['id'])
-                        elif not was_dead:
-                            # If it wasn't marked but is dead, mark it now
-                            if self.dead_streams_tracker.mark_as_dead(stream_url, stream['id'], stream_name):
-                                dead_stream_ids.add(stream['id'])
-                                logger.warning(f"Cached stream {stream['id']} detected as DEAD: {stream_name}")
-                            else:
-                                logger.error(f"Failed to mark cached stream {stream['id']} as DEAD, will not remove from channel")
+                            logger.warning(f"Cached stream {stream['id']} detected as DEAD: {stream_name}")
+                        else:
+                            logger.error(f"Failed to mark cached stream {stream['id']} as DEAD, will not remove from channel")
+                    elif not is_dead and was_dead:
+                        # Stream was revived!
+                        if self.dead_streams_tracker.mark_as_alive(stream_url):
+                            revived_stream_ids.append(stream['id'])
+                            logger.info(f"Cached stream {stream['id']} REVIVED: {stream_name}")
+                        else:
+                            logger.error(f"Failed to mark cached stream {stream['id']} as alive")
+                    elif is_dead and was_dead:
+                        # Stream remains dead (already marked)
+                        logger.debug(f"Cached stream {stream['id']} remains dead (already marked)")
+                        dead_stream_ids.add(stream['id'])
                     
                     # Recalculate score from cached data
                     score = self._calculate_stream_score(analyzed)
