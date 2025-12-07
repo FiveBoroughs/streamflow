@@ -31,6 +31,39 @@ MAX_ERROR_LINES_TO_LOG = 5  # Maximum number of error lines to log from ffmpeg o
 MAX_DEBUG_LINES_TO_LOG = 10  # Maximum number of debug lines to log from ffmpeg output
 
 
+def _sanitize_codec_name(codec: str) -> str:
+    """
+    Sanitize codec name to filter out invalid or placeholder codec names.
+    
+    ffmpeg sometimes outputs codec names like 'wrapped_avframe' when it cannot
+    properly identify the codec (e.g., for hardware-accelerated streams). This
+    function filters out such values and returns 'N/A' for invalid codecs.
+    
+    Args:
+        codec: The raw codec name extracted from ffmpeg output
+        
+    Returns:
+        Sanitized codec name, or 'N/A' if invalid
+    """
+    if not codec:
+        return 'N/A'
+    
+    # List of invalid/placeholder codec names to filter out
+    invalid_codecs = {
+        'wrapped_avframe',  # Hardware acceleration placeholder
+        'none',             # No codec
+        'unknown',          # Unknown codec
+        'null',             # Null codec
+    }
+    
+    codec_lower = codec.lower()
+    if codec_lower in invalid_codecs:
+        logger.debug(f"  → Filtered out invalid codec: {codec}")
+        return 'N/A'
+    
+    return codec
+
+
 def check_ffmpeg_installed() -> bool:
     """
     Check if ffmpeg and ffprobe are installed and available.
@@ -202,13 +235,27 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
         for line in output.splitlines():
             # Extract video codec, resolution, and FPS from Stream mapping line
             # Example: "Stream #0:0: Video: h264, yuv420p, 1920x1080, 25 fps"
+            # Example with wrapped codec: "Stream #0:0(und): Video: wrapped_avframe (avc1 / 0x31637661), yuv420p, 1920x1080, 25 fps"
             if 'Stream #' in line and 'Video:' in line:
                 try:
-                    # Extract codec
-                    codec_match = re.search(r'Video:\s*(\w+)', line)
-                    if codec_match:
-                        result_data['video_codec'] = codec_match.group(1)
-                        logger.debug(f"  → Detected video codec: {result_data['video_codec']}")
+                    # Extract codec - try to get actual codec from parentheses first
+                    # Pattern: wrapped_avframe (avc1 / 0x...) -> extract "avc1"
+                    parenthesis_codec_match = re.search(r'Video:\s*\w+\s*\(([a-zA-Z0-9]+)', line)
+                    if parenthesis_codec_match:
+                        codec = parenthesis_codec_match.group(1)
+                        codec = _sanitize_codec_name(codec)
+                        if codec != 'N/A':
+                            result_data['video_codec'] = codec
+                            logger.debug(f"  → Detected video codec from parentheses: {result_data['video_codec']}")
+                    
+                    # Fallback: extract first word after "Video:"
+                    if result_data['video_codec'] == 'N/A':
+                        codec_match = re.search(r'Video:\s*(\w+)', line)
+                        if codec_match:
+                            codec = codec_match.group(1)
+                            codec = _sanitize_codec_name(codec)
+                            result_data['video_codec'] = codec
+                            logger.debug(f"  → Detected video codec: {result_data['video_codec']}")
                     
                     # Extract resolution
                     res_match = re.search(r'(\d{2,5})x(\d{2,5})', line)
@@ -231,7 +278,9 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
                 try:
                     codec_match = re.search(r'Audio:\s*(\w+)', line)
                     if codec_match:
-                        result_data['audio_codec'] = codec_match.group(1)
+                        codec = codec_match.group(1)
+                        codec = _sanitize_codec_name(codec)
+                        result_data['audio_codec'] = codec
                         logger.debug(f"  → Detected audio codec: {result_data['audio_codec']}")
                 except (ValueError, AttributeError) as e:
                     logger.debug(f"  → Error parsing audio stream line: {e}")

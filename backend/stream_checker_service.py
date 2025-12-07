@@ -1312,8 +1312,8 @@ class StreamCheckerService:
                 completed_count[0] = completed
                 stream_name = result.get('stream_name', 'Unknown')
                 
-                # Update stream stats
-                self._update_stream_stats(result)
+                # DO NOT update stream stats here - wait until all checks complete
+                # This prevents race conditions with concurrent checks
                 
                 # Update progress
                 self.progress.update(
@@ -1353,8 +1353,13 @@ class StreamCheckerService:
                     user_agent=analysis_params.get('user_agent', 'VLC/3.0.14')
                 )
                 
-                # Process results
+                # Process results - ALL checks are complete at this point
+                # This is the correct place to update stats and track dead streams
                 for analyzed in results:
+                    # Update stream stats on Dispatcharr with ffmpeg-extracted data
+                    # Now that all parallel checks are complete, we can safely push the info
+                    self._update_stream_stats(analyzed)
+                    
                     # Check if stream is dead
                     is_dead = self._is_stream_dead(analyzed)
                     stream_id = analyzed.get('stream_id')
