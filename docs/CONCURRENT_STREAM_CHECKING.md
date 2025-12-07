@@ -150,15 +150,20 @@ DISPATCHARR_PASS=...          # Dispatcharr password
 1. **Channel Queued**: A channel is added to the checking queue
 2. **Fetch Streams**: All streams for the channel are fetched
 3. **Group by Account**: Streams are grouped by their M3U account
-4. **Check Limits**: System checks:
-   - Global concurrent limit
-   - Per-account concurrent limits (from `max_streams`)
-5. **Dispatch Tasks**: Tasks are dispatched as limits allow
-6. **Wait for Completion**: Main service waits for all tasks to complete
-7. **Aggregate Results**: Stream analysis results are collected
-8. **Calculate Scores**: Quality scores are calculated for each stream
-9. **Reorder Streams**: Streams are sorted by score (highest first)
-10. **Update Channel**: Channel is updated with reordered stream list
+4. **Dispatch Loop**: For each stream to check:
+   - **Check Limits**: System checks if task can start based on:
+     - Global concurrent limit
+     - Per-account concurrent limits (from `max_streams`)
+   - **Dispatch Task**: Only if limits allow, task is dispatched to Celery
+   - **Register Task**: Task is registered immediately after dispatch
+   - **Stagger**: Optional delay before dispatching next task (prevents simultaneous starts)
+5. **Wait for Completion**: Main service waits for all tasks to complete
+6. **Aggregate Results**: Stream analysis results are collected
+7. **Calculate Scores**: Quality scores are calculated for each stream
+8. **Reorder Streams**: Streams are sorted by score (highest first)
+9. **Update Channel**: Channel is updated with reordered stream list
+
+**Note**: The system checks limits **before** dispatching tasks, preventing unnecessary task creation and revocation. This approach eliminates the "Tasks flagged as revoked" messages that occurred in earlier versions.
 
 ### Concurrency Tracking
 

@@ -1363,7 +1363,9 @@ class StreamCheckerService:
                             }
                         )
                         
-                        # Atomically check limits and register if allowed
+                        # Atomically check limits and register the task
+                        # This prevents race conditions where multiple tasks could pass can_start_task
+                        # before any of them register their start
                         if concurrency_mgr.can_start_task_and_register(
                             task.id,
                             m3u_account_id,
@@ -1382,7 +1384,8 @@ class StreamCheckerService:
                                 time.sleep(stagger_delay)
                         else:
                             # Task was dispatched but couldn't be registered due to limits
-                            # Revoke the task
+                            # Revoke the task to prevent it from running
+                            logger.debug(f"Revoking task {task.id} - concurrency limit reached")
                             task.revoke()
                             # Can't dispatch more right now due to limits
                             break

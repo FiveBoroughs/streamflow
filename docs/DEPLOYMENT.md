@@ -81,6 +81,24 @@ The All-In-One application uses a single Docker container that includes:
 - **Configuration**: JSON files in `/app/data` (mounted volume)
 - **Process Manager**: Supervisor manages all services within the container
 
+### Startup Sequence
+
+The container uses a carefully orchestrated startup sequence to ensure all services are ready before dependent services start:
+
+1. **Redis Server** - Started first as the foundation for all other services
+2. **Redis Health Check** - Validates Redis is ready to accept connections
+3. **Celery Worker** - Started after Redis is confirmed healthy
+4. **Celery Health Check** - Validates Celery worker is ready to process tasks
+5. **Flask API** - Started last, after all dependencies are confirmed healthy
+
+This sequencing prevents:
+- Tasks being dispatched before workers are ready
+- API endpoints failing due to missing Redis connection
+- Race conditions during container startup
+- Unnecessary task revocations
+
+All health checks retry for up to 30 seconds with 1-second intervals, ensuring services have adequate time to initialize.
+
 ### Logging
 
 All application logs are forwarded to Docker's stdout/stderr and can be viewed using:
