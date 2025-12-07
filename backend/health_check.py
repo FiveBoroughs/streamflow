@@ -28,16 +28,18 @@ def check_redis_health(host='localhost', port=6379, db=0, timeout=5, max_retries
     Returns:
         bool: True if Redis is healthy, False otherwise
     """
+    # Create Redis client once, reuse for all retry attempts
+    client = redis.Redis(
+        host=host,
+        port=port,
+        db=db,
+        socket_timeout=timeout,
+        socket_connect_timeout=timeout,
+        decode_responses=True
+    )
+    
     for attempt in range(1, max_retries + 1):
         try:
-            client = redis.Redis(
-                host=host,
-                port=port,
-                db=db,
-                socket_timeout=timeout,
-                socket_connect_timeout=timeout,
-                decode_responses=True
-            )
             # Test connection
             client.ping()
             logger.info(f"✓ Redis is healthy and ready (attempt {attempt}/{max_retries})")
@@ -78,7 +80,8 @@ def check_celery_health(broker_url, max_retries=30):
             inspect = app.control.inspect(timeout=2.0)
             active = inspect.active()
             
-            if active and len(active) > 0:
+            # Check if active is not None and has workers
+            if active is not None and len(active) > 0:
                 logger.info(
                     f"✓ Celery worker is healthy with {len(active)} worker(s) "
                     f"(attempt {attempt}/{max_retries})"

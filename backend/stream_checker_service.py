@@ -1346,16 +1346,6 @@ class StreamCheckerService:
                         m3u_account_id = stream.get('m3u_account')
                         account_limit = account_limits.get(m3u_account_id, 0)
                         
-                        # Check if we can start a task BEFORE dispatching it
-                        # This prevents unnecessary task creation and revocation
-                        if not concurrency_mgr.can_start_task(
-                            m3u_account_id,
-                            account_limit,
-                            global_limit
-                        ):
-                            # Can't dispatch more right now due to limits
-                            break
-                        
                         # Dispatch the task - it will return immediately
                         task = check_stream_task.apply_async(
                             kwargs={
@@ -1373,11 +1363,15 @@ class StreamCheckerService:
                             }
                         )
                         
-                        # Register the task after successful dispatch
-                        if concurrency_mgr.register_task_start(
+                        # Atomically check limits and register the task
+                        # This prevents race conditions where multiple tasks could pass can_start_task
+                        # before any of them register their start
+                        if concurrency_mgr.can_start_task_and_register(
                             task.id,
                             m3u_account_id,
-                            stream['id']
+                            stream['id'],
+                            account_limit,
+                            global_limit
                         ):
                             task_futures.append((task, stream, m3u_account_id))
                             pending_streams.remove(stream)
@@ -1389,10 +1383,11 @@ class StreamCheckerService:
                                 logger.debug(f"Staggering next task dispatch by {stagger_delay}s")
                                 time.sleep(stagger_delay)
                         else:
-                            # Failed to register task (rare race condition)
-                            # Revoke the task and stop dispatching
-                            logger.warning(f"Failed to register task {task.id}, revoking")
+                            # Task was dispatched but couldn't be registered due to limits
+                            # Revoke the task to prevent it from running
+                            logger.debug(f"Revoking task {task.id} - concurrency limit reached")
                             task.revoke()
+                            # Can't dispatch more right now due to limits
                             break
                     
                     if streams_dispatched > 0:
