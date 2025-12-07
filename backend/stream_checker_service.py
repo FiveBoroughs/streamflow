@@ -1367,14 +1367,25 @@ class StreamCheckerService:
                     stream_name = analyzed.get('stream_name', 'Unknown')
                     was_dead = self.dead_streams_tracker.is_dead(stream_url)
                     
+                    # Log dead stream detection for debugging
+                    if is_dead:
+                        logger.info(f"Stream {stream_id} dead check: is_dead={is_dead}, was_dead={was_dead}, resolution={analyzed.get('resolution')}, bitrate={analyzed.get('bitrate_kbps')}")
+                    
                     if is_dead and not was_dead:
                         if self.dead_streams_tracker.mark_as_dead(stream_url, stream_id, stream_name):
                             dead_stream_ids.append(stream_id)
                             logger.warning(f"Stream {stream_id} detected as DEAD: {stream_name}")
+                        else:
+                            logger.error(f"Failed to mark stream {stream_id} as dead in tracker")
                     elif not is_dead and was_dead:
                         if self.dead_streams_tracker.mark_as_alive(stream_url):
                             revived_stream_ids.append(stream_id)
                             logger.info(f"Stream {stream_id} REVIVED: {stream_name}")
+                    elif is_dead and was_dead:
+                        logger.debug(f"Stream {stream_id} remains dead (already marked)")
+                        # Still add to dead_stream_ids for proper tracking
+                        if stream_id not in dead_stream_ids:
+                            dead_stream_ids.append(stream_id)
                     
                     # Calculate score
                     score = self._calculate_stream_score(analyzed)
