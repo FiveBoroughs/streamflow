@@ -4,5 +4,3 @@ pandas
 flask
 flask-cors
 croniter
-celery
-redis

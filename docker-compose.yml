@@ -11,9 +11,6 @@ services:
       - API_HOST=0.0.0.0
       - API_PORT=5000
       - CONFIG_DIR=/app/data
-      - REDIS_HOST=localhost
-      - REDIS_PORT=6379
-      - REDIS_DB=0
       # Alternative: Specify environment variables directly instead of using .env file
       # Uncomment the lines below and comment out 'env_file' section to use env vars only
       # - DISPATCHARR_BASE_URL=http://your-dispatcharr-instance.com:9191

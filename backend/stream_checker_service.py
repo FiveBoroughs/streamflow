@@ -1213,11 +1213,10 @@ class StreamCheckerService:
             return self._check_channel_sequential(channel_id)
     
     def _check_channel_concurrent(self, channel_id: int):
-        """Check and reorder streams for a specific channel using concurrent Celery tasks."""
+        """Check and reorder streams for a specific channel using parallel thread pool."""
         import time as time_module
-        from celery import group
-        from celery_tasks import check_stream_task
-        from concurrency_manager import get_concurrency_manager
+        from stream_check_utils import analyze_stream
+        from parallel_checker import get_parallel_checker
         
         start_time = time_module.time()
         log_function_call(logger, "_check_channel_concurrent", channel_id=channel_id)
@@ -1225,7 +1224,7 @@ class StreamCheckerService:
         log_state_change(logger, f"channel_{channel_id}", "queued", "checking")
         self.checking = True
         logger.info(f"=" * 80)
-        logger.info(f"Checking channel {channel_id} (concurrent mode)")
+        logger.info(f"Checking channel {channel_id} (parallel mode)")
         logger.info(f"=" * 80)
         
         try:
@@ -1293,171 +1292,95 @@ class StreamCheckerService:
                 else:
                     logger.info(f"All {len(streams)} streams have been recently checked, using cached scores")
             
-            # Get configuration for analysis and concurrency
+            # Get configuration for analysis
             analysis_params = self.config.get('stream_analysis', {})
             global_limit = self.config.get('concurrent_streams.global_limit', 10)
-            concurrency_mgr = get_concurrency_manager()
+            stagger_delay = self.config.get('concurrent_streams.stagger_delay', 1.0)
             
-            # Prepare tasks for concurrent execution with concurrency control
+            # Initialize parallel checker
+            parallel_checker = get_parallel_checker(max_workers=global_limit)
+            
+            # Prepare for concurrent execution
             analyzed_streams = []
             dead_stream_ids = []
             revived_stream_ids = []
             total_streams = len(streams_to_check)
+            completed_count = [0]  # Use list for mutable closure
+            
+            # Progress callback for parallel checker
+            def progress_callback(completed, total, result):
+                completed_count[0] = completed
+                stream_name = result.get('stream_name', 'Unknown')
+                
+                # Update stream stats
+                self._update_stream_stats(result)
+                
+                # Update progress
+                self.progress.update(
+                    channel_id=channel_id,
+                    channel_name=channel_name,
+                    current=completed,
+                    total=total,
+                    current_stream=stream_name,
+                    status='analyzing',
+                    step='Analyzing streams in parallel',
+                    step_detail=f'Completed {completed}/{total}'
+                )
             
             if streams_to_check:
-                logger.info(f"Dispatching {total_streams} streams for concurrent checking (global limit: {global_limit})")
+                logger.info(f"Starting parallel analysis of {total_streams} streams with {global_limit} workers")
                 
-                # Group streams by M3U account for proper concurrency limiting
-                streams_by_account = {}
-                for stream in streams_to_check:
-                    m3u_account_id = stream.get('m3u_account')
-                    if m3u_account_id not in streams_by_account:
-                        streams_by_account[m3u_account_id] = []
-                    streams_by_account[m3u_account_id].append(stream)
+                self.progress.update(
+                    channel_id=channel_id,
+                    channel_name=channel_name,
+                    current=0,
+                    total=total_streams,
+                    status='analyzing',
+                    step='Analyzing streams in parallel',
+                    step_detail=f'Starting {global_limit} parallel workers'
+                )
                 
-                # Get M3U account limits
-                account_limits = {}
-                for m3u_account_id in streams_by_account.keys():
-                    if m3u_account_id is not None:
-                        try:
-                            account_data = udi.get_m3u_account_by_id(m3u_account_id)
-                            if account_data:
-                                account_limits[m3u_account_id] = account_data.get('max_streams', 0)
-                            else:
-                                account_limits[m3u_account_id] = 0
-                        except Exception as e:
-                            logger.warning(f"Could not fetch limit for M3U account {m3u_account_id}: {e}")
-                            account_limits[m3u_account_id] = 0
-                    else:
-                        account_limits[m3u_account_id] = 0
+                # Check streams in parallel
+                results = parallel_checker.check_streams_parallel(
+                    streams=streams_to_check,
+                    check_function=analyze_stream,
+                    progress_callback=progress_callback,
+                    stagger_delay=stagger_delay,
+                    ffmpeg_duration=analysis_params.get('ffmpeg_duration', 30),
+                    timeout=analysis_params.get('timeout', 30),
+                    retries=analysis_params.get('retries', 1),
+                    retry_delay=analysis_params.get('retry_delay', 10),
+                    user_agent=analysis_params.get('user_agent', 'VLC/3.0.14')
+                )
                 
-                # Dispatch tasks with concurrency control
-                task_futures = []
-                pending_streams = list(streams_to_check)
-                completed_count = 0
-                
-                # Get stagger delay configuration
-                stagger_delay = self.config.get('concurrent_streams.stagger_delay', 1.0)
-                
-                while pending_streams or task_futures:
-                    # Try to dispatch new tasks within limits
-                    streams_dispatched = 0
-                    for stream in list(pending_streams):
-                        m3u_account_id = stream.get('m3u_account')
-                        account_limit = account_limits.get(m3u_account_id, 0)
-                        
-                        # Dispatch the task - it will return immediately
-                        task = check_stream_task.apply_async(
-                            kwargs={
-                                'stream_id': stream['id'],
-                                'stream_url': stream.get('url', ''),
-                                'stream_name': stream.get('name', 'Unknown'),
-                                'channel_id': channel_id,
-                                'channel_name': channel_name,
-                                'm3u_account_id': m3u_account_id,
-                                'ffmpeg_duration': analysis_params.get('ffmpeg_duration', 30),
-                                'timeout': analysis_params.get('timeout', 30),
-                                'retries': analysis_params.get('retries', 1),
-                                'retry_delay': analysis_params.get('retry_delay', 10),
-                                'user_agent': analysis_params.get('user_agent', 'VLC/3.0.14')
-                            }
-                        )
-                        
-                        # Atomically check limits and register the task
-                        # This prevents race conditions where multiple tasks could pass can_start_task
-                        # before any of them register their start
-                        if concurrency_mgr.can_start_task_and_register(
-                            task.id,
-                            m3u_account_id,
-                            stream['id'],
-                            account_limit,
-                            global_limit
-                        ):
-                            task_futures.append((task, stream, m3u_account_id))
-                            pending_streams.remove(stream)
-                            streams_dispatched += 1
-                            
-                            # Add stagger delay after successfully dispatching a task
-                            # This prevents all workers from starting simultaneously
-                            if stagger_delay > 0 and pending_streams:
-                                logger.debug(f"Staggering next task dispatch by {stagger_delay}s")
-                                time.sleep(stagger_delay)
-                        else:
-                            # Task was dispatched but couldn't be registered due to limits
-                            # Revoke the task to prevent it from running
-                            logger.debug(f"Revoking task {task.id} - concurrency limit reached")
-                            task.revoke()
-                            # Can't dispatch more right now due to limits
-                            break
+                # Process results
+                for analyzed in results:
+                    # Check if stream is dead
+                    is_dead = self._is_stream_dead(analyzed)
+                    stream_id = analyzed.get('stream_id')
+                    stream_url = analyzed.get('stream_url', '')
+                    stream_name = analyzed.get('stream_name', 'Unknown')
+                    was_dead = self.dead_streams_tracker.is_dead(stream_url)
                     
-                    if streams_dispatched > 0:
-                        logger.debug(f"Dispatched {streams_dispatched} tasks, {len(pending_streams)} pending, {len(task_futures)} running")
+                    if is_dead and not was_dead:
+                        if self.dead_streams_tracker.mark_as_dead(stream_url, stream_id, stream_name):
+                            dead_stream_ids.append(stream_id)
+                            logger.warning(f"Stream {stream_id} detected as DEAD: {stream_name}")
+                    elif not is_dead and was_dead:
+                        if self.dead_streams_tracker.mark_as_alive(stream_url):
+                            revived_stream_ids.append(stream_id)
+                            logger.info(f"Stream {stream_id} REVIVED: {stream_name}")
                     
-                    # Check for completed tasks
-                    for task, stream, m3u_account_id in list(task_futures):
-                        if task.ready():
-                            try:
-                                # Get task result
-                                analyzed = task.get(timeout=1)
-                                
-                                # Register task completion
-                                concurrency_mgr.register_task_end(task.id)
-                                
-                                # Update stream stats
-                                self._update_stream_stats(analyzed)
-                                
-                                # Check if stream is dead
-                                is_dead = self._is_stream_dead(analyzed)
-                                stream_url = stream.get('url', '')
-                                stream_name = stream.get('name', 'Unknown')
-                                was_dead = self.dead_streams_tracker.is_dead(stream_url)
-                                
-                                if is_dead and not was_dead:
-                                    if self.dead_streams_tracker.mark_as_dead(stream_url, stream['id'], stream_name):
-                                        dead_stream_ids.append(stream['id'])
-                                        logger.warning(f"Stream {stream['id']} detected as DEAD: {stream_name}")
-                                    else:
-                                        logger.error(f"Failed to mark stream {stream['id']} as DEAD")
-                                elif not is_dead and was_dead:
-                                    if self.dead_streams_tracker.mark_as_alive(stream_url):
-                                        revived_stream_ids.append(stream['id'])
-                                        logger.info(f"Stream {stream['id']} REVIVED: {stream_name}")
-                                    else:
-                                        logger.error(f"Failed to mark stream {stream['id']} as alive")
-                                
-                                # Calculate score
-                                score = self._calculate_stream_score(analyzed)
-                                analyzed['score'] = score
-                                analyzed_streams.append(analyzed)
-                                
-                                completed_count += 1
-                                
-                                # Update progress
-                                self.progress.update(
-                                    channel_id=channel_id,
-                                    channel_name=channel_name,
-                                    current=completed_count,
-                                    total=total_streams,
-                                    current_stream=stream_name,
-                                    status='analyzing',
-                                    step='Analyzing streams concurrently',
-                                    step_detail=f'Completed {completed_count}/{total_streams}'
-                                )
-                                
-                            except Exception as e:
-                                logger.error(f"Task failed for stream {stream['id']}: {e}")
-                                concurrency_mgr.register_task_end(task.id)
-                            
-                            # Remove from futures list
-                            task_futures.remove((task, stream, m3u_account_id))
-                    
-                    # Small sleep to avoid busy waiting
-                    if pending_streams or task_futures:
-                        time_module.sleep(0.1)
+                    # Calculate score
+                    score = self._calculate_stream_score(analyzed)
+                    analyzed['score'] = score
+                    analyzed['channel_id'] = channel_id
+                    analyzed['channel_name'] = channel_name
+                    analyzed_streams.append(analyzed)
                 
-                logger.info(f"Completed concurrent analysis of {completed_count} streams")
+                logger.info(f"Completed parallel analysis of {len(results)} streams")
             
-            # Process already-checked streams (same logic as sequential)
+            # Process already-checked streams (use cached data)
             for stream in streams_already_checked:
                 stream_data = udi.get_stream_by_id(stream['id'])
                 if stream_data:
@@ -1498,14 +1421,10 @@ class StreamCheckerService:
                         elif not was_dead:
                             if self.dead_streams_tracker.mark_as_dead(stream_url, stream['id'], stream_name):
                                 dead_stream_ids.append(stream['id'])
-                                logger.warning(f"Cached stream {stream['id']} detected as DEAD: {stream_name}")
-                            else:
-                                logger.error(f"Failed to mark cached stream {stream['id']} as DEAD")
                     
                     score = self._calculate_stream_score(analyzed)
                     analyzed['score'] = score
                     analyzed_streams.append(analyzed)
-                    logger.debug(f"Using cached data for stream {stream['id']}: {stream.get('name')} - Score: {score:.2f}")
             
             # Sort streams by score (highest first)
             self.progress.update(
@@ -1519,13 +1438,9 @@ class StreamCheckerService:
             )
             analyzed_streams.sort(key=lambda x: x.get('score', 0), reverse=True)
             
-            # Remove dead streams from the channel (unless it's a force check/global check)
+            # Remove dead streams from the channel (unless it's a force check)
             if dead_stream_ids and not force_check:
                 logger.warning(f"🔴 Removing {len(dead_stream_ids)} dead streams from channel {channel_name}")
-                for stream_id in dead_stream_ids:
-                    dead_stream = next((s for s in analyzed_streams if s['stream_id'] == stream_id), None)
-                    if dead_stream:
-                        logger.info(f"  - Removing dead stream {stream_id}: {dead_stream.get('stream_name', 'Unknown')}")
                 analyzed_streams = [s for s in analyzed_streams if s['stream_id'] not in dead_stream_ids]
             elif dead_stream_ids and force_check:
                 logger.info(f"Global check mode: keeping {len(dead_stream_ids)} dead streams to check for revival")
@@ -1546,7 +1461,7 @@ class StreamCheckerService:
             reordered_ids = [s['stream_id'] for s in analyzed_streams]
             update_channel_streams(channel_id, reordered_ids, allow_dead_streams=force_check)
             
-            # Verify the update was applied correctly
+            # Verify the update
             self.progress.update(
                 channel_id=channel_id,
                 channel_name=channel_name,
@@ -1556,25 +1471,16 @@ class StreamCheckerService:
                 step='Verifying update',
                 step_detail='Confirming stream order was applied'
             )
-            time.sleep(0.5)
+            time_module.sleep(0.5)
             udi.refresh_channel_by_id(channel_id)
-            updated_channel_data = udi.get_channel_by_id(channel_id)
-            if updated_channel_data:
-                updated_stream_ids = updated_channel_data.get('streams', [])
-                if updated_stream_ids == reordered_ids:
-                    logger.info(f"✓ Verified: Channel {channel_name} streams reordered correctly")
-                else:
-                    logger.warning(f"⚠ Verification failed: Stream order mismatch for channel {channel_name}")
-            else:
-                logger.warning(f"⚠ Could not verify stream update for channel {channel_name}")
             
-            logger.info(f"✓ Channel {channel_name} checked and streams reordered (concurrent mode)")
+            logger.info(f"✓ Channel {channel_name} checked and streams reordered (parallel mode)")
             
-            # Add changelog entry with stream stats
+            # Add changelog entry
             if self.changelog:
                 try:
                     stream_stats = []
-                    for analyzed in analyzed_streams:
+                    for analyzed in analyzed_streams[:10]:  # Limit to first 10
                         stream_stat = {
                             'stream_id': analyzed.get('stream_id'),
                             'stream_name': analyzed.get('stream_name'),
@@ -1582,14 +1488,11 @@ class StreamCheckerService:
                             'resolution': analyzed.get('resolution'),
                             'fps': analyzed.get('fps'),
                             'video_codec': analyzed.get('video_codec'),
-                            'audio_codec': analyzed.get('audio_codec'),
                             'bitrate_kbps': analyzed.get('bitrate_kbps'),
-                            'status': analyzed.get('status')
                         }
-                        stream_stat = {k: v for k, v in stream_stat.items() if v not in [None, "N/A"]}
-                        stream_stats.append(stream_stat)
+                        stream_stats.append({k: v for k, v in stream_stat.items() if v not in [None, "N/A"]})
                     
-                    changelog_details = {
+                    self.changelog.add_entry('stream_check', {
                         'channel_id': channel_id,
                         'channel_name': channel_name,
                         'total_streams': len(streams),
@@ -1597,12 +1500,9 @@ class StreamCheckerService:
                         'dead_streams_detected': len(dead_stream_ids) if not force_check else 0,
                         'streams_revived': len(revived_stream_ids),
                         'success': True,
-                        'concurrent_mode': True,
-                        'stream_stats': stream_stats[:10]
-                    }
-                    
-                    self.changelog.add_entry('stream_check', changelog_details)
-                    logger.info(f"Changelog entry added for channel {channel_name}")
+                        'parallel_mode': True,
+                        'stream_stats': stream_stats
+                    })
                 except Exception as e:
                     logger.warning(f"Failed to add changelog entry: {e}")
             
@@ -1625,20 +1525,21 @@ class StreamCheckerService:
                     except:
                         channel_name = f'Channel {channel_id}'
                     
-                    changelog_details = {
+                    self.changelog.add_entry('stream_check', {
                         'channel_id': channel_id,
                         'channel_name': channel_name,
                         'success': False,
-                        'concurrent_mode': True,
+                        'parallel_mode': True,
                         'error': str(e)
-                    }
-                    self.changelog.add_entry('stream_check', changelog_details)
+                    })
                 except Exception as changelog_error:
-                    logger.warning(f"Failed to add changelog entry for failed check: {changelog_error}")
+                    logger.warning(f"Failed to add changelog entry: {changelog_error}")
         
         finally:
             self.checking = False
             self.progress.clear()
+            log_function_return(logger, "_check_channel_concurrent")
+
     
     def _check_channel_sequential(self, channel_id: int):
         """Check and reorder streams for a specific channel using sequential checking."""

@@ -1,23 +1,20 @@
 #!/bin/bash
 
-# StreamFlow All-In-One Entrypoint
-# Starts Redis, Celery worker, and Flask API in a single container
+# StreamFlow Entrypoint
+# Starts Flask API in a single container
 
 set -e
 
-echo "[INFO] Starting StreamFlow All-In-One Container: $(date)"
+echo "[INFO] Starting StreamFlow Container: $(date)"
 
 # Environment variables with defaults
 API_HOST="${API_HOST:-0.0.0.0}"
 API_PORT="${API_PORT:-5000}"
 DEBUG_MODE="${DEBUG_MODE:-false}"
 CONFIG_DIR="${CONFIG_DIR:-/app/data}"
-REDIS_HOST="${REDIS_HOST:-localhost}"
-REDIS_PORT="${REDIS_PORT:-6379}"
-REDIS_DB="${REDIS_DB:-0}"
 
 # Export environment variables for supervisor programs
-export API_HOST API_PORT DEBUG_MODE CONFIG_DIR REDIS_HOST REDIS_PORT REDIS_DB
+export API_HOST API_PORT DEBUG_MODE CONFIG_DIR
 
 # Deprecated: Old manual interval approach (kept for backward compatibility warnings)
 if [ -n "$INTERVAL_SECONDS" ]; then
@@ -51,19 +48,10 @@ else
     echo "[INFO] Using .env file for configuration."
 fi
 
-# Start All-In-One services
+# Start StreamFlow service
 echo "[INFO] ============================================"
-echo "[INFO] Starting All-In-One StreamFlow Container"
+echo "[INFO] Starting StreamFlow Container"
 echo "[INFO] ============================================"
-echo "[INFO] Startup Sequence:"
-echo "[INFO]   1. Redis server"
-echo "[INFO]   2. Redis health check"
-echo "[INFO]   3. Celery worker (after Redis is ready)"
-echo "[INFO]   4. Celery health check"
-echo "[INFO]   5. Flask API (after Celery is ready)"
-echo "[INFO] ============================================"
-echo "[INFO] Redis: localhost:${REDIS_PORT}"
-echo "[INFO] Celery Worker: 4 concurrent workers"
 echo "[INFO] Flask API: ${API_HOST}:${API_PORT}"
 echo "[INFO] Debug mode: ${DEBUG_MODE}"
 echo "[INFO] ============================================"
@@ -73,10 +61,9 @@ echo "[INFO] ============================================"
 
 # Start supervisor in foreground mode (nodaemon=true)
 # This will become PID 1 and properly forward all logs to Docker stdout
-echo "[INFO] Starting supervisor to manage all processes..."
+echo "[INFO] Starting supervisor to manage Flask API..."
 
 # Note: Supervisor will run in foreground and manage all processes
 # All logs will be forwarded to stdout/stderr automatically
 # Use exec to ensure supervisor becomes PID 1 and receives signals properly
 exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf
-

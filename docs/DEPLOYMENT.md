@@ -1,16 +1,15 @@
 # Deployment Guide
 
-## 🚀 All-In-One Single-Container Deployment
+## 🚀 Single-Container Deployment
 
-The application uses an **All-In-One single-container architecture** that is much easier to deploy and maintain:
+The application uses a **single-container architecture** that is easy to deploy and maintain:
 
 - **Single Container**: All services in one Docker container managed by Supervisor
-- **Embedded Redis**: Redis server runs locally within the container
-- **Embedded Celery**: Celery workers run within the container for concurrent stream checking
+- **Thread-Based Parallelism**: Multi-threaded stream checking for performance
 - **Single Port**: Everything accessible at http://localhost:5000
-- **No External Dependencies**: No need for separate Redis or worker containers
+- **No External Dependencies**: No need for separate database or worker containers
 - **Faster Builds**: Pre-built frontend reduces Docker build time
-- **Persistent Storage**: Configuration and Redis data stored in Docker volumes
+- **Persistent Storage**: Configuration data stored in Docker volumes
 
 ## Quick Start
 
@@ -54,7 +53,7 @@ The following files are stored in the mounted volume:
 - `changelog.json` - Activity history
 - `stream_checker_config.json` - Stream quality checking configuration
 - `channel_updates.json` - Channel update tracking
-- `dump.rdb` - Redis database snapshot (auto-saved)
+- `udi/` - Universal Data Index (UDI) JSON storage
 
 ### Customizing the Volume Path
 
@@ -72,32 +71,20 @@ chmod 755 /your/custom/path
 
 ## Architecture
 
-The All-In-One application uses a single Docker container that includes:
-- **Redis Server**: Embedded Redis for task queue and data storage (localhost:6379)
-- **Celery Workers**: 4 concurrent workers for stream checking
+The application uses a single Docker container that includes:
 - **Backend**: Python Flask API (port 5000)
 - **Frontend**: React application served by Flask
 - **Static Files**: React build served from Flask `/static` directory
 - **Configuration**: JSON files in `/app/data` (mounted volume)
-- **Process Manager**: Supervisor manages all services within the container
+- **Process Manager**: Supervisor manages the Flask service within the container
 
 ### Startup Sequence
 
-The container uses a carefully orchestrated startup sequence to ensure all services are ready before dependent services start:
+The container uses Supervisor to manage the Flask API service:
 
-1. **Redis Server** - Started first as the foundation for all other services
-2. **Redis Health Check** - Validates Redis is ready to accept connections
-3. **Celery Worker** - Started after Redis is confirmed healthy
-4. **Celery Health Check** - Validates Celery worker is ready to process tasks
-5. **Flask API** - Started last, after all dependencies are confirmed healthy
+1. **Flask API** - Starts and initializes the stream checker service
 
-This sequencing prevents:
-- Tasks being dispatched before workers are ready
-- API endpoints failing due to missing Redis connection
-- Race conditions during container startup
-- Unnecessary task revocations
-
-All health checks retry for up to 30 seconds with 1-second intervals, ensuring services have adequate time to initialize.
+The stream checker service runs as a background thread within the Flask application.
 
 ### Logging
 
@@ -116,8 +103,6 @@ docker compose logs --tail 100
 
 The logging system includes:
 - **Supervisor**: Process management logs
-- **Redis**: Database operation logs (warning level)
-- **Celery Workers**: Task execution and concurrent stream checking logs
 - **Flask API**: HTTP requests, API calls, and application events
 - **Stream Checker**: Stream quality analysis and channel update logs
 
@@ -140,14 +125,13 @@ docker compose up -d -e DEBUG_MODE=true
 Debug mode provides detailed information about:
 - API request/response details
 - Stream analysis steps
-- Concurrency management
+- Parallel processing
 - Queue processing
 - Configuration changes
 
 ### Port Mapping
 - **External**: http://localhost:5000 → **Internal**: Flask port 5000
 - All frontend routes and API calls go through the same port
-- Redis (localhost:6379) and Celery workers are internal only
 
 ## Docker Deployment Options
 
@@ -215,9 +199,6 @@ All environment variables should be configured in the `.env` file:
 - `API_HOST`: API host (default: 0.0.0.0)
 - `API_PORT`: API port (default: 5000)
 - `CONFIG_DIR`: Configuration directory (default: /app/data)
-- `REDIS_HOST`: Redis host (default: localhost for All-In-One)
-- `REDIS_PORT`: Redis port (default: 6379)
-- `REDIS_DB`: Redis database number (default: 0)
 
 ### Option 2: Direct Environment Variables (Docker Compose)
 For containerized deployments, you can specify environment variables directly in docker-compose.yml:
@@ -234,9 +215,6 @@ services:
       - API_HOST=0.0.0.0
       - API_PORT=5000
       - CONFIG_DIR=/app/data
-      - REDIS_HOST=localhost
-      - REDIS_PORT=6379
-      - REDIS_DB=0
 ```
 
 > **Note**: When using direct environment variables, comment out or remove the `env_file` section in docker-compose.yml. JWT tokens will be refreshed automatically on startup as they cannot be persisted without a .env file.
@@ -245,7 +223,6 @@ services:
 
 - **Web Interface & API**: http://localhost:5000
 - All endpoints are accessible through the single port
-- Redis and Celery workers are internal to the container
 
 ## GitHub Container Registry
 

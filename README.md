@@ -23,23 +23,21 @@ See [Deployment Guide](docs/DEPLOYMENT.md) for detailed instructions.
 ## Features
 
 - **5 Pipeline Modes**: Choose the automation level that fits your needs (from continuous checking to scheduled-only)
-- **Concurrent Stream Checking**: Celery-powered parallel stream analysis with configurable limits
+- **Parallel Stream Checking**: Thread-based parallel stream analysis with configurable worker pool
 - **Automated M3U Playlist Management**: Refresh playlists every 5 minutes (configurable)
 - **Stream Quality Checking**: Analyze streams for bitrate, resolution, FPS, codec quality, and errors
 - **Automatic Stream Reordering**: Best quality streams moved to the top
 - **Stream Discovery**: Regex patterns for automatic stream-to-channel assignment
 - **Global Action**: Manual or scheduled complete update cycles (Update → Match → Check all channels)
-- **Redis-backed Storage**: Fast, distributed data access with UDI (Universal Data Index)
+- **JSON-backed Storage**: Fast, file-based data access with UDI (Universal Data Index)
 - **Web Interface**: React-based UI with unified configuration page and real-time monitoring
 - **REST API**: Full API access for all operations
 
 ## Architecture
 
-**All-In-One Docker deployment** with:
+**Single Docker container** with:
 - Flask backend (Python) serving REST API
 - React frontend for web interface
-- **Redis** for Celery task queue and distributed data storage (embedded)
-- **Celery workers** for concurrent stream checking (embedded)
 - Persistent configuration storage via Docker volumes
 - Single port (5000) for all web access
 - Multi-platform support: linux/amd64, linux/arm64
@@ -84,7 +82,6 @@ docs/
 ## Documentation
 
 - [Deployment Guide](docs/DEPLOYMENT.md) - Installation and deployment instructions
-- [Concurrent Stream Checking](docs/CONCURRENT_STREAM_CHECKING.md) - Celery-powered concurrent checking setup
 - [API Documentation](docs/API.md) - REST API endpoints and usage
 - [Features](docs/FEATURES.md) - Detailed feature descriptions
 - [Debug Mode Guide](docs/DEBUG_MODE.md) - Troubleshooting with enhanced logging
@@ -93,7 +90,7 @@ docs/
 
 - Docker and Docker Compose
 - Dispatcharr instance with API access
-- Sufficient resources for concurrent stream checking (recommended: 2 CPU cores, 2GB RAM minimum)
+- Sufficient resources for parallel stream checking (recommended: 2 CPU cores, 2GB RAM minimum)
 
 ## License
 

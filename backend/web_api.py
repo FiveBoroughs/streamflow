@@ -23,15 +23,6 @@ from stream_checker_service import get_stream_checker_service
 # Import UDI for direct data access
 from udi import get_udi_manager
 
-# Lazy imports for optional dependencies that may not be available
-try:
-    from concurrency_manager import get_concurrency_manager
-    from celery_tasks import health_check_task
-    from celery import states
-    CELERY_AVAILABLE = True
-except ImportError:
-    CELERY_AVAILABLE = False
-
 # Import croniter for cron expression validation
 try:
     from croniter import croniter
@@ -856,42 +847,20 @@ def test_dispatcharr_connection():
 
 @app.route('/api/stream-checker/status', methods=['GET'])
 def get_stream_checker_status():
-    """Get current stream checker status with concurrency information."""
+    """Get current stream checker status."""
     try:
         service = get_stream_checker_service()
         status = service.get_status()
         
-        # Add concurrency information if available
-        if CELERY_AVAILABLE:
-            try:
-                concurrency_mgr = get_concurrency_manager()
-                counts = concurrency_mgr.get_current_counts()
-                
-                # Get configured limits
-                global_limit = service.config.get(CONCURRENT_STREAMS_GLOBAL_LIMIT_KEY, 10)
-                concurrent_enabled = service.config.get(CONCURRENT_STREAMS_ENABLED_KEY, True)
-                
-                # Add concurrency info to status
-                status['concurrency'] = {
-                    'enabled': concurrent_enabled,
-                    'global_limit': global_limit,
-                    'current_concurrent': counts['global'],
-                    'accounts': counts['accounts'],
-                    'mode': 'concurrent' if concurrent_enabled else 'sequential'
-                }
-            except Exception as e:
-                logger.warning(f"Could not get concurrency info: {e}")
-                status['concurrency'] = {
-                    'enabled': False,
-                    'mode': 'sequential',
-                    'error': str(e)
-                }
-        else:
-            status['concurrency'] = {
-                'enabled': False,
-                'mode': 'sequential',
-                'reason': 'Celery/Redis not available'
-            }
+        # Add parallel checking information
+        concurrent_enabled = service.config.get(CONCURRENT_STREAMS_ENABLED_KEY, True)
+        global_limit = service.config.get(CONCURRENT_STREAMS_GLOBAL_LIMIT_KEY, 10)
+        
+        status['parallel'] = {
+            'enabled': concurrent_enabled,
+            'max_workers': global_limit,
+            'mode': 'parallel' if concurrent_enabled else 'sequential'
+        }
         
         return jsonify(status)
     except Exception as e:
@@ -1159,144 +1128,6 @@ def trigger_global_action():
     except Exception as e:
         logger.error(f"Error triggering global action: {e}")
         return jsonify({"error": str(e)}), 500
-
-# Concurrent stream checking endpoints
-@app.route('/api/stream-checker/concurrency/status', methods=['GET'])
-def get_concurrency_status():
-    """Get current concurrency status and limits."""
-    if not CELERY_AVAILABLE:
-        return jsonify({"error": "Celery/Redis not available"}), 503
-    
-    try:
-        concurrency_mgr = get_concurrency_manager()
-        service = get_stream_checker_service()
-        
-        # Get current counts
-        counts = concurrency_mgr.get_current_counts()
-        
-        # Get configured limits
-        global_limit = service.config.get(CONCURRENT_STREAMS_GLOBAL_LIMIT_KEY, 10)
-        concurrent_enabled = service.config.get(CONCURRENT_STREAMS_ENABLED_KEY, True)
-        
-        # Get M3U account limits from UDI
-        udi = get_udi_manager()
-        m3u_accounts = udi.get_m3u_accounts()
-        account_limits = {}
-        for account in m3u_accounts:
-            account_id = account.get('id')
-            if account_id:
-                account_limits[str(account_id)] = {
-                    'name': account.get('name', f'Account {account_id}'),
-                    'max_streams': account.get('max_streams', 0),
-                    'current_count': counts['accounts'].get(str(account_id), 0)
-                }
-        
-        return jsonify({
-            'enabled': concurrent_enabled,
-            'global': {
-                'limit': global_limit,
-                'current_count': counts['global']
-            },
-            'accounts': account_limits
-        })
-    
-    except Exception as e:
-        logger.error(f"Error getting concurrency status: {e}")
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/api/stream-checker/concurrency/config', methods=['GET'])
-def get_concurrency_config():
-    """Get concurrent stream checking configuration."""
-    try:
-        service = get_stream_checker_service()
-        config = service.config.get('concurrent_streams', {})
-        return jsonify(config)
-    except Exception as e:
-        logger.error(f"Error getting concurrency config: {e}")
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/api/stream-checker/concurrency/config', methods=['PUT'])
-def update_concurrency_config():
-    """Update concurrent stream checking configuration."""
-    try:
-        data = request.get_json()
-        if not data:
-            return jsonify({"error": "No configuration data provided"}), 400
-        
-        # Validate the configuration
-        if 'global_limit' in data:
-            if not isinstance(data['global_limit'], int) or data['global_limit'] < 0:
-                return jsonify({"error": "global_limit must be a non-negative integer"}), 400
-        
-        if 'enabled' in data:
-            if not isinstance(data['enabled'], bool):
-                return jsonify({"error": "enabled must be a boolean"}), 400
-        
-        # Update the configuration
-        service = get_stream_checker_service()
-        service.update_config({'concurrent_streams': data})
-        
-        return jsonify({
-            "message": "Concurrency configuration updated successfully",
-            "config": service.config.get('concurrent_streams', {})
-        })
-    
-    except Exception as e:
-        logger.error(f"Error updating concurrency config: {e}")
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/api/stream-checker/concurrency/reset', methods=['POST'])
-def reset_concurrency_counters():
-    """Reset concurrency counters (useful for recovering from inconsistent state)."""
-    if not CELERY_AVAILABLE:
-        return jsonify({"error": "Celery/Redis not available"}), 503
-    
-    try:
-        concurrency_mgr = get_concurrency_manager()
-        success = concurrency_mgr.reset_counts()
-        
-        if success:
-            return jsonify({"message": "Concurrency counters reset successfully"})
-        else:
-            return jsonify({"error": "Failed to reset concurrency counters"}), 500
-    
-    except Exception as e:
-        logger.error(f"Error resetting concurrency counters: {e}")
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/api/stream-checker/celery/health', methods=['GET'])
-def check_celery_health():
-    """Check if Celery workers are available and healthy."""
-    if not CELERY_AVAILABLE:
-        return jsonify({
-            "healthy": False,
-            "message": "Celery/Redis not available"
-        }), 503
-    
-    try:
-        # Send a health check task
-        task = health_check_task.apply_async()
-        
-        # Wait for result with timeout
-        try:
-            result = task.get(timeout=5)
-            return jsonify({
-                "healthy": True,
-                "message": "Celery worker is responding",
-                "result": result
-            })
-        except Exception as e:
-            return jsonify({
-                "healthy": False,
-                "message": f"Celery worker not responding: {str(e)}"
-            }), 503
-    
-    except Exception as e:
-        logger.error(f"Error checking Celery health: {e}")
-        return jsonify({
-            "healthy": False,
-            "error": str(e)
-        }), 500
 
 # Serve React app for all frontend routes (catch-all - must be last!)
 @app.route('/<path:path>')
