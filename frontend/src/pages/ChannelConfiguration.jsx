@@ -19,15 +19,18 @@ function ChannelCard({ channel, patterns, onEditRegex, onCheckChannel, loading }
   const [expanded, setExpanded] = useState(false)
 
   useEffect(() => {
-    // Try to load stats from localStorage first
+    // Try to load stats from localStorage first for instant display
     const cachedStats = localStorage.getItem(`${CHANNEL_STATS_PREFIX}${channel.id}`)
     if (cachedStats) {
       try {
-        setStats(JSON.parse(cachedStats))
+        const parsed = JSON.parse(cachedStats)
+        setStats(parsed)
+        setLoadingStats(false) // Show cached data immediately
       } catch (e) {
         console.error('Failed to parse cached stats:', e)
       }
     }
+    // Always fetch fresh stats in background to keep data current
     loadStats()
   }, [channel.id])
 
@@ -311,7 +314,7 @@ export default function ChannelConfiguration() {
         )}
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-1 2xl:grid-cols-1">
+      <div className="space-y-4">
         {filteredChannels.length === 0 ? (
           <Card>
             <CardContent className="p-8 text-center">
