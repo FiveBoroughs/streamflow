@@ -255,8 +255,9 @@ def get_channel_stats(channel_id):
             # Count dead streams for this channel
             for stream in streams:
                 stream_url = stream.get('url', '')
-                if stream_url in dead_streams:
+                if stream_url and stream_url in dead_streams:
                     dead_count += 1
+            logger.debug(f"Channel {channel_id_int} has {dead_count} dead streams out of {len(streams)} total streams (dead_streams dict size: {len(dead_streams)})")
         
         # Calculate resolution statistics
         resolutions = {}

@@ -208,7 +208,7 @@ export default function Dashboard() {
           <AlertDescription className="text-blue-900 dark:text-blue-100">
             <div className="font-medium mb-1">Stream checker is actively processing</div>
             <div className="text-sm">
-              Processing {queueSize} streams... 
+              Processing {queueSize} channels... 
               {totalProcessed > 0 && ` (${totalProcessed} completed)`}
             </div>
             <Progress value={queueProgress} className="mt-2 h-2" />

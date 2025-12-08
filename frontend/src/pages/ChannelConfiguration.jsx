@@ -109,7 +109,7 @@ function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheckC
                   </div>
                   <div className="flex items-center gap-1">
                     <span className="text-muted-foreground">Avg Bitrate:</span>
-                    <span className="font-medium">{stats.average_bitrate > 0 ? `${(stats.average_bitrate / 1000).toFixed(0)} Kbps` : 'N/A'}</span>
+                    <span className="font-medium">{stats.average_bitrate > 0 ? `${stats.average_bitrate} Kbps` : 'N/A'}</span>
                   </div>
                 </>
               ) : (
