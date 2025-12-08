@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion.jsx'
 import { useToast } from '@/hooks/use-toast.js'
 import { channelsAPI, regexAPI, streamCheckerAPI } from '@/services/api.js'
-import { CheckCircle, Edit, Plus, Trash2, Loader2, Search, X } from 'lucide-react'
+import { CheckCircle, Edit, Plus, Trash2, Loader2, Search, X, Download, Upload } from 'lucide-react'
 
 // Constants for localStorage keys
 const CHANNEL_STATS_PREFIX = 'streamflow_channel_stats_'
@@ -39,21 +39,19 @@ function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheckC
   // Fetch logo when logo_id is available
   useEffect(() => {
     const loadLogo = async () => {
-      // Try cached logo first
+      // Try cached logo first from localStorage
       const cachedLogo = localStorage.getItem(`${CHANNEL_LOGO_PREFIX}${channel.id}`)
       if (cachedLogo) {
         setLogoUrl(cachedLogo)
       }
       
-      // Fetch fresh logo if logo_id is available
+      // Fetch fresh logo if logo_id is available using the cached endpoint
       if (channel.logo_id) {
         try {
-          const response = await channelsAPI.getLogo(channel.logo_id)
-          if (response.data && (response.data.cache_url || response.data.url)) {
-            const url = response.data.cache_url || response.data.url
-            setLogoUrl(url)
-            localStorage.setItem(`${CHANNEL_LOGO_PREFIX}${channel.id}`, url)
-          }
+          // Use the cached endpoint which downloads and serves the logo locally
+          const logoUrl = channelsAPI.getLogoCached(channel.logo_id)
+          setLogoUrl(logoUrl)
+          localStorage.setItem(`${CHANNEL_LOGO_PREFIX}${channel.id}`, logoUrl)
         } catch (err) {
           console.error('Failed to load logo:', err)
         }
@@ -477,6 +475,84 @@ export default function ChannelConfiguration() {
     setSearchQuery('')
   }
 
+  const handleExportPatterns = () => {
+    try {
+      // Create a JSON blob with the current patterns
+      const dataStr = JSON.stringify({ patterns }, null, 2)
+      const dataBlob = new Blob([dataStr], { type: 'application/json' })
+      
+      // Create download link
+      const url = URL.createObjectURL(dataBlob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `channel_regex_patterns_${new Date().toISOString().split('T')[0]}.json`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(url)
+      
+      toast({
+        title: "Success",
+        description: "Regex patterns exported successfully"
+      })
+    } catch (err) {
+      console.error('Export error:', err)
+      toast({
+        title: "Error",
+        description: "Failed to export patterns",
+        variant: "destructive"
+      })
+    }
+  }
+
+  const handleImportPatterns = (event) => {
+    const file = event.target.files[0]
+    if (!file) return
+    
+    const reader = new FileReader()
+    reader.onload = async (e) => {
+      try {
+        const importedData = JSON.parse(e.target.result)
+        
+        // Validate the imported data structure
+        if (!importedData.patterns || typeof importedData.patterns !== 'object') {
+          throw new Error('Invalid file format: missing patterns object')
+        }
+        
+        // Import the patterns using the API
+        await regexAPI.importPatterns(importedData)
+        
+        toast({
+          title: "Success",
+          description: `Imported ${Object.keys(importedData.patterns).length} channel patterns`
+        })
+        
+        // Reload data to show imported patterns
+        await loadData()
+      } catch (err) {
+        console.error('Import error:', err)
+        toast({
+          title: "Error",
+          description: err.response?.data?.error || "Failed to import patterns",
+          variant: "destructive"
+        })
+      }
+    }
+    
+    reader.onerror = () => {
+      toast({
+        title: "Error",
+        description: "Failed to read file",
+        variant: "destructive"
+      })
+    }
+    
+    reader.readAsText(file)
+    
+    // Reset the input so the same file can be imported again
+    event.target.value = ''
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
@@ -494,7 +570,7 @@ export default function ChannelConfiguration() {
         </p>
       </div>
 
-      {/* Search Bar */}
+      {/* Search Bar and Export/Import Buttons */}
       <div className="flex items-center gap-2">
         <div className="relative flex-1 max-w-md">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -521,6 +597,33 @@ export default function ChannelConfiguration() {
             {filteredChannels.length} of {channels.length} channels
           </Badge>
         )}
+        
+        {/* Export/Import Buttons */}
+        <div className="flex items-center gap-2 ml-auto">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleExportPatterns}
+          >
+            <Download className="h-4 w-4 mr-2" />
+            Export Regex
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => document.getElementById('import-file-input').click()}
+          >
+            <Upload className="h-4 w-4 mr-2" />
+            Import Regex
+          </Button>
+          <input
+            id="import-file-input"
+            type="file"
+            accept=".json"
+            onChange={handleImportPatterns}
+            style={{ display: 'none' }}
+          />
+        </div>
       </div>
 
       <div className="space-y-4">
@@ -583,31 +686,35 @@ export default function ChannelConfiguration() {
 
             {/* Live Test Results */}
             {testingPattern && (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <div className="flex items-center gap-2 text-sm text-muted-foreground animate-in fade-in duration-200">
                 <Loader2 className="h-4 w-4 animate-spin" />
                 Testing pattern...
               </div>
             )}
 
             {testResults && !testingPattern && (
-              <div className="space-y-2">
+              <div className="space-y-2 animate-in fade-in slide-in-from-top-2 duration-300">
                 <Label>Test Results</Label>
-                <div className="border rounded-md p-3 bg-muted/50">
+                <div className="border rounded-md p-3 bg-muted/50 transition-all">
                   {testResults.valid ? (
                     <>
-                      <div className="flex items-center gap-2 text-sm font-medium text-green-600 mb-2">
+                      <div className="flex items-center gap-2 text-sm font-medium text-green-600 mb-2 animate-in fade-in duration-200">
                         <CheckCircle className="h-4 w-4" />
                         Valid pattern - {testResults.matches?.length || 0} matches found
                       </div>
                       {testResults.matches && testResults.matches.length > 0 && (
                         <div className="space-y-1 max-h-32 overflow-y-auto">
                           {testResults.matches.slice(0, 10).map((match, idx) => (
-                            <div key={idx} className="text-xs text-muted-foreground truncate">
+                            <div 
+                              key={idx} 
+                              className="text-xs text-muted-foreground truncate animate-in fade-in slide-in-from-left-1 duration-200"
+                              style={{ animationDelay: `${idx * 20}ms` }}
+                            >
                               • {match}
                             </div>
                           ))}
                           {testResults.matches.length > 10 && (
-                            <div className="text-xs text-muted-foreground italic">
+                            <div className="text-xs text-muted-foreground italic animate-in fade-in duration-200">
                               ... and {testResults.matches.length - 10} more
                             </div>
                           )}

@@ -15,6 +15,7 @@ system and provides a clean, maintainable API for stream quality analysis.
 """
 
 import json
+import logging
 import re
 import subprocess
 import time
@@ -471,10 +472,16 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
                     if any(pattern.lower() in line_lower for pattern in error_patterns):
                         error_lines.append(line.strip())
                 
+                # Only show verbose ffmpeg error details in debug mode
+                # In production, just log that errors occurred without the full verbose output
                 if error_lines:
-                    logger.warning(f"  ⚠ ffmpeg error details:")
-                    for error_line in error_lines[:MAX_ERROR_LINES_TO_LOG]:
-                        logger.warning(f"     {error_line}")
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug(f"  ⚠ ffmpeg error details (DEBUG_MODE):")
+                        for error_line in error_lines[:MAX_DEBUG_LINES_TO_LOG]:
+                            logger.debug(f"     {error_line}")
+                    else:
+                        # In production mode, just note that errors were found without verbose details
+                        logger.warning(f"  ⚠ ffmpeg encountered {len(error_lines)} error(s) (set DEBUG_MODE=true for details)")
 
         logger.debug(f"  → Analysis completed in {elapsed:.2f}s")
         
@@ -615,15 +622,22 @@ def get_stream_bitrate(url: str, duration: int = 30, timeout: int = 30, user_age
                         error_lines.append(line.strip())
                 
                 if error_lines:
-                    logger.warning(f"  ⚠ ffmpeg error details:")
-                    for error_line in error_lines[:MAX_ERROR_LINES_TO_LOG]:
-                        logger.warning(f"     {error_line}")
+                    # Only show verbose ffmpeg error details in debug mode
+                    # In production, just log that errors occurred without the full verbose output
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug(f"  ⚠ ffmpeg error details (DEBUG_MODE):")
+                        for error_line in error_lines[:MAX_DEBUG_LINES_TO_LOG]:
+                            logger.debug(f"     {error_line}")
+                    else:
+                        # In production mode, just note that errors were found without verbose details
+                        logger.warning(f"  ⚠ ffmpeg encountered {len(error_lines)} error(s) (set DEBUG_MODE=true for details)")
                 else:
-                    # Log last few lines of output for debugging
-                    logger.debug(f"  → Last lines of ffmpeg output:")
-                    for line in output.splitlines()[-MAX_DEBUG_LINES_TO_LOG:]:
-                        if line.strip():
-                            logger.debug(f"     {line.strip()}")
+                    # Log last few lines of output for debugging - only in debug mode
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug(f"  → Last lines of ffmpeg output (DEBUG_MODE):")
+                        for line in output.splitlines()[-MAX_DEBUG_LINES_TO_LOG:]:
+                            if line.strip():
+                                logger.debug(f"     {line.strip()}")
 
         logger.debug(f"  → Analysis completed in {elapsed:.2f}s")
 

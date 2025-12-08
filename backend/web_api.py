@@ -268,12 +268,13 @@ def get_channel_stats(channel_id):
             
             if stream_stats and isinstance(stream_stats, dict):
                 resolution = stream_stats.get('resolution', 'Unknown')
-                bitrate = stream_stats.get('bitrate')
+                # Try both 'bitrate' and 'bitrate_kbps' field names for compatibility
+                bitrate = stream_stats.get('bitrate_kbps') or stream_stats.get('bitrate')
             
             if resolution != 'Unknown':
                 resolutions[resolution] = resolutions.get(resolution, 0) + 1
             
-            if bitrate and isinstance(bitrate, (int, float)):
+            if bitrate and isinstance(bitrate, (int, float)) and bitrate > 0:
                 bitrates.append(bitrate)
         
         # Most common resolution
@@ -328,6 +329,104 @@ def get_channel_logo(logo_id):
         return jsonify(logo)
     except Exception as e:
         logger.error(f"Error fetching logo: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/channels/logos/<logo_id>/cache', methods=['GET'])
+def get_channel_logo_cached(logo_id):
+    """Download and cache channel logo locally, then serve it.
+    
+    This endpoint:
+    1. Checks if logo is already cached locally
+    2. If not, downloads it from Dispatcharr
+    3. Saves it to local storage
+    4. Serves the cached file
+    """
+    try:
+        import requests
+        from werkzeug.utils import secure_filename
+        
+        # Create logos cache directory if it doesn't exist
+        logos_cache_dir = CONFIG_DIR / 'logos_cache'
+        logos_cache_dir.mkdir(exist_ok=True)
+        
+        # Check if logo is already cached
+        logo_filename = f"logo_{logo_id}"
+        
+        # Try common image extensions
+        for ext in ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg']:
+            cached_path = logos_cache_dir / f"{logo_filename}{ext}"
+            if cached_path.exists():
+                # Serve cached logo
+                return send_file(cached_path, mimetype=f'image/{ext[1:]}')
+        
+        # Logo not cached, download it from Dispatcharr
+        udi = get_udi_manager()
+        logo = udi.get_logo_by_id(int(logo_id))
+        
+        if not logo:
+            return jsonify({"error": "Logo not found"}), 404
+        
+        # Get the logo URL from Dispatcharr
+        # Prefer cache_url if available, otherwise use url
+        dispatcharr_base_url = os.getenv("DISPATCHARR_BASE_URL", "")
+        logo_url = logo.get('cache_url') or logo.get('url')
+        
+        if not logo_url:
+            return jsonify({"error": "Logo URL not available"}), 404
+        
+        # If cache_url is a relative path, make it absolute
+        if logo_url.startswith('/'):
+            logo_url = f"{dispatcharr_base_url}{logo_url}"
+        
+        # Download the logo
+        logger.info(f"Downloading logo {logo_id} from {logo_url}")
+        response = requests.get(logo_url, timeout=10)
+        response.raise_for_status()
+        
+        # Determine file extension from content-type or URL
+        content_type = response.headers.get('content-type', '').lower()
+        ext = '.png'  # default
+        if 'jpeg' in content_type or 'jpg' in content_type:
+            ext = '.jpg'
+        elif 'png' in content_type:
+            ext = '.png'
+        elif 'gif' in content_type:
+            ext = '.gif'
+        elif 'webp' in content_type:
+            ext = '.webp'
+        elif 'svg' in content_type:
+            ext = '.svg'
+        else:
+            # Try to extract from URL
+            if logo_url.lower().endswith('.jpg') or logo_url.lower().endswith('.jpeg'):
+                ext = '.jpg'
+            elif logo_url.lower().endswith('.png'):
+                ext = '.png'
+            elif logo_url.lower().endswith('.gif'):
+                ext = '.gif'
+            elif logo_url.lower().endswith('.webp'):
+                ext = '.webp'
+            elif logo_url.lower().endswith('.svg'):
+                ext = '.svg'
+        
+        # Save the logo to cache
+        cached_path = logos_cache_dir / f"{logo_filename}{ext}"
+        with open(cached_path, 'wb') as f:
+            f.write(response.content)
+        
+        logger.info(f"Cached logo {logo_id} to {cached_path}")
+        
+        # Serve the cached logo
+        mimetype = f'image/{ext[1:]}'
+        if ext == '.svg':
+            mimetype = 'image/svg+xml'
+        return send_file(cached_path, mimetype=mimetype)
+        
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error downloading logo {logo_id}: {e}")
+        return jsonify({"error": f"Failed to download logo: {str(e)}"}), 500
+    except Exception as e:
+        logger.error(f"Error caching logo {logo_id}: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/regex-patterns', methods=['GET'])
