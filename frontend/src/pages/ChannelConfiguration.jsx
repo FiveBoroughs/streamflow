@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card.jsx'
 import { Button } from '@/components/ui/button.jsx'
 import { Input } from '@/components/ui/input.jsx'
@@ -300,26 +300,50 @@ export default function ChannelConfiguration() {
     setTestResults(null)
   }
 
-  const handleTestPattern = async () => {
+  const handleTestPattern = useCallback(async () => {
     if (!newPattern.trim() || !editingChannelId) return
     
     try {
       setTestingPattern(true)
+      const channel = channels.find(ch => ch.id === editingChannelId)
       const response = await regexAPI.testPatternLive({
-        channel_id: editingChannelId,
-        regex: newPattern
+        patterns: [{
+          channel_id: editingChannelId,
+          channel_name: channel?.name || '',
+          regex: [newPattern]
+        }],
+        max_matches: 50
       })
-      setTestResults(response.data)
+      
+      // Extract results for this channel
+      const result = response.data.results?.[0]
+      if (result) {
+        setTestResults({
+          valid: true,
+          matches: result.matched_streams?.map(s => s.stream_name) || [],
+          match_count: result.match_count || 0
+        })
+      } else {
+        setTestResults({ valid: true, matches: [], match_count: 0 })
+      }
     } catch (err) {
-      toast({
-        title: "Error",
-        description: "Failed to test pattern",
-        variant: "destructive"
-      })
+      // Check if it's a validation error
+      if (err.response?.data?.error) {
+        setTestResults({
+          valid: false,
+          error: err.response.data.error
+        })
+      } else {
+        toast({
+          title: "Error",
+          description: "Failed to test pattern",
+          variant: "destructive"
+        })
+      }
     } finally {
       setTestingPattern(false)
     }
-  }
+  }, [newPattern, editingChannelId, channels, toast])
 
   // Test pattern on every change with debouncing
   useEffect(() => {
@@ -329,7 +353,7 @@ export default function ChannelConfiguration() {
       }, 500) // 500ms debounce
       return () => clearTimeout(timer)
     }
-  }, [newPattern, editingChannelId, dialogOpen])
+  }, [newPattern, editingChannelId, dialogOpen, handleTestPattern])
 
   const handleSavePattern = async () => {
     if (!newPattern.trim() || !editingChannelId) {
