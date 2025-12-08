@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button.jsx'
 import { Input } from '@/components/ui/input.jsx'
 import { Label } from '@/components/ui/label.jsx'
 import { Badge } from '@/components/ui/badge.jsx'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog.jsx'
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion.jsx'
 import { useToast } from '@/hooks/use-toast.js'
 import { channelsAPI, regexAPI, streamCheckerAPI } from '@/services/api.js'
@@ -13,10 +14,11 @@ import { CheckCircle, Edit, Plus, Trash2, Loader2, Search, X } from 'lucide-reac
 const CHANNEL_STATS_PREFIX = 'streamflow_channel_stats_'
 const CHANNEL_LOGO_PREFIX = 'streamflow_channel_logo_'
 
-function ChannelCard({ channel, patterns, onEditRegex, onCheckChannel, loading }) {
+function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheckChannel, loading }) {
   const [stats, setStats] = useState(null)
   const [loadingStats, setLoadingStats] = useState(true)
   const [expanded, setExpanded] = useState(false)
+  const [logoUrl, setLogoUrl] = useState(null)
 
   useEffect(() => {
     // Try to load stats from localStorage first for instant display
@@ -34,6 +36,32 @@ function ChannelCard({ channel, patterns, onEditRegex, onCheckChannel, loading }
     loadStats()
   }, [channel.id])
 
+  // Fetch logo when logo_id is available
+  useEffect(() => {
+    const loadLogo = async () => {
+      // Try cached logo first
+      const cachedLogo = localStorage.getItem(`${CHANNEL_LOGO_PREFIX}${channel.id}`)
+      if (cachedLogo) {
+        setLogoUrl(cachedLogo)
+      }
+      
+      // Fetch fresh logo if logo_id is available
+      if (channel.logo_id) {
+        try {
+          const response = await channelsAPI.getLogo(channel.logo_id)
+          if (response.data && (response.data.cache_url || response.data.url)) {
+            const url = response.data.cache_url || response.data.url
+            setLogoUrl(url)
+            localStorage.setItem(`${CHANNEL_LOGO_PREFIX}${channel.id}`, url)
+          }
+        } catch (err) {
+          console.error('Failed to load logo:', err)
+        }
+      }
+    }
+    loadLogo()
+  }, [channel.id, channel.logo_id])
+
   const loadStats = async () => {
     try {
       setLoadingStats(true)
@@ -48,24 +76,14 @@ function ChannelCard({ channel, patterns, onEditRegex, onCheckChannel, loading }
     }
   }
 
-  const channelPatterns = patterns[channel.id]
-
-  // Get logo from cache or use current URL
-  const logoUrl = channel.logo_url || localStorage.getItem(`${CHANNEL_LOGO_PREFIX}${channel.id}`)
-
-  // Cache channel logo URL if available
-  useEffect(() => {
-    if (channel.logo_url) {
-      localStorage.setItem(`${CHANNEL_LOGO_PREFIX}${channel.id}`, channel.logo_url)
-    }
-  }, [channel.logo_url, channel.id])
+  const channelPatterns = patterns[channel.id] || patterns[String(channel.id)]
 
   return (
     <Card className="w-full max-w-4xl">
       <CardContent className="p-0">
-        <div className="flex items-center gap-4 p-4">
+        <div className="flex items-center gap-3 p-3">
           {/* Channel Logo */}
-          <div className="w-16 h-16 flex-shrink-0 bg-muted rounded-md flex items-center justify-center overflow-hidden">
+          <div className="w-12 h-12 flex-shrink-0 bg-muted rounded-md flex items-center justify-center overflow-hidden">
             {logoUrl ? (
               <img src={logoUrl} alt={channel.name} className="w-full h-full object-cover" />
             ) : (
@@ -77,8 +95,8 @@ function ChannelCard({ channel, patterns, onEditRegex, onCheckChannel, loading }
 
           {/* Channel Info */}
           <div className="flex-1 min-w-0">
-            <h3 className="font-semibold text-lg truncate">{channel.name}</h3>
-            <div className="flex flex-wrap gap-4 mt-2 text-sm">
+            <h3 className="font-semibold text-base truncate">{channel.name}</h3>
+            <div className="flex flex-wrap gap-3 mt-1 text-sm">
               {loadingStats ? (
                 <span className="text-muted-foreground">Loading stats...</span>
               ) : stats ? (
@@ -166,15 +184,24 @@ function ChannelCard({ channel, patterns, onEditRegex, onCheckChannel, loading }
             {channelPatterns && channelPatterns.regex && channelPatterns.regex.length > 0 ? (
               <div className="space-y-2">
                 {channelPatterns.regex.map((pattern, index) => (
-                  <div key={index} className="flex items-center justify-between p-2 bg-background rounded-md">
-                    <code className="text-sm flex-1">{pattern}</code>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => onEditRegex(channel.id, index)}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
+                  <div key={index} className="flex items-center justify-between gap-2 p-2 bg-background rounded-md">
+                    <code className="text-sm flex-1 break-all">{pattern}</code>
+                    <div className="flex gap-1">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => onEditRegex(channel.id, index)}
+                      >
+                        <Edit className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => onDeletePattern(channel.id, index)}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -194,6 +221,12 @@ export default function ChannelConfiguration() {
   const [loading, setLoading] = useState(true)
   const [checkingChannel, setCheckingChannel] = useState(null)
   const [searchQuery, setSearchQuery] = useState('')
+  const [dialogOpen, setDialogOpen] = useState(false)
+  const [editingChannelId, setEditingChannelId] = useState(null)
+  const [editingPatternIndex, setEditingPatternIndex] = useState(null)
+  const [newPattern, setNewPattern] = useState('')
+  const [testingPattern, setTestingPattern] = useState(false)
+  const [testResults, setTestResults] = useState(null)
   const { toast } = useToast()
 
   useEffect(() => {
@@ -242,12 +275,145 @@ export default function ChannelConfiguration() {
   }
 
   const handleEditRegex = (channelId, patternIndex) => {
-    // This would open a dialog to edit/add regex patterns
-    // For now, we'll show a simple toast
-    toast({
-      title: "Edit Regex",
-      description: "Regex editing dialog will open here"
-    })
+    setEditingChannelId(channelId)
+    setEditingPatternIndex(patternIndex)
+    
+    // If editing an existing pattern, load it
+    if (patternIndex !== null) {
+      const channelPatterns = patterns[channelId] || patterns[String(channelId)]
+      if (channelPatterns && channelPatterns.regex && channelPatterns.regex[patternIndex]) {
+        setNewPattern(channelPatterns.regex[patternIndex])
+      }
+    } else {
+      setNewPattern('')
+    }
+    
+    setTestResults(null)
+    setDialogOpen(true)
+  }
+
+  const handleCloseDialog = () => {
+    setDialogOpen(false)
+    setEditingChannelId(null)
+    setEditingPatternIndex(null)
+    setNewPattern('')
+    setTestResults(null)
+  }
+
+  const handleTestPattern = async () => {
+    if (!newPattern.trim() || !editingChannelId) return
+    
+    try {
+      setTestingPattern(true)
+      const response = await regexAPI.testPatternLive({
+        channel_id: editingChannelId,
+        regex: newPattern
+      })
+      setTestResults(response.data)
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: "Failed to test pattern",
+        variant: "destructive"
+      })
+    } finally {
+      setTestingPattern(false)
+    }
+  }
+
+  // Test pattern on every change with debouncing
+  useEffect(() => {
+    if (newPattern && editingChannelId && dialogOpen) {
+      const timer = setTimeout(() => {
+        handleTestPattern()
+      }, 500) // 500ms debounce
+      return () => clearTimeout(timer)
+    }
+  }, [newPattern, editingChannelId, dialogOpen])
+
+  const handleSavePattern = async () => {
+    if (!newPattern.trim() || !editingChannelId) {
+      toast({
+        title: "Error",
+        description: "Pattern cannot be empty",
+        variant: "destructive"
+      })
+      return
+    }
+
+    try {
+      const channelPatterns = patterns[editingChannelId] || patterns[String(editingChannelId)]
+      const channel = channels.find(ch => ch.id === editingChannelId)
+      
+      let updatedRegex = []
+      if (editingPatternIndex !== null && channelPatterns?.regex) {
+        // Editing existing pattern
+        updatedRegex = [...channelPatterns.regex]
+        updatedRegex[editingPatternIndex] = newPattern
+      } else {
+        // Adding new pattern
+        updatedRegex = channelPatterns?.regex ? [...channelPatterns.regex, newPattern] : [newPattern]
+      }
+
+      await regexAPI.addPattern({
+        channel_id: editingChannelId,
+        name: channel?.name || '',
+        regex: updatedRegex,
+        enabled: channelPatterns?.enabled !== false
+      })
+
+      toast({
+        title: "Success",
+        description: editingPatternIndex !== null ? "Pattern updated successfully" : "Pattern added successfully"
+      })
+
+      // Reload patterns
+      await loadData()
+      handleCloseDialog()
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: "Failed to save pattern",
+        variant: "destructive"
+      })
+    }
+  }
+
+  const handleDeletePattern = async (channelId, patternIndex) => {
+    try {
+      const channelPatterns = patterns[channelId] || patterns[String(channelId)]
+      const channel = channels.find(ch => ch.id === channelId)
+      
+      if (!channelPatterns?.regex) return
+
+      const updatedRegex = channelPatterns.regex.filter((_, index) => index !== patternIndex)
+      
+      if (updatedRegex.length === 0) {
+        // If no patterns left, delete the entire pattern config
+        await regexAPI.deletePattern(channelId)
+      } else {
+        // Update with remaining patterns
+        await regexAPI.addPattern({
+          channel_id: channelId,
+          name: channel?.name || '',
+          regex: updatedRegex,
+          enabled: channelPatterns.enabled !== false
+        })
+      }
+
+      toast({
+        title: "Success",
+        description: "Pattern deleted successfully"
+      })
+
+      await loadData()
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: "Failed to delete pattern",
+        variant: "destructive"
+      })
+    }
   }
 
   // Filter channels based on search query
@@ -340,12 +506,91 @@ export default function ChannelConfiguration() {
               channel={channel}
               patterns={patterns}
               onEditRegex={handleEditRegex}
+              onDeletePattern={handleDeletePattern}
               onCheckChannel={handleCheckChannel}
               loading={checkingChannel === channel.id}
             />
           ))
         )}
       </div>
+
+      {/* Regex Pattern Dialog */}
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent className="sm:max-w-[600px]">
+          <DialogHeader>
+            <DialogTitle>
+              {editingPatternIndex !== null ? 'Edit' : 'Add'} Regex Pattern
+            </DialogTitle>
+            <DialogDescription>
+              Enter a regex pattern to match streams for this channel.
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="pattern">Regex Pattern</Label>
+              <Input
+                id="pattern"
+                placeholder="e.g., .*ESPN.*|.*Sports.*"
+                value={newPattern}
+                onChange={(e) => setNewPattern(e.target.value)}
+                className="font-mono"
+              />
+            </div>
+
+            {/* Live Test Results */}
+            {testingPattern && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Testing pattern...
+              </div>
+            )}
+
+            {testResults && !testingPattern && (
+              <div className="space-y-2">
+                <Label>Test Results</Label>
+                <div className="border rounded-md p-3 bg-muted/50">
+                  {testResults.valid ? (
+                    <>
+                      <div className="flex items-center gap-2 text-sm font-medium text-green-600 mb-2">
+                        <CheckCircle className="h-4 w-4" />
+                        Valid pattern - {testResults.matches?.length || 0} matches found
+                      </div>
+                      {testResults.matches && testResults.matches.length > 0 && (
+                        <div className="space-y-1 max-h-32 overflow-y-auto">
+                          {testResults.matches.slice(0, 10).map((match, idx) => (
+                            <div key={idx} className="text-xs text-muted-foreground truncate">
+                              • {match}
+                            </div>
+                          ))}
+                          {testResults.matches.length > 10 && (
+                            <div className="text-xs text-muted-foreground italic">
+                              ... and {testResults.matches.length - 10} more
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div className="text-sm text-destructive">
+                      {testResults.error || 'Invalid pattern'}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={handleCloseDialog}>
+              Cancel
+            </Button>
+            <Button onClick={handleSavePattern} disabled={!newPattern.trim()}>
+              {editingPatternIndex !== null ? 'Update' : 'Add'} Pattern
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

@@ -110,7 +110,7 @@ export default function Dashboard() {
     )
   }
 
-  const isAutomationRunning = status?.is_running || false
+  const isAutomationRunning = status?.running || false
   const isStreamCheckerRunning = streamCheckerStatus?.is_running || false
   const queueProgress = streamCheckerStatus?.queue_size > 0 
     ? ((streamCheckerStatus?.total_processed || 0) / (streamCheckerStatus?.queue_size + streamCheckerStatus?.total_processed || 1)) * 100
@@ -212,8 +212,8 @@ export default function Dashboard() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {status?.last_update ? (
-                new Date(status.last_update).toLocaleTimeString()
+              {status?.last_playlist_update ? (
+                new Date(status.last_playlist_update).toLocaleTimeString()
               ) : (
                 'N/A'
               )}

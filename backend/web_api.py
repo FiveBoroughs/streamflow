@@ -225,15 +225,25 @@ def get_channel_stats(channel_id):
             return jsonify({"error": "Failed to fetch channels"}), 500
         
         # Find the specific channel - convert to dict for O(1) lookup
-        channels_dict = {ch['id']: ch for ch in channels}
+        # Filter out any invalid channel objects and build lookup dict
+        channels_dict = {ch['id']: ch for ch in channels if isinstance(ch, dict) and 'id' in ch}
         channel = channels_dict.get(channel_id_int)
         
         if not channel:
             return jsonify({"error": "Channel not found"}), 404
         
         # Get streams for this channel
-        streams = channel.get('streams', [])
-        total_streams = len(streams)
+        # channel['streams'] is a list of stream IDs, need to fetch full stream objects
+        stream_ids = channel.get('streams', [])
+        total_streams = len(stream_ids)
+        
+        # Fetch full stream objects for each stream ID
+        streams = []
+        for stream_id in stream_ids:
+            if isinstance(stream_id, int):
+                stream = udi.get_stream_by_id(stream_id)
+                if stream:
+                    streams.append(stream)
         
         # Get dead streams count for this channel
         dead_count = 0
@@ -251,13 +261,18 @@ def get_channel_stats(channel_id):
         bitrates = []
         
         for stream in streams:
-            # Get resolution
-            resolution = stream.get('resolution', 'Unknown')
+            # Get resolution from stream_stats if available
+            stream_stats = stream.get('stream_stats')
+            resolution = 'Unknown'
+            bitrate = None
+            
+            if stream_stats and isinstance(stream_stats, dict):
+                resolution = stream_stats.get('resolution', 'Unknown')
+                bitrate = stream_stats.get('bitrate')
+            
             if resolution != 'Unknown':
                 resolutions[resolution] = resolutions.get(resolution, 0) + 1
             
-            # Get bitrate
-            bitrate = stream.get('bitrate')
             if bitrate and isinstance(bitrate, (int, float)):
                 bitrates.append(bitrate)
         

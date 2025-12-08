@@ -46,6 +46,7 @@ export const channelsAPI = {
   getChannels: () => api.get('/channels'),
   getGroups: () => api.get('/channels/groups'),
   getChannelStats: (channelId) => api.get(`/channels/${channelId}/stats`),
+  getLogo: (logoId) => api.get(`/channels/logos/${logoId}`),
 };
 
 export const regexAPI = {
