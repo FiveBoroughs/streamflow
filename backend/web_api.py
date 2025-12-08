@@ -9,9 +9,11 @@ the automated stream management system.
 import json
 import logging
 import os
+import requests
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any
+from werkzeug.utils import secure_filename
 
 from flask import Flask, request, jsonify, send_from_directory, send_file
 from flask_cors import CORS
@@ -342,15 +344,20 @@ def get_channel_logo_cached(logo_id):
     4. Serves the cached file
     """
     try:
-        import requests
-        from werkzeug.utils import secure_filename
+        # Validate logo_id is a positive integer
+        try:
+            logo_id_int = int(logo_id)
+            if logo_id_int <= 0:
+                return jsonify({"error": "Invalid logo ID: must be a positive integer"}), 400
+        except (ValueError, TypeError):
+            return jsonify({"error": "Invalid logo ID: must be a valid integer"}), 400
         
         # Create logos cache directory if it doesn't exist
         logos_cache_dir = CONFIG_DIR / 'logos_cache'
         logos_cache_dir.mkdir(exist_ok=True)
         
         # Check if logo is already cached
-        logo_filename = f"logo_{logo_id}"
+        logo_filename = f"logo_{logo_id_int}"
         
         # Try common image extensions
         for ext in ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg']:
@@ -361,7 +368,7 @@ def get_channel_logo_cached(logo_id):
         
         # Logo not cached, download it from Dispatcharr
         udi = get_udi_manager()
-        logo = udi.get_logo_by_id(int(logo_id))
+        logo = udi.get_logo_by_id(logo_id_int)
         
         if not logo:
             return jsonify({"error": "Logo not found"}), 404
@@ -369,6 +376,9 @@ def get_channel_logo_cached(logo_id):
         # Get the logo URL from Dispatcharr
         # Prefer cache_url if available, otherwise use url
         dispatcharr_base_url = os.getenv("DISPATCHARR_BASE_URL", "")
+        if not dispatcharr_base_url:
+            return jsonify({"error": "DISPATCHARR_BASE_URL not configured"}), 500
+            
         logo_url = logo.get('cache_url') or logo.get('url')
         
         if not logo_url:
@@ -378,9 +388,13 @@ def get_channel_logo_cached(logo_id):
         if logo_url.startswith('/'):
             logo_url = f"{dispatcharr_base_url}{logo_url}"
         
-        # Download the logo
-        logger.info(f"Downloading logo {logo_id} from {logo_url}")
-        response = requests.get(logo_url, timeout=10)
+        # Validate URL scheme (must be http or https)
+        if not logo_url.startswith(('http://', 'https://')):
+            return jsonify({"error": "Invalid logo URL scheme"}), 400
+        
+        # Download the logo with SSL verification enabled
+        logger.info(f"Downloading logo {logo_id_int} from {logo_url}")
+        response = requests.get(logo_url, timeout=10, verify=True)
         response.raise_for_status()
         
         # Determine file extension from content-type or URL
