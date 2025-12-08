@@ -102,3 +102,13 @@ export const dispatcharrAPI = {
   updateConfig: (config) => api.put('/dispatcharr/config', config),
   testConnection: (config) => api.post('/dispatcharr/test-connection', config),
 };
+
+export const schedulingAPI = {
+  getConfig: () => api.get('/scheduling/config'),
+  updateConfig: (config) => api.put('/scheduling/config', config),
+  getEPGGrid: (forceRefresh = false) => api.get('/scheduling/epg/grid', { params: { force_refresh: forceRefresh } }),
+  getChannelPrograms: (channelId) => api.get(`/scheduling/epg/channel/${channelId}`),
+  getEvents: () => api.get('/scheduling/events'),
+  createEvent: (eventData) => api.post('/scheduling/events', eventData),
+  deleteEvent: (eventId) => api.delete(`/scheduling/events/${eventId}`),
+};

@@ -1373,6 +1373,168 @@ def trigger_global_action():
         logger.error(f"Error triggering global action: {e}")
         return jsonify({"error": str(e)}), 500
 
+# ============================================================================
+# Scheduling API Endpoints
+# ============================================================================
+
+@app.route('/api/scheduling/config', methods=['GET'])
+@log_function_call
+def get_scheduling_config():
+    """Get scheduling configuration including EPG refresh interval."""
+    try:
+        from scheduling_service import get_scheduling_service
+        service = get_scheduling_service()
+        config = service.get_config()
+        return jsonify(config)
+    except Exception as e:
+        logger.error(f"Error getting scheduling config: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/scheduling/config', methods=['PUT'])
+@log_function_call
+def update_scheduling_config():
+    """Update scheduling configuration.
+    
+    Expected JSON body:
+    {
+        "epg_refresh_interval_minutes": 60,
+        "enabled": true
+    }
+    """
+    try:
+        from scheduling_service import get_scheduling_service
+        service = get_scheduling_service()
+        config = request.get_json()
+        
+        if not config:
+            return jsonify({"error": "No configuration provided"}), 400
+        
+        success = service.update_config(config)
+        
+        if success:
+            return jsonify({"message": "Configuration updated", "config": service.get_config()})
+        else:
+            return jsonify({"error": "Failed to save configuration"}), 500
+    
+    except Exception as e:
+        logger.error(f"Error updating scheduling config: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/scheduling/epg/grid', methods=['GET'])
+@log_function_call
+def get_epg_grid():
+    """Get EPG grid data (all programs for next 24 hours).
+    
+    Query parameters:
+    - force_refresh: If true, bypass cache and fetch fresh data
+    """
+    try:
+        from scheduling_service import get_scheduling_service
+        service = get_scheduling_service()
+        force_refresh = request.args.get('force_refresh', 'false').lower() == 'true'
+        
+        programs = service.fetch_epg_grid(force_refresh=force_refresh)
+        return jsonify(programs)
+    
+    except Exception as e:
+        logger.error(f"Error fetching EPG grid: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/scheduling/epg/channel/<int:channel_id>', methods=['GET'])
+@log_function_call
+def get_channel_programs(channel_id):
+    """Get programs for a specific channel.
+    
+    Args:
+        channel_id: Channel ID
+    
+    Returns:
+        List of programs for the channel
+    """
+    try:
+        from scheduling_service import get_scheduling_service
+        service = get_scheduling_service()
+        
+        programs = service.get_programs_by_channel(channel_id)
+        return jsonify(programs)
+    
+    except Exception as e:
+        logger.error(f"Error fetching programs for channel {channel_id}: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/scheduling/events', methods=['GET'])
+@log_function_call
+def get_scheduled_events():
+    """Get all scheduled events."""
+    try:
+        from scheduling_service import get_scheduling_service
+        service = get_scheduling_service()
+        events = service.get_scheduled_events()
+        return jsonify(events)
+    except Exception as e:
+        logger.error(f"Error getting scheduled events: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/scheduling/events', methods=['POST'])
+@log_function_call
+def create_scheduled_event():
+    """Create a new scheduled event.
+    
+    Expected JSON body:
+    {
+        "channel_id": 123,
+        "program_start_time": "2024-01-01T10:00:00Z",
+        "program_end_time": "2024-01-01T11:00:00Z",
+        "program_title": "Program Name",
+        "minutes_before": 5
+    }
+    """
+    try:
+        from scheduling_service import get_scheduling_service
+        service = get_scheduling_service()
+        event_data = request.get_json()
+        
+        if not event_data:
+            return jsonify({"error": "No event data provided"}), 400
+        
+        # Validate required fields
+        required_fields = ['channel_id', 'program_start_time', 'program_end_time', 'program_title']
+        for field in required_fields:
+            if field not in event_data:
+                return jsonify({"error": f"Missing required field: {field}"}), 400
+        
+        event = service.create_scheduled_event(event_data)
+        return jsonify(event), 201
+    
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        logger.error(f"Error creating scheduled event: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/scheduling/events/<event_id>', methods=['DELETE'])
+@log_function_call
+def delete_scheduled_event(event_id):
+    """Delete a scheduled event.
+    
+    Args:
+        event_id: Event ID
+    """
+    try:
+        from scheduling_service import get_scheduling_service
+        service = get_scheduling_service()
+        
+        success = service.delete_scheduled_event(event_id)
+        
+        if success:
+            return jsonify({"message": "Event deleted"}), 200
+        else:
+            return jsonify({"error": "Event not found"}), 404
+    
+    except Exception as e:
+        logger.error(f"Error deleting scheduled event: {e}")
+        return jsonify({"error": str(e)}), 500
+
 # Serve React app for all frontend routes (catch-all - must be last!)
 @app.route('/<path:path>')
 def serve_frontend(path):
