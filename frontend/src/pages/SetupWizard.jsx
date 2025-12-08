@@ -780,28 +780,6 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
             </div>
           </div>
         )
-                        ...config,
-                        enabled_features: { ...config.enabled_features, auto_quality_reordering: checked }
-                      })}
-                    />
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <Label htmlFor="autostart">Autostart Automation</Label>
-                    <Switch
-                      id="autostart"
-                      checked={config.autostart_automation}
-                      onCheckedChange={(checked) => setConfig({ ...config, autostart_automation: checked })}
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <Button onClick={handleSaveAutomationConfig} disabled={loading}>
-              {loading ? 'Saving...' : 'Save Configuration'}
-            </Button>
-          </div>
-        )
 
       case 3:
         return (

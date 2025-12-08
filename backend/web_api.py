@@ -208,6 +208,75 @@ def get_channels():
         logger.error(f"Error fetching channels: {e}")
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/channels/<channel_id>/stats', methods=['GET'])
+def get_channel_stats(channel_id):
+    """Get channel statistics including stream count, dead streams, resolution, and bitrate."""
+    try:
+        udi = get_udi_manager()
+        channels = udi.get_channels()
+        
+        if channels is None:
+            return jsonify({"error": "Failed to fetch channels"}), 500
+        
+        # Find the specific channel
+        channel = next((ch for ch in channels if ch['id'] == channel_id), None)
+        if not channel:
+            return jsonify({"error": "Channel not found"}), 404
+        
+        # Get streams for this channel
+        streams = channel.get('streams', [])
+        total_streams = len(streams)
+        
+        # Get dead streams count for this channel
+        dead_count = 0
+        checker = get_stream_checker_service()
+        if checker and checker.dead_streams_tracker:
+            dead_streams = checker.dead_streams_tracker.get_dead_streams()
+            # Count dead streams for this channel
+            for stream in streams:
+                stream_url = stream.get('url', '')
+                if stream_url in dead_streams:
+                    dead_count += 1
+        
+        # Calculate resolution statistics
+        resolutions = {}
+        bitrates = []
+        
+        for stream in streams:
+            # Get resolution
+            resolution = stream.get('resolution', 'Unknown')
+            if resolution != 'Unknown':
+                resolutions[resolution] = resolutions.get(resolution, 0) + 1
+            
+            # Get bitrate
+            bitrate = stream.get('bitrate')
+            if bitrate and isinstance(bitrate, (int, float)):
+                bitrates.append(bitrate)
+        
+        # Most common resolution
+        most_common_resolution = 'Unknown'
+        if resolutions:
+            most_common_resolution = max(resolutions, key=resolutions.get)
+        
+        # Average bitrate
+        avg_bitrate = 0
+        if bitrates:
+            avg_bitrate = int(sum(bitrates) / len(bitrates))
+        
+        return jsonify({
+            "channel_id": channel_id,
+            "channel_name": channel.get('name', ''),
+            "logo_id": channel.get('logo_id'),
+            "total_streams": total_streams,
+            "dead_streams": dead_count,
+            "most_common_resolution": most_common_resolution,
+            "average_bitrate": avg_bitrate,
+            "resolutions": resolutions
+        })
+    except Exception as e:
+        logger.error(f"Error fetching channel stats: {e}")
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/api/channels/groups', methods=['GET'])
 def get_channel_groups():
     """Get all channel groups from UDI."""

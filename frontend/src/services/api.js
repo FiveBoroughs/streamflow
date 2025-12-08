@@ -45,6 +45,7 @@ export const automationAPI = {
 export const channelsAPI = {
   getChannels: () => api.get('/channels'),
   getGroups: () => api.get('/channels/groups'),
+  getChannelStats: (channelId) => api.get(`/channels/${channelId}/stats`),
 };
 
 export const regexAPI = {
