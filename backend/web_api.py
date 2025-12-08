@@ -249,6 +249,7 @@ def get_channel_stats(channel_id):
         
         # Get dead streams count for this channel
         dead_count = 0
+        URL_LOG_TRUNCATE_LENGTH = 50
         checker = get_stream_checker_service()
         if checker and checker.dead_streams_tracker:
             dead_streams = checker.dead_streams_tracker.get_dead_streams()
@@ -260,14 +261,14 @@ def get_channel_stats(channel_id):
                 if stream_url:
                     if stream_url in dead_streams:
                         dead_count += 1
-                        logger.debug(f"Found dead stream in channel {channel_id_int}: {stream.get('name', 'Unknown')} - URL: {stream_url[:50]}...")
+                        logger.debug(f"Found dead stream in channel {channel_id_int}: {stream.get('name', 'Unknown')} - URL: {stream_url[:URL_LOG_TRUNCATE_LENGTH]}...")
             
             logger.debug(f"Channel {channel_id_int} has {dead_count} dead streams out of {len(streams)} total streams")
             
             # If we have dead streams in tracker but found none for this channel, log sample URLs for debugging
             if len(dead_streams) > 0 and dead_count == 0 and len(streams) > 0:
-                sample_stream_url = streams[0].get('url', 'N/A')[:50] if streams else 'N/A'
-                sample_dead_url = list(dead_streams.keys())[0][:50] if dead_streams else 'N/A'
+                sample_stream_url = streams[0].get('url', 'N/A')[:URL_LOG_TRUNCATE_LENGTH] if streams else 'N/A'
+                sample_dead_url = list(dead_streams.keys())[0][:URL_LOG_TRUNCATE_LENGTH] if dead_streams else 'N/A'
                 logger.debug(f"Channel {channel_id_int}: No matches found. Sample stream URL: {sample_stream_url}... | Sample dead URL: {sample_dead_url}...")
         else:
             logger.warning(f"Dead streams tracker not available for channel {channel_id_int}")
