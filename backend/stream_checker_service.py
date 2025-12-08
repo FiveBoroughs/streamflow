@@ -731,6 +731,11 @@ class StreamCheckerService:
                 log_exception(logger, e, "changelog initialization")
                 logger.warning(f"Failed to initialize changelog manager: {e}")
         
+        # Batch changelog tracking
+        self.batch_changelog_entries = []
+        self.batch_start_time = None
+        self.batch_lock = threading.Lock()
+        
         self.running = False
         self.checking = False
         self.global_action_in_progress = False
@@ -803,8 +808,16 @@ class StreamCheckerService:
                 logger.debug("Worker waiting for next channel from queue...")
                 channel_id = self.check_queue.get_next_channel(timeout=1.0)
                 if channel_id is None:
+                    # No channel in queue - check if we should finalize a batch
+                    if self.batch_start_time is not None:
+                        # Queue is empty and we have an active batch - finalize it
+                        self._finalize_batch_changelog()
                     logger.debug("No channel in queue (timeout)")
                     continue
+                
+                # Start a new batch if not already started
+                if self.batch_start_time is None:
+                    self._start_batch_changelog()
                 
                 logger.debug(f"Worker processing channel {channel_id}")
                 # Check this channel
@@ -814,6 +827,10 @@ class StreamCheckerService:
             except Exception as e:
                 log_exception(logger, e, "worker loop")
                 logger.error(f"Error in worker loop: {e}", exc_info=True)
+        
+        # Finalize any remaining batch before stopping
+        if self.batch_start_time is not None:
+            self._finalize_batch_changelog()
         
         logger.info("Stream checker worker stopped")
         log_function_return(logger, "_worker_loop")
@@ -1200,6 +1217,92 @@ class StreamCheckerService:
             logger.error(f"Error updating stats for stream {stream_id}: {e}")
             return False
     
+    def _start_batch_changelog(self):
+        """Start a new batch for changelog entries."""
+        with self.batch_lock:
+            self.batch_start_time = datetime.now().isoformat()
+            self.batch_changelog_entries = []
+            logger.debug("Started new changelog batch")
+    
+    def _add_to_batch_changelog(self, channel_entry: Dict[str, Any]):
+        """Add a channel check result to the current batch.
+        
+        Args:
+            channel_entry: Dictionary containing channel check results
+        """
+        with self.batch_lock:
+            if self.batch_start_time is not None:
+                self.batch_changelog_entries.append(channel_entry)
+                logger.debug(f"Added channel entry to batch (total: {len(self.batch_changelog_entries)})")
+    
+    def _finalize_batch_changelog(self):
+        """Finalize the current batch and create a consolidated changelog entry."""
+        with self.batch_lock:
+            if self.batch_start_time is None or len(self.batch_changelog_entries) == 0:
+                logger.debug("No batch to finalize")
+                return
+            
+            if not self.changelog:
+                logger.debug("Changelog not available, skipping batch finalization")
+                self.batch_start_time = None
+                self.batch_changelog_entries = []
+                return
+            
+            try:
+                # Calculate aggregate stats
+                total_channels = len(self.batch_changelog_entries)
+                total_streams = sum(entry.get('total_streams', 0) for entry in self.batch_changelog_entries)
+                streams_analyzed = sum(entry.get('streams_analyzed', 0) for entry in self.batch_changelog_entries)
+                dead_streams = sum(entry.get('dead_streams_detected', 0) for entry in self.batch_changelog_entries)
+                streams_revived = sum(entry.get('streams_revived', 0) for entry in self.batch_changelog_entries)
+                successful_checks = sum(1 for entry in self.batch_changelog_entries if entry.get('success', False))
+                failed_checks = total_channels - successful_checks
+                
+                # Prepare subentries in the format expected by the UI
+                subentries = [{
+                    "group": "check",
+                    "items": [
+                        {
+                            "channel_id": entry.get('channel_id'),
+                            "channel_name": entry.get('channel_name'),
+                            "logo_url": entry.get('logo_url'),
+                            "stats": {
+                                "total_streams": entry.get('total_streams', 0),
+                                "streams_analyzed": entry.get('streams_analyzed', 0),
+                                "dead_streams": entry.get('dead_streams_detected', 0),
+                                "streams_revived": entry.get('streams_revived', 0),
+                                "stream_details": entry.get('stream_stats', [])
+                            }
+                        }
+                        for entry in self.batch_changelog_entries
+                    ]
+                }]
+                
+                # Create consolidated changelog entry
+                self.changelog.add_entry(
+                    action='batch_stream_check',
+                    details={
+                        'total_channels': total_channels,
+                        'successful_checks': successful_checks,
+                        'failed_checks': failed_checks,
+                        'total_streams': total_streams,
+                        'streams_analyzed': streams_analyzed,
+                        'dead_streams': dead_streams,
+                        'streams_revived': streams_revived
+                    },
+                    timestamp=self.batch_start_time,
+                    subentries=subentries
+                )
+                
+                logger.info(f"Finalized batch changelog: {total_channels} channels, {streams_analyzed} streams analyzed")
+                
+            except Exception as e:
+                logger.error(f"Failed to finalize batch changelog: {e}", exc_info=True)
+            finally:
+                # Reset batch tracking
+                self.batch_start_time = None
+                self.batch_changelog_entries = []
+    
     def _check_channel(self, channel_id: int):
         """Check and reorder streams for a specific channel.
         
@@ -1507,9 +1610,17 @@ class StreamCheckerService:
             
             logger.info(f"✓ Channel {channel_name} checked and streams reordered (parallel mode)")
             
-            # Add changelog entry
+            # Add to batch changelog instead of creating individual entry
             if self.changelog:
                 try:
+                    # Get channel logo URL
+                    logo_url = None
+                    logo_id = channel_data.get('logo_id')
+                    if logo_id:
+                        logo = udi.get_logo_by_id(logo_id)
+                        if logo:
+                            logo_url = logo.get('cache_url') or logo.get('url')
+                    
                     stream_stats = []
                     for analyzed in analyzed_streams[:10]:  # Limit to first 10
                         stream_id = analyzed.get('stream_id')
@@ -1536,19 +1647,20 @@ class StreamCheckerService:
                         
                         stream_stats.append({k: v for k, v in stream_stat.items() if v not in [None, "N/A"]})
                     
-                    self.changelog.add_entry('stream_check', {
+                    # Add to batch instead of creating individual changelog entry
+                    self._add_to_batch_changelog({
                         'channel_id': channel_id,
                         'channel_name': channel_name,
+                        'logo_url': logo_url,
                         'total_streams': len(streams),
                         'streams_analyzed': len(analyzed_streams),
                         'dead_streams_detected': len(dead_stream_ids),
                         'streams_revived': len(revived_stream_ids),
                         'success': True,
-                        'parallel_mode': True,
                         'stream_stats': stream_stats
                     })
                 except Exception as e:
-                    logger.warning(f"Failed to add changelog entry: {e}")
+                    logger.warning(f"Failed to add to batch changelog: {e}")
             
             # Mark as completed
             self.check_queue.mark_completed(channel_id)
@@ -1569,15 +1681,20 @@ class StreamCheckerService:
                     except:
                         channel_name = f'Channel {channel_id}'
                     
-                    self.changelog.add_entry('stream_check', {
+                    # Add failed check to batch
+                    self._add_to_batch_changelog({
                         'channel_id': channel_id,
                         'channel_name': channel_name,
+                        'total_streams': 0,
+                        'streams_analyzed': 0,
+                        'dead_streams_detected': 0,
+                        'streams_revived': 0,
                         'success': False,
-                        'parallel_mode': True,
-                        'error': str(e)
+                        'error': str(e),
+                        'stream_stats': []
                     })
                 except Exception as changelog_error:
-                    logger.warning(f"Failed to add changelog entry: {changelog_error}")
+                    logger.warning(f"Failed to add to batch changelog: {changelog_error}")
         
         finally:
             self.checking = False
@@ -1918,22 +2035,29 @@ class StreamCheckerService:
                         stream_stat = {k: v for k, v in stream_stat.items() if v not in [None, "N/A"]}
                         stream_stats.append(stream_stat)
                     
-                    # Create changelog entry
-                    changelog_details = {
+                    # Get channel logo URL
+                    logo_url = None
+                    logo_id = channel_data.get('logo_id')
+                    if logo_id:
+                        logo = udi.get_logo_by_id(logo_id)
+                        if logo:
+                            logo_url = logo.get('cache_url') or logo.get('url')
+                    
+                    # Add to batch changelog instead of creating individual entry
+                    self._add_to_batch_changelog({
                         'channel_id': channel_id,
                         'channel_name': channel_name,
+                        'logo_url': logo_url,
                         'total_streams': len(streams),
                         'streams_analyzed': len(analyzed_streams),
                         'dead_streams_detected': len(dead_stream_ids),
                         'streams_revived': len(revived_stream_ids),
                         'success': True,
                         'stream_stats': stream_stats[:10]  # Limit to top 10 for brevity
-                    }
-                    
-                    self.changelog.add_entry('stream_check', changelog_details)
-                    logger.info(f"Changelog entry added for channel {channel_name}")
+                    })
+                    logger.info(f"Added channel {channel_name} to batch changelog")
                 except Exception as e:
-                    logger.warning(f"Failed to add changelog entry: {e}")
+                    logger.warning(f"Failed to add to batch changelog: {e}")
             
             # Mark as completed with stream count and checked stream IDs
             self.check_queue.mark_completed(channel_id)
@@ -1947,7 +2071,7 @@ class StreamCheckerService:
             logger.error(f"Error checking channel {channel_id}: {e}", exc_info=True)
             self.check_queue.mark_failed(channel_id, str(e))
             
-            # Add changelog entry for failed check
+            # Add failed check to batch changelog
             if self.changelog:
                 try:
                     # Try to get channel name if available
@@ -1956,15 +2080,19 @@ class StreamCheckerService:
                     except:
                         channel_name = f'Channel {channel_id}'
                     
-                    changelog_details = {
+                    self._add_to_batch_changelog({
                         'channel_id': channel_id,
                         'channel_name': channel_name,
+                        'total_streams': 0,
+                        'streams_analyzed': 0,
+                        'dead_streams_detected': 0,
+                        'streams_revived': 0,
                         'success': False,
-                        'error': str(e)
-                    }
-                    self.changelog.add_entry('stream_check', changelog_details)
+                        'error': str(e),
+                        'stream_stats': []
+                    })
                 except Exception as changelog_error:
-                    logger.warning(f"Failed to add changelog entry for failed check: {changelog_error}")
+                    logger.warning(f"Failed to add to batch changelog: {changelog_error}")
         
         finally:
             self.checking = False
