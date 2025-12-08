@@ -158,12 +158,12 @@ function ChangelogEntry({ entry }) {
                                   <p className="text-xs text-muted-foreground mb-1">Streams Added:</p>
                                   <ul className="list-disc list-inside text-sm space-y-1 ml-2">
                                     {item.streams.slice(0, 5).map((stream, idx) => (
-                                      <li key={idx} className="truncate">
+                                      <li key={stream.id || stream.stream_id || `stream-${itemIndex}-${idx}`} className="truncate">
                                         {stream.name || stream.stream_name || `Stream ${stream.id || stream.stream_id}`}
                                       </li>
                                     ))}
                                     {item.streams.length > 5 && (
-                                      <li className="text-muted-foreground">
+                                      <li key="more" className="text-muted-foreground">
                                         +{item.streams.length - 5} more...
                                       </li>
                                     )}

@@ -18,7 +18,7 @@ import time
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 from collections import defaultdict
 
 from api_utils import (
@@ -67,7 +67,7 @@ class ChangelogManager:
                 logger.warning(f"Could not load {self.changelog_file}, creating new changelog")
         return []
     
-    def add_entry(self, action: str, details: Dict, timestamp: Optional[str] = None, subentries: Optional[List[Dict]] = None):
+    def add_entry(self, action: str, details: Dict, timestamp: Optional[str] = None, subentries: Optional[List[Dict[str, Any]]] = None):
         """Add a new changelog entry.
         
         Args:

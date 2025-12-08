@@ -2102,16 +2102,20 @@ class StreamCheckerService:
             for stream in streams:
                 stats = stream.get('stream_stats', {})
                 if stats:
-                    if stats.get('resolution'):
-                        resolutions.append(stats['resolution'])
-                    if stats.get('bitrate'):
+                    resolution = stats.get('resolution')
+                    if resolution and isinstance(resolution, str):
+                        resolutions.append(resolution)
+                    
+                    bitrate = stats.get('bitrate')
+                    if bitrate:
                         try:
-                            bitrates.append(float(stats['bitrate']))
+                            bitrates.append(float(bitrate))
                         except (ValueError, TypeError):
                             pass
                 
                 # Check if stream is dead
-                if self.dead_streams_tracker and self.dead_streams_tracker.is_dead(stream.get('url', '')):
+                stream_url = stream.get('url')
+                if stream_url and self.dead_streams_tracker and self.dead_streams_tracker.is_dead(stream_url):
                     dead_count += 1
             
             # Calculate averages
