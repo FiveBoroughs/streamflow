@@ -253,6 +253,13 @@ export default function ChannelConfiguration() {
   const handleCheckChannel = async (channelId) => {
     try {
       setCheckingChannel(channelId)
+      
+      // Show starting notification
+      toast({
+        title: "Channel Check Started",
+        description: "Checking channel streams...",
+      })
+      
       const response = await streamCheckerAPI.checkSingleChannel(channelId)
       
       if (response.data.success) {
