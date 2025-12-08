@@ -1216,7 +1216,7 @@ class StreamCheckerService:
         """Check and reorder streams for a specific channel using parallel thread pool."""
         import time as time_module
         from stream_check_utils import analyze_stream
-        from parallel_checker import get_parallel_checker
+        from concurrent_stream_limiter import get_smart_scheduler, get_account_limiter, initialize_account_limits
         
         start_time = time_module.time()
         log_function_call(logger, "_check_channel_concurrent", channel_id=channel_id)
@@ -1297,8 +1297,14 @@ class StreamCheckerService:
             global_limit = self.config.get('concurrent_streams.global_limit', 10)
             stagger_delay = self.config.get('concurrent_streams.stagger_delay', 1.0)
             
-            # Initialize parallel checker
-            parallel_checker = get_parallel_checker(max_workers=global_limit)
+            # Initialize account limits from UDI
+            accounts = udi.get_m3u_accounts()
+            if accounts:
+                initialize_account_limits(accounts)
+                logger.debug(f"Initialized concurrent stream limits for {len(accounts)} M3U accounts")
+            
+            # Initialize smart scheduler with account-aware limiting
+            smart_scheduler = get_smart_scheduler(global_limit=global_limit)
             
             # Prepare for concurrent execution
             analyzed_streams = []
@@ -1323,12 +1329,12 @@ class StreamCheckerService:
                     total=total,
                     current_stream=stream_name,
                     status='analyzing',
-                    step='Analyzing streams in parallel',
+                    step='Analyzing streams with account limits',
                     step_detail=f'Completed {completed}/{total}'
                 )
             
             if streams_to_check:
-                logger.info(f"Starting parallel analysis of {total_streams} streams with {global_limit} workers")
+                logger.info(f"Starting smart parallel analysis of {total_streams} streams with {global_limit} global workers")
                 
                 self.progress.update(
                     channel_id=channel_id,
@@ -1336,12 +1342,12 @@ class StreamCheckerService:
                     current=0,
                     total=total_streams,
                     status='analyzing',
-                    step='Analyzing streams in parallel',
-                    step_detail=f'Starting {global_limit} parallel workers'
+                    step='Analyzing streams with account limits',
+                    step_detail=f'Using smart scheduler with per-account limits'
                 )
                 
-                # Check streams in parallel
-                results = parallel_checker.check_streams_parallel(
+                # Check streams in parallel with account-aware limits
+                results = smart_scheduler.check_streams_with_limits(
                     streams=streams_to_check,
                     check_function=analyze_stream,
                     progress_callback=progress_callback,
@@ -1389,7 +1395,7 @@ class StreamCheckerService:
                     analyzed['channel_name'] = channel_name
                     analyzed_streams.append(analyzed)
                 
-                logger.info(f"Completed parallel analysis of {len(results)} streams")
+                logger.info(f"Completed smart parallel analysis of {len(results)} streams with account-aware limits")
             
             # Process already-checked streams (use cached data)
             for stream in streams_already_checked:
