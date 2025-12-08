@@ -7,7 +7,11 @@ import { Badge } from '@/components/ui/badge.jsx'
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion.jsx'
 import { useToast } from '@/hooks/use-toast.js'
 import { channelsAPI, regexAPI, streamCheckerAPI } from '@/services/api.js'
-import { CheckCircle, Edit, Plus, Trash2, Loader2 } from 'lucide-react'
+import { CheckCircle, Edit, Plus, Trash2, Loader2, Search, X } from 'lucide-react'
+
+// Constants for localStorage keys
+const CHANNEL_STATS_PREFIX = 'streamflow_channel_stats_'
+const CHANNEL_LOGO_PREFIX = 'streamflow_channel_logo_'
 
 function ChannelCard({ channel, patterns, onEditRegex, onCheckChannel, loading }) {
   const [stats, setStats] = useState(null)
@@ -16,7 +20,7 @@ function ChannelCard({ channel, patterns, onEditRegex, onCheckChannel, loading }
 
   useEffect(() => {
     // Try to load stats from localStorage first
-    const cachedStats = localStorage.getItem(`channel_stats_${channel.id}`)
+    const cachedStats = localStorage.getItem(`${CHANNEL_STATS_PREFIX}${channel.id}`)
     if (cachedStats) {
       try {
         setStats(JSON.parse(cachedStats))
@@ -33,7 +37,7 @@ function ChannelCard({ channel, patterns, onEditRegex, onCheckChannel, loading }
       const response = await channelsAPI.getChannelStats(channel.id)
       setStats(response.data)
       // Cache stats in localStorage
-      localStorage.setItem(`channel_stats_${channel.id}`, JSON.stringify(response.data))
+      localStorage.setItem(`${CHANNEL_STATS_PREFIX}${channel.id}`, JSON.stringify(response.data))
     } catch (err) {
       console.error('Failed to load channel stats:', err)
     } finally {
@@ -41,14 +45,17 @@ function ChannelCard({ channel, patterns, onEditRegex, onCheckChannel, loading }
     }
   }
 
+  const channelPatterns = patterns[channel.id]
+
+  // Get logo from cache or use current URL
+  const logoUrl = channel.logo_url || localStorage.getItem(`${CHANNEL_LOGO_PREFIX}${channel.id}`)
+
   // Cache channel logo URL if available
   useEffect(() => {
     if (channel.logo_url) {
-      localStorage.setItem(`channel_logo_${channel.id}`, channel.logo_url)
+      localStorage.setItem(`${CHANNEL_LOGO_PREFIX}${channel.id}`, channel.logo_url)
     }
   }, [channel.logo_url, channel.id])
-
-  const channelPatterns = patterns[channel.id]
 
   return (
     <Card className="w-full max-w-4xl">
@@ -56,8 +63,8 @@ function ChannelCard({ channel, patterns, onEditRegex, onCheckChannel, loading }
         <div className="flex items-center gap-4 p-4">
           {/* Channel Logo */}
           <div className="w-16 h-16 flex-shrink-0 bg-muted rounded-md flex items-center justify-center overflow-hidden">
-            {channel.logo_url ? (
-              <img src={channel.logo_url} alt={channel.name} className="w-full h-full object-cover" />
+            {logoUrl ? (
+              <img src={logoUrl} alt={channel.name} className="w-full h-full object-cover" />
             ) : (
               <span className="text-2xl font-bold text-muted-foreground">
                 {channel.name?.charAt(0) || '?'}
@@ -75,11 +82,11 @@ function ChannelCard({ channel, patterns, onEditRegex, onCheckChannel, loading }
                 <>
                   <div className="flex items-center gap-1">
                     <span className="text-muted-foreground">Streams:</span>
-                    <span className="font-medium">{stats.total_streams || 0}</span>
+                    <span className="font-medium">{stats.total_streams ?? 0}</span>
                   </div>
                   <div className="flex items-center gap-1">
                     <span className="text-muted-foreground">Dead:</span>
-                    <span className="font-medium text-destructive">{stats.dead_streams || 0}</span>
+                    <span className="font-medium text-destructive">{stats.dead_streams ?? 0}</span>
                   </div>
                   <div className="flex items-center gap-1">
                     <span className="text-muted-foreground">Resolution:</span>
@@ -183,6 +190,7 @@ export default function ChannelConfiguration() {
   const [patterns, setPatterns] = useState({})
   const [loading, setLoading] = useState(true)
   const [checkingChannel, setCheckingChannel] = useState(null)
+  const [searchQuery, setSearchQuery] = useState('')
   const { toast } = useToast()
 
   useEffect(() => {
@@ -239,6 +247,24 @@ export default function ChannelConfiguration() {
     })
   }
 
+  // Filter channels based on search query
+  const filteredChannels = channels.filter(channel => {
+    if (!searchQuery.trim()) return true
+    
+    const query = searchQuery.toLowerCase()
+    const channelName = (channel.name || '').toLowerCase()
+    const channelNumber = channel.channel_number ? String(channel.channel_number) : ''
+    const channelId = String(channel.id)
+    
+    return channelName.includes(query) || 
+           channelNumber.includes(query) || 
+           channelId.includes(query)
+  })
+
+  const clearSearch = () => {
+    setSearchQuery('')
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
@@ -256,15 +282,56 @@ export default function ChannelConfiguration() {
         </p>
       </div>
 
+      {/* Search Bar */}
+      <div className="flex items-center gap-2">
+        <div className="relative flex-1 max-w-md">
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            type="text"
+            placeholder="Search channels by name, number, or ID..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="pl-10 pr-10"
+          />
+          {searchQuery && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="absolute right-1 top-1/2 transform -translate-y-1/2 h-7 w-7 p-0"
+              onClick={clearSearch}
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          )}
+        </div>
+        {searchQuery && (
+          <Badge variant="secondary">
+            {filteredChannels.length} of {channels.length} channels
+          </Badge>
+        )}
+      </div>
+
       <div className="grid gap-4 xl:grid-cols-1 2xl:grid-cols-1">
-        {channels.length === 0 ? (
+        {filteredChannels.length === 0 ? (
           <Card>
             <CardContent className="p-8 text-center">
-              <p className="text-muted-foreground">No channels available</p>
+              <p className="text-muted-foreground">
+                {searchQuery ? `No channels found matching "${searchQuery}"` : 'No channels available'}
+              </p>
+              {searchQuery && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-4"
+                  onClick={clearSearch}
+                >
+                  Clear search
+                </Button>
+              )}
             </CardContent>
           </Card>
         ) : (
-          channels.map(channel => (
+          filteredChannels.map(channel => (
             <ChannelCard
               key={channel.id}
               channel={channel}

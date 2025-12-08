@@ -216,7 +216,7 @@ def get_channel_stats(channel_id):
         try:
             channel_id_int = int(channel_id)
         except (ValueError, TypeError):
-            return jsonify({"error": "Invalid channel ID"}), 400
+            return jsonify({"error": "Invalid channel ID: must be a valid integer"}), 400
         
         udi = get_udi_manager()
         channels = udi.get_channels()
