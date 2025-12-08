@@ -69,6 +69,62 @@ function getActionColor(action) {
   }
 }
 
+function ChannelItem({ item, groupType, groupIndex, itemIndex }) {
+  const [logoError, setLogoError] = useState(false)
+  const channelLabel = item.channel_name
+  const channelStats = groupType === 'check' && item.stats ? 
+    `Avg ${item.stats.avg_resolution || 'N/A'}, ${item.stats.avg_bitrate || 'N/A'}` :
+    null
+  
+  return (
+    <AccordionItem key={itemIndex} value={`channel-${groupIndex}-${itemIndex}`}>
+      <AccordionTrigger className="hover:no-underline py-2">
+        <div className="flex items-center gap-2">
+          {/* Channel Logo */}
+          {item.logo_url && !logoError && (
+            <img 
+              src={item.logo_url} 
+              alt={channelLabel}
+              className="w-6 h-6 object-contain"
+              onError={() => setLogoError(true)}
+            />
+          )}
+          <span className="text-sm font-medium">{channelLabel}</span>
+          {channelStats && (
+            <span className="text-xs text-muted-foreground ml-2">: {channelStats}</span>
+          )}
+        </div>
+      </AccordionTrigger>
+      <AccordionContent>
+        <div className="space-y-1 pl-4">
+          {/* Stream list for update_match */}
+          {groupType === 'update_match' && item.streams && (
+            <ul className="list-none text-sm space-y-1">
+              {item.streams.map((stream, idx) => (
+                <li key={stream.id || stream.stream_id || `stream-${itemIndex}-${idx}`} className="text-muted-foreground">
+                  - {stream.name || stream.stream_name || `Stream ${stream.id || stream.stream_id}`}
+                </li>
+              ))}
+            </ul>
+          )}
+          
+          {/* Stream details for check */}
+          {groupType === 'check' && item.stats && item.stats.stream_details && (
+            <ul className="list-none text-sm space-y-1">
+              {item.stats.stream_details.map((streamDetail, idx) => (
+                <li key={streamDetail.stream_id || `detail-${idx}`} className="text-muted-foreground">
+                  - {streamDetail.stream_name || 'Unknown'}: {streamDetail.resolution || 'N/A'}, {streamDetail.fps || 'N/A'} fps, {streamDetail.bitrate || 'N/A'}, {streamDetail.video_codec || 'N/A'}
+                  {streamDetail.score !== undefined && `, Score: ${streamDetail.score}`}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </AccordionContent>
+    </AccordionItem>
+  )
+}
+
 function ChangelogEntry({ entry }) {
   const { timestamp, action, details, subentries } = entry
   const hasSubentries = subentries && subentries.length > 0
@@ -149,60 +205,15 @@ function ChangelogEntry({ entry }) {
                   <AccordionContent>
                     {/* Nested accordion for channels */}
                     <Accordion type="multiple" className="w-full pl-4">
-                      {items.map((item, itemIndex) => {
-                        const channelLabel = item.channel_name
-                        const channelStats = groupType === 'check' && item.stats ? 
-                          `Most Common ${item.stats.avg_resolution || 'N/A'}, ${item.stats.avg_bitrate || 'N/A'}` :
-                          null
-                        
-                        return (
-                          <AccordionItem key={itemIndex} value={`channel-${groupIndex}-${itemIndex}`}>
-                            <AccordionTrigger className="hover:no-underline py-2">
-                              <div className="flex items-center gap-2">
-                                {/* Channel Logo */}
-                                {item.logo_url && (
-                                  <img 
-                                    src={item.logo_url} 
-                                    alt={channelLabel}
-                                    className="w-6 h-6 object-contain"
-                                    onError={(e) => { e.target.style.display = 'none' }}
-                                  />
-                                )}
-                                <span className="text-sm font-medium">{channelLabel}</span>
-                                {channelStats && (
-                                  <span className="text-xs text-muted-foreground ml-2">: {channelStats}</span>
-                                )}
-                              </div>
-                            </AccordionTrigger>
-                            <AccordionContent>
-                              <div className="space-y-1 pl-4">
-                                {/* Stream list for update_match */}
-                                {groupType === 'update_match' && item.streams && (
-                                  <ul className="list-none text-sm space-y-1">
-                                    {item.streams.map((stream, idx) => (
-                                      <li key={stream.id || stream.stream_id || `stream-${itemIndex}-${idx}`} className="text-muted-foreground">
-                                        - {stream.name || stream.stream_name || `Stream ${stream.id || stream.stream_id}`}
-                                      </li>
-                                    ))}
-                                  </ul>
-                                )}
-                                
-                                {/* Stream details for check */}
-                                {groupType === 'check' && item.stats && item.stats.stream_details && (
-                                  <ul className="list-none text-sm space-y-1">
-                                    {item.stats.stream_details.map((streamDetail, idx) => (
-                                      <li key={streamDetail.stream_id || `detail-${idx}`} className="text-muted-foreground">
-                                        - {streamDetail.stream_name || 'Unknown'}: {streamDetail.resolution || 'N/A'}, {streamDetail.fps || 'N/A'} fps, {streamDetail.bitrate || 'N/A'}, {streamDetail.video_codec || 'N/A'}
-                                        {streamDetail.score !== undefined && `, Score: ${streamDetail.score}`}
-                                      </li>
-                                    ))}
-                                  </ul>
-                                )}
-                              </div>
-                            </AccordionContent>
-                          </AccordionItem>
-                        )
-                      })}
+                      {items.map((item, itemIndex) => (
+                        <ChannelItem 
+                          key={itemIndex}
+                          item={item}
+                          groupType={groupType}
+                          groupIndex={groupIndex}
+                          itemIndex={itemIndex}
+                        />
+                      ))}
                     </Accordion>
                   </AccordionContent>
                 </AccordionItem>
