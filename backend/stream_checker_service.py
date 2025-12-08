@@ -1462,12 +1462,12 @@ class StreamCheckerService:
             )
             analyzed_streams.sort(key=lambda x: x.get('score', 0), reverse=True)
             
-            # Remove dead streams from the channel (unless it's a force check)
-            if dead_stream_ids and not force_check:
+            # Remove dead streams from the channel
+            # Dead streams are checked during all channel checks (normal and global)
+            # If they're still dead, they're removed; if revived, they remain
+            if dead_stream_ids:
                 logger.warning(f"🔴 Removing {len(dead_stream_ids)} dead streams from channel {channel_name}")
                 analyzed_streams = [s for s in analyzed_streams if s['stream_id'] not in dead_stream_ids]
-            elif dead_stream_ids and force_check:
-                logger.info(f"Global check mode: keeping {len(dead_stream_ids)} dead streams to check for revival")
             
             if revived_stream_ids:
                 logger.info(f"{len(revived_stream_ids)} streams were revived in channel {channel_name}")
@@ -1483,7 +1483,8 @@ class StreamCheckerService:
                 step_detail='Applying new stream order to channel'
             )
             reordered_ids = [s['stream_id'] for s in analyzed_streams]
-            update_channel_streams(channel_id, reordered_ids, allow_dead_streams=force_check)
+            # Dead streams have already been filtered from analyzed_streams, so allow_dead_streams=False
+            update_channel_streams(channel_id, reordered_ids, allow_dead_streams=False)
             
             # Verify the update
             self.progress.update(
@@ -1519,7 +1520,7 @@ class StreamCheckerService:
                         }
                         
                         # Mark dead streams as "dead" instead of showing score:0
-                        if is_dead and not force_check:
+                        if is_dead:
                             stream_stat['status'] = 'dead'
                         elif is_revived:
                             stream_stat['status'] = 'revived'
@@ -1534,7 +1535,7 @@ class StreamCheckerService:
                         'channel_name': channel_name,
                         'total_streams': len(streams),
                         'streams_analyzed': len(analyzed_streams),
-                        'dead_streams_detected': len(dead_stream_ids) if not force_check else 0,
+                        'dead_streams_detected': len(dead_stream_ids),
                         'streams_revived': len(revived_stream_ids),
                         'success': True,
                         'parallel_mode': True,
@@ -1820,9 +1821,10 @@ class StreamCheckerService:
             )
             analyzed_streams.sort(key=lambda x: x.get('score', 0), reverse=True)
             
-            # Remove dead streams from the channel (unless it's a force check/global check)
-            # During global checks, we want to give dead streams a chance to be revived
-            if dead_stream_ids and not force_check:
+            # Remove dead streams from the channel
+            # Dead streams are checked during all channel checks (normal and global)
+            # If they're still dead, they're removed; if revived, they remain
+            if dead_stream_ids:
                 logger.warning(f"🔴 Removing {len(dead_stream_ids)} dead streams from channel {channel_name}")
                 # Log which streams are being removed
                 for stream_id in dead_stream_ids:
@@ -1830,8 +1832,6 @@ class StreamCheckerService:
                     if dead_stream:
                         logger.info(f"  - Removing dead stream {stream_id}: {dead_stream.get('stream_name', 'Unknown')}")
                 analyzed_streams = [s for s in analyzed_streams if s['stream_id'] not in dead_stream_ids]
-            elif dead_stream_ids and force_check:
-                logger.info(f"Global check mode: keeping {len(dead_stream_ids)} dead streams to check for revival")
             
             if revived_stream_ids:
                 logger.info(f"{len(revived_stream_ids)} streams were revived in channel {channel_name}")
@@ -1847,8 +1847,8 @@ class StreamCheckerService:
                 step_detail='Applying new stream order to channel'
             )
             reordered_ids = [s['stream_id'] for s in analyzed_streams]
-            # Allow dead streams during force_check (global checks) to give them a second chance
-            update_channel_streams(channel_id, reordered_ids, allow_dead_streams=force_check)
+            # Dead streams have already been filtered from analyzed_streams, so allow_dead_streams=False
+            update_channel_streams(channel_id, reordered_ids, allow_dead_streams=False)
             
             # Verify the update was applied correctly
             self.progress.update(
@@ -1897,7 +1897,7 @@ class StreamCheckerService:
                         }
                         
                         # Mark dead streams as "dead" instead of showing score:0
-                        if is_dead and not force_check:
+                        if is_dead:
                             stream_stat['status'] = 'dead'
                         elif is_revived:
                             stream_stat['status'] = 'revived'
@@ -1918,7 +1918,7 @@ class StreamCheckerService:
                         'channel_name': channel_name,
                         'total_streams': len(streams),
                         'streams_analyzed': len(analyzed_streams),
-                        'dead_streams_detected': len(dead_stream_ids) if not force_check else 0,
+                        'dead_streams_detected': len(dead_stream_ids),
                         'streams_revived': len(revived_stream_ids),
                         'success': True,
                         'stream_stats': stream_stats[:10]  # Limit to top 10 for brevity
