@@ -2,7 +2,7 @@ services:
   stream-checker:
     image: ghcr.io/krinkuto11/streamflow:latest
     ports:
-      - "5000:5000"   # Single port for both frontend and backend
+      - "5000:5000"   # Flask API (serves both API and static frontend)
     volumes:
       - /srv/docker/databases/stream_checker:/app/data
     env_file:
