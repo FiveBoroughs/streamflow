@@ -297,7 +297,7 @@ class SmartStreamScheduler:
 # Global instance
 _account_limiter = None
 _smart_scheduler = None
-_limiter_lock = threading.Lock()
+_limiter_lock = threading.RLock()  # Use RLock to allow recursive locking
 
 
 def get_account_limiter() -> AccountStreamLimiter:
