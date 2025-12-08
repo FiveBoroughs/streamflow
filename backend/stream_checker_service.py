@@ -2153,10 +2153,22 @@ class StreamCheckerService:
             # Add changelog entry
             if self.changelog:
                 try:
+                    # Get logo URL for the channel
+                    logo_url = None
+                    logo_id = channel.get('logo_id')
+                    if logo_id:
+                        try:
+                            logo = udi.get_logo_by_id(logo_id)
+                            if logo and logo.get('cache_url'):
+                                logo_url = logo.get('cache_url')
+                        except Exception as e:
+                            logger.debug(f"Could not fetch logo for channel {channel_id}: {e}")
+                    
                     self.changelog.add_single_channel_check_entry(
                         channel_id=channel_id,
                         channel_name=channel_name,
-                        check_stats=check_stats
+                        check_stats=check_stats,
+                        logo_url=logo_url
                     )
                 except Exception as e:
                     logger.warning(f"Failed to add changelog entry: {e}")

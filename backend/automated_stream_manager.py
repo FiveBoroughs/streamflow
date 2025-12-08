@@ -124,7 +124,7 @@ class ChangelogManager:
         """Add a playlist update & match entry with subentries.
         
         Args:
-            channels_updated: Dict mapping channel_id to update info (streams added, stats)
+            channels_updated: Dict mapping channel_id to update info (streams added, stats, logo_url)
             global_stats: Global statistics (total streams added, dead streams, avg resolution, avg bitrate)
         """
         # Create subentries for streams matched per channel
@@ -135,6 +135,7 @@ class ChangelogManager:
                     'type': 'update_match',
                     'channel_id': channel_id,
                     'channel_name': info.get('channel_name', f'Channel {channel_id}'),
+                    'logo_url': info.get('logo_url'),
                     'streams': info.get('streams_added', [])
                 })
         
@@ -146,6 +147,7 @@ class ChangelogManager:
                     'type': 'check',
                     'channel_id': channel_id,
                     'channel_name': info.get('channel_name', f'Channel {channel_id}'),
+                    'logo_url': info.get('logo_url'),
                     'stats': info.get('check_stats', {})
                 })
         
@@ -165,7 +167,7 @@ class ChangelogManager:
         """Add a global check entry with subentries.
         
         Args:
-            channels_checked: Dict mapping channel_id to check stats
+            channels_checked: Dict mapping channel_id to check stats (including logo_url)
             global_stats: Global statistics across all channels
         """
         check_subentries = []
@@ -174,6 +176,7 @@ class ChangelogManager:
                 'type': 'check',
                 'channel_id': channel_id,
                 'channel_name': stats.get('channel_name', f'Channel {channel_id}'),
+                'logo_url': stats.get('logo_url'),
                 'stats': stats
             })
         
@@ -185,18 +188,20 @@ class ChangelogManager:
             subentries=subentries
         )
     
-    def add_single_channel_check_entry(self, channel_id: int, channel_name: str, check_stats: Dict):
+    def add_single_channel_check_entry(self, channel_id: int, channel_name: str, check_stats: Dict, logo_url: Optional[str] = None):
         """Add a single channel check entry.
         
         Args:
             channel_id: ID of the channel checked
             channel_name: Name of the channel
             check_stats: Statistics from the channel check
+            logo_url: Optional URL for the channel logo
         """
         check_subentries = [{
             'type': 'check',
             'channel_id': channel_id,
             'channel_name': channel_name,
+            'logo_url': logo_url,
             'stats': check_stats
         }]
         
@@ -722,6 +727,7 @@ class AutomatedStreamManager:
             # Create a map of existing channel streams
             channel_streams = {}
             channel_names = {}  # Store channel names for changelog
+            channel_logo_urls = {}  # Store channel logo URLs for changelog
             for channel in all_channels:
                 # Validate that channel is a dictionary
                 if not isinstance(channel, dict) or 'id' not in channel:
@@ -730,6 +736,17 @@ class AutomatedStreamManager:
                     
                 channel_id = str(channel['id'])
                 channel_names[channel_id] = channel.get('name', f'Channel {channel_id}')
+                
+                # Get logo URL for this channel
+                logo_id = channel.get('logo_id')
+                if logo_id:
+                    try:
+                        logo = udi.get_logo_by_id(logo_id)
+                        if logo and logo.get('cache_url'):
+                            channel_logo_urls[channel_id] = logo.get('cache_url')
+                    except Exception as e:
+                        logger.debug(f"Could not fetch logo for channel {channel_id}: {e}")
+                
                 # Get streams for this channel from UDI
                 streams = udi.get_channel_streams(int(channel_id))
                 if streams:
@@ -815,6 +832,7 @@ class AutomatedStreamManager:
                         channel_assignment = {
                             "channel_id": channel_id,
                             "channel_name": channel_names.get(channel_id, f'Channel {channel_id}'),
+                            "logo_url": channel_logo_urls.get(channel_id),
                             "stream_count": added_count,
                             "streams": assignment_details[channel_id][:20]  # Limit to first 20 for changelog
                         }

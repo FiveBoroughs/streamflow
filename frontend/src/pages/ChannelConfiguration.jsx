@@ -19,6 +19,7 @@ function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheckC
   const [loadingStats, setLoadingStats] = useState(true)
   const [expanded, setExpanded] = useState(false)
   const [logoUrl, setLogoUrl] = useState(null)
+  const [logoError, setLogoError] = useState(false)
 
   useEffect(() => {
     // Try to load stats from localStorage first for instant display
@@ -73,13 +74,18 @@ function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheckC
   const channelPatterns = patterns[channel.id] || patterns[String(channel.id)]
 
   return (
-    <Card className="w-full max-w-4xl">
+    <Card className="w-full">
       <CardContent className="p-0">
         <div className="flex items-center gap-3 p-3">
           {/* Channel Logo */}
           <div className="w-24 h-12 flex-shrink-0 bg-muted rounded-md flex items-center justify-center overflow-hidden">
-            {logoUrl ? (
-              <img src={logoUrl} alt={channel.name} className="w-full h-full object-contain" />
+            {logoUrl && !logoError ? (
+              <img 
+                src={logoUrl} 
+                alt={channel.name} 
+                className="w-full h-full object-contain"
+                onError={() => setLogoError(true)}
+              />
             ) : (
               <span className="text-2xl font-bold text-muted-foreground">
                 {channel.name?.charAt(0) || '?'}
@@ -253,6 +259,13 @@ export default function ChannelConfiguration() {
   const handleCheckChannel = async (channelId) => {
     try {
       setCheckingChannel(channelId)
+      
+      // Show starting notification
+      toast({
+        title: "Channel Check Started",
+        description: "Checking channel streams...",
+      })
+      
       const response = await streamCheckerAPI.checkSingleChannel(channelId)
       
       if (response.data.success) {
