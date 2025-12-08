@@ -27,6 +27,9 @@ Multi-factor analysis of stream quality using a single optimized ffmpeg call:
   - Filters out invalid codec names (e.g., "wrapped_avframe", "unknown")
   - Extracts actual codec from hardware-accelerated streams
 - **Audio Codec**: Detection and validation
+  - Parses **input stream codecs** only (e.g., "aac", "ac3", "mp3", "eac3")
+  - Avoids decoded output formats (e.g., "pcm_s16le")
+  - Supports multiple audio streams and language tracks
 - **Error Detection**: Decode errors, discontinuities, timeouts
 - **Optimized Performance**: Single ffmpeg call instead of separate ffprobe+ffmpeg (reduced overhead)
 - **Parallel Checking**: Thread-based concurrent analysis with configurable worker pool

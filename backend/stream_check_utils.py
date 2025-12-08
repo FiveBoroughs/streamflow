@@ -329,15 +329,31 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
         total_bytes = 0
         progress_bitrate = None
         
+        # Track whether we're in the Input or Output section of FFmpeg output
+        # This ensures we only parse input stream codecs, not decoded output formats
+        in_input_section = False
+        
         # Parse ffmpeg output to extract all information
-        # Only process lines that represent true input stream mappings (start with "Stream #")
-        # to avoid false matches from output or progress messages
+        # Only process Stream lines from the Input section to get actual input codecs
+        # (e.g., "aac", "ac3") instead of decoded output formats (e.g., "pcm_s16le")
         for line in output.splitlines():
-            # Extract video codec, resolution, and FPS from Stream mapping line
+            # Track when we enter the Input section
+            if 'Input #' in line:
+                in_input_section = True
+                logger.debug(f"  → Entered Input section: {line.strip()}")
+                continue
+            
+            # Track when we enter the Output section - stop parsing stream info
+            if 'Output #' in line:
+                in_input_section = False
+                logger.debug(f"  → Entered Output section (will skip stream parsing): {line.strip()}")
+                continue
+            
+            # Extract video codec, resolution, and FPS from Input stream lines only
             # Example: "Stream #0:0: Video: h264, yuv420p, 1920x1080, 25 fps"
             # Example with wrapped codec: "Stream #0:0(und): Video: wrapped_avframe (avc1 / 0x31637661), yuv420p, 1920x1080, 25 fps"
-            # Only process lines that start with "Stream #" to ensure we're parsing input stream info
-            if 'Stream #' in line and 'Video:' in line:
+            # Only process Stream lines when in_input_section to avoid parsing output codecs
+            if in_input_section and 'Stream #' in line and 'Video:' in line:
                 try:
                     # Use robust codec extraction that handles wrapped codecs
                     # This will look inside parentheses if codec is a wrapper like 'wrapped_avframe'
@@ -366,11 +382,11 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
                 except (ValueError, AttributeError) as e:
                     logger.debug(f"  → Error parsing video stream line: {e}")
             
-            # Extract audio codec
+            # Extract audio codec from Input stream lines only
             # Example: "Stream #0:1: Audio: aac, 48000 Hz, stereo"
             # Example with wrapped codec: "Stream #0:1(und): Audio: wrapped_avframe (aac)"
-            # Only process lines that start with "Stream #" to ensure we're parsing input stream info
-            if 'Stream #' in line and 'Audio:' in line:
+            # Only process Stream lines when in_input_section to avoid parsing decoded output (e.g., pcm_s16le)
+            if in_input_section and 'Stream #' in line and 'Audio:' in line:
                 try:
                     # Use robust codec extraction that handles wrapped codecs
                     audio_codec = _extract_codec_from_line(line, 'Audio')
