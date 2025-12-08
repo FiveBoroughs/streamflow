@@ -11,6 +11,7 @@ import {
   X
 } from 'lucide-react'
 import { Button } from '@/components/ui/button.jsx'
+import { ThemeToggle } from '@/components/ThemeToggle.jsx'
 
 const menuItems = [
   { text: 'Dashboard', icon: LayoutDashboard, path: '/' },
@@ -47,7 +48,7 @@ export function Sidebar() {
       {/* Sidebar */}
       <aside
         className={cn(
-          "fixed top-0 left-0 h-full w-64 bg-card border-r border-border z-40 transition-transform duration-300 ease-in-out",
+          "fixed top-0 left-0 h-full w-64 bg-card border-r border-border z-40 transition-transform duration-300 ease-in-out flex flex-col",
           isOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
         )}
       >
@@ -56,7 +57,7 @@ export function Sidebar() {
           <p className="text-sm text-muted-foreground">for Dispatcharr</p>
         </div>
 
-        <nav className="px-3 space-y-1">
+        <nav className="px-3 space-y-1 flex-1">
           {menuItems.map((item) => {
             const Icon = item.icon
             const isActive = location.pathname === item.path
@@ -78,6 +79,13 @@ export function Sidebar() {
             )
           })}
         </nav>
+
+        <div className="p-3 border-t border-border">
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-muted-foreground">Theme</span>
+            <ThemeToggle />
+          </div>
+        </div>
       </aside>
     </>
   )

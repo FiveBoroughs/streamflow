@@ -209,6 +209,36 @@ GET /api/channels/{channel_id}
 ```
 Returns details for a specific channel.
 
+### Get Channel Statistics
+```
+GET /api/channels/{channel_id}/stats
+```
+Returns comprehensive statistics for a specific channel.
+
+**Response:**
+```json
+{
+  "channel_id": "123",
+  "channel_name": "Example Channel",
+  "logo_id": 456,
+  "total_streams": 25,
+  "dead_streams": 2,
+  "most_common_resolution": "1920x1080",
+  "average_bitrate": 8500000,
+  "resolutions": {
+    "1920x1080": 18,
+    "1280x720": 7
+  }
+}
+```
+
+**Statistics include:**
+- `total_streams` - Count of all streams for the channel
+- `dead_streams` - Count of non-functional streams
+- `most_common_resolution` - Most frequently occurring resolution
+- `average_bitrate` - Average bitrate across all streams (in bps)
+- `resolutions` - Distribution of resolutions across streams
+
 ### Get Channel Streams
 ```
 GET /api/channels/{channel_id}/streams

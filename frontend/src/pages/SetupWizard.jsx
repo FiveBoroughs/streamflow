@@ -12,7 +12,7 @@ import { Badge } from '@/components/ui/badge.jsx'
 import { Progress } from '@/components/ui/progress.jsx'
 import { useToast } from '@/hooks/use-toast.js'
 import { setupAPI, automationAPI, channelsAPI, regexAPI, dispatcharrAPI, streamCheckerAPI, m3uAPI } from '@/services/api.js'
-import { CheckCircle2, Circle, AlertCircle, Edit, Trash2, Plus } from 'lucide-react'
+import { CheckCircle2, Circle, AlertCircle, Edit, Trash2, Plus, Upload } from 'lucide-react'
 
 const STEPS = [
   {
@@ -38,11 +38,31 @@ const STEPS = [
 ]
 
 const PIPELINE_MODES = [
-  { value: 'pipeline_1', label: 'Pipeline 1 - Continuous' },
-  { value: 'pipeline_1_5', label: 'Pipeline 1.5 - Continuous + Scheduled' },
-  { value: 'pipeline_2', label: 'Pipeline 2 - Update Only' },
-  { value: 'pipeline_2_5', label: 'Pipeline 2.5 - Update + Scheduled' },
-  { value: 'pipeline_3', label: 'Pipeline 3 - Scheduled Only' },
+  { 
+    value: 'pipeline_1', 
+    label: 'Pipeline 1 - Continuous',
+    hint: 'Continuously checks streams and updates playlists. Best for always-up-to-date streams.'
+  },
+  { 
+    value: 'pipeline_1_5', 
+    label: 'Pipeline 1.5 - Continuous + Scheduled',
+    hint: 'Combines continuous checking with scheduled global actions. Balanced approach.'
+  },
+  { 
+    value: 'pipeline_2', 
+    label: 'Pipeline 2 - Update Only',
+    hint: 'Only updates playlists, no automatic checking. Manual control over stream quality.'
+  },
+  { 
+    value: 'pipeline_2_5', 
+    label: 'Pipeline 2.5 - Update + Scheduled',
+    hint: 'Updates playlists with scheduled global checks. Good for regular maintenance.'
+  },
+  { 
+    value: 'pipeline_3', 
+    label: 'Pipeline 3 - Scheduled Only',
+    hint: 'Only scheduled actions, no automatic updates. Full manual control.'
+  },
 ]
 
 export default function SetupWizard({ onComplete, setupStatus: initialSetupStatus }) {
@@ -50,6 +70,7 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
   const [setupStatus, setSetupStatus] = useState(initialSetupStatus)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [importDialogOpen, setImportDialogOpen] = useState(false)
   const { toast } = useToast()
 
   // Dispatcharr configuration state
@@ -79,7 +100,7 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
     playlist_update_interval_minutes: 5,
     global_check_interval_hours: 24,
     enabled_m3u_accounts: [],
-    autostart_automation: false,
+    autostart_automation: true,
     enabled_features: {
       auto_playlist_update: true,
       auto_stream_discovery: true,
@@ -334,6 +355,34 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
     }
   }
 
+  const handleImportJSON = async (event) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+
+    try {
+      const text = await file.text()
+      const data = JSON.parse(text)
+      
+      // Validate and import the patterns
+      await regexAPI.importPatterns(data)
+      
+      toast({
+        title: "Success",
+        description: "Patterns imported successfully"
+      })
+      
+      setImportDialogOpen(false)
+      await loadChannelsAndPatterns()
+      await refreshSetupStatus()
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err.response?.data?.error || "Failed to import patterns. Please check the JSON format.",
+        variant: "destructive"
+      })
+    }
+  }
+
   const handleSaveAutomationConfig = async () => {
     try {
       setLoading(true)
@@ -476,13 +525,30 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
               <p className="text-sm text-muted-foreground">
                 Configure regex patterns to automatically assign streams to channels
               </p>
-              <Button onClick={() => {
-                loadChannelsAndPatterns()
-                handleAddPattern()
-              }} size="sm">
-                <Plus className="h-4 w-4 mr-2" />
-                Add Pattern
-              </Button>
+              <div className="flex gap-2">
+                <Button 
+                  onClick={() => document.getElementById('import-json-file').click()} 
+                  size="sm"
+                  variant="outline"
+                >
+                  <Upload className="h-4 w-4 mr-2" />
+                  Import JSON
+                </Button>
+                <input
+                  id="import-json-file"
+                  type="file"
+                  accept="application/json"
+                  onChange={handleImportJSON}
+                  className="hidden"
+                />
+                <Button onClick={() => {
+                  loadChannelsAndPatterns()
+                  handleAddPattern()
+                }} size="sm">
+                  <Plus className="h-4 w-4 mr-2" />
+                  Add Pattern
+                </Button>
+              </div>
             </div>
 
             {loading ? (
@@ -668,9 +734,11 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
                     ))}
                   </SelectContent>
                 </Select>
-                <p className="text-xs text-muted-foreground">
-                  Choose the automation level that fits your needs
-                </p>
+                {PIPELINE_MODES.find(m => m.value === streamCheckerConfig.pipeline_mode)?.hint && (
+                  <p className="text-xs text-muted-foreground">
+                    {PIPELINE_MODES.find(m => m.value === streamCheckerConfig.pipeline_mode).hint}
+                  </p>
+                )}
               </div>
 
               <div className="space-y-2">
@@ -701,57 +769,15 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
                 />
               </div>
 
-              <div className="space-y-4">
-                <Label>Automation Features</Label>
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <Label htmlFor="auto_playlist">Auto Playlist Update</Label>
-                    <Switch
-                      id="auto_playlist"
-                      checked={config.enabled_features.auto_playlist_update}
-                      onCheckedChange={(checked) => setConfig({
-                        ...config,
-                        enabled_features: { ...config.enabled_features, auto_playlist_update: checked }
-                      })}
-                    />
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <Label htmlFor="auto_discovery">Auto Stream Discovery</Label>
-                    <Switch
-                      id="auto_discovery"
-                      checked={config.enabled_features.auto_stream_discovery}
-                      onCheckedChange={(checked) => setConfig({
-                        ...config,
-                        enabled_features: { ...config.enabled_features, auto_stream_discovery: checked }
-                      })}
-                    />
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <Label htmlFor="auto_reorder">Auto Quality Reordering</Label>
-                    <Switch
-                      id="auto_reorder"
-                      checked={config.enabled_features.auto_quality_reordering}
-                      onCheckedChange={(checked) => setConfig({
-                        ...config,
-                        enabled_features: { ...config.enabled_features, auto_quality_reordering: checked }
-                      })}
-                    />
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <Label htmlFor="autostart">Autostart Automation</Label>
-                    <Switch
-                      id="autostart"
-                      checked={config.autostart_automation}
-                      onCheckedChange={(checked) => setConfig({ ...config, autostart_automation: checked })}
-                    />
-                  </div>
-                </div>
+              <div className="flex items-center justify-between">
+                <Label htmlFor="autostart">Autostart Automation</Label>
+                <Switch
+                  id="autostart"
+                  checked={config.autostart_automation}
+                  onCheckedChange={(checked) => setConfig({ ...config, autostart_automation: checked })}
+                />
               </div>
             </div>
-
-            <Button onClick={handleSaveAutomationConfig} disabled={loading}>
-              {loading ? 'Saving...' : 'Save Configuration'}
-            </Button>
           </div>
         )
 
@@ -848,10 +874,17 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
             </Button>
             {activeStep < 3 && (
               <Button
-                onClick={() => setActiveStep(prev => Math.min(3, prev + 1))}
+                onClick={async () => {
+                  if (activeStep === 2) {
+                    // Save automation config before moving to next step
+                    await handleSaveAutomationConfig()
+                  } else {
+                    setActiveStep(prev => Math.min(3, prev + 1))
+                  }
+                }}
                 disabled={loading}
               >
-                Next
+                {activeStep === 2 ? (loading ? 'Saving...' : 'Save & Continue') : 'Next'}
               </Button>
             )}
           </div>

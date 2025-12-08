@@ -100,6 +100,12 @@ Automatically identifies and manages non-functional streams:
 
 ## User Interface
 
+### Theme Customization
+- **Dark/Light Mode Toggle**: Switch between light, dark, and auto (system) themes
+- **Deep Black Dark Mode**: True black background (#000) with white text and dark green accents
+- **System Preference Detection**: Automatically follows system theme in auto mode
+- **Persistent Settings**: Theme preference saved to local storage
+
 ### Dashboard
 - System status overview
 - Recent activity display
@@ -115,13 +121,25 @@ Automatically identifies and manages non-functional streams:
 - Queue management (clear queue)
 
 ### Channel Configuration
-- Visual regex pattern editor
-- Pattern testing interface
-- Live stream matching preview
-- Enable/disable patterns
+- **Horizontal Channel Cards**: Modern card-based layout with expandable sections
+  - Channel logo display
+  - Channel name and metadata
+  - Real-time statistics:
+    - Total stream count
+    - Dead stream count
+    - Most common resolution
+    - Average bitrate (Kbps)
+  - Quick actions: Edit Regex, Check Channel
+- **Expandable Regex Editor**: Toggle pattern list within each card
+  - View all configured patterns for the channel
+  - Add new patterns inline
+  - Delete patterns individually
+- **Individual Channel Checking**: Queue single channels for immediate quality checking
+- **Live Statistics**: Auto-loading channel stats from backend API
 
 ### Configuration Page (unified)
-- **Pipeline Selection**: Choose from 5 automation modes with visual cards
+- **Pipeline Selection**: Choose from 5 automation modes with visual cards and hints
+  - Descriptive hints for each pipeline mode
 - **Schedule Configuration**: Set timing for global actions (pipelines 1.5, 2.5, 3)
   - Daily or monthly frequency
   - Precise time selection (hour and minute)
@@ -143,6 +161,10 @@ Automatically identifies and manages non-functional streams:
 ### Setup Wizard
 - Guided initial configuration
 - Dispatcharr connection testing
+- **JSON Pattern Import**: Import channel regex patterns from JSON file
+- **Pipeline Hints**: Inline descriptions for each pipeline mode
+- **Smart Navigation**: Save settings automatically when advancing
+- **Autostart Default**: Automation enabled by default
 - Configuration validation
 - Quick start assistance
 
