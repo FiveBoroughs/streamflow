@@ -138,7 +138,14 @@ Content-Type: application/json
   "channel_id": 123
 }
 ```
-Immediately checks a specific channel synchronously and returns detailed results.
+Performs a complete channel refresh similar to a global check but scoped to a single channel. This operation:
+- Refreshes M3U playlists for accounts associated with the channel
+- Re-discovers and assigns matching streams (including previously dead ones)
+- Force checks all streams, bypassing the 2-hour immunity period
+- Revives streams that are now working
+- Removes streams that are still dead
+
+This is a synchronous operation that returns detailed results when complete.
 
 **Response:**
 ```json
