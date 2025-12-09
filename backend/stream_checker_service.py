@@ -1857,6 +1857,12 @@ class StreamCheckerService:
                 checked_stream_ids=current_stream_ids
             )
             
+            # Return statistics for callers that need them
+            return {
+                'dead_streams_count': len(dead_stream_ids),
+                'revived_streams_count': len(revived_stream_ids)
+            }
+            
         except Exception as e:
             logger.error(f"Error checking channel {channel_id}: {e}", exc_info=True)
             self.check_queue.mark_failed(channel_id, str(e))
@@ -1882,6 +1888,12 @@ class StreamCheckerService:
                     })
                 except Exception as changelog_error:
                     logger.warning(f"Failed to add to batch changelog: {changelog_error}")
+            
+            # Return empty stats on error
+            return {
+                'dead_streams_count': 0,
+                'revived_streams_count': 0
+            }
         
         finally:
             self.checking = False
@@ -2281,6 +2293,12 @@ class StreamCheckerService:
                 checked_stream_ids=current_stream_ids
             )
             
+            # Return statistics for callers that need them
+            return {
+                'dead_streams_count': len(dead_stream_ids),
+                'revived_streams_count': len(revived_stream_ids)
+            }
+            
         except Exception as e:
             logger.error(f"Error checking channel {channel_id}: {e}", exc_info=True)
             self.check_queue.mark_failed(channel_id, str(e))
@@ -2307,6 +2325,12 @@ class StreamCheckerService:
                     })
                 except Exception as changelog_error:
                     logger.warning(f"Failed to add to batch changelog: {changelog_error}")
+            
+            # Return empty stats on error
+            return {
+                'dead_streams_count': 0,
+                'revived_streams_count': 0
+            }
         
         finally:
             self.checking = False
@@ -2484,12 +2508,19 @@ class StreamCheckerService:
             self.update_tracker.mark_channel_for_force_check(channel_id)
             
             # Perform the check (this will now bypass immunity and check all streams)
-            self._check_channel(channel_id)
+            # Returns dict with dead_streams_count and revived_streams_count
+            check_result = self._check_channel(channel_id)
+            if not check_result or not isinstance(check_result, dict):
+                # This should not happen with updated methods, but provide safe fallback
+                logger.warning(f"_check_channel did not return expected result dict, using defaults")
+                check_result = {'dead_streams_count': 0, 'revived_streams_count': 0}
+            
+            # Get the count of dead streams that were removed during the check
+            dead_count = check_result.get('dead_streams_count', 0)
             
             # Gather statistics after check
             streams = fetch_channel_streams(channel_id)
             total_streams = len(streams)
-            dead_count = 0
             resolutions = []
             bitrates = []
             fps_values = []
@@ -2512,15 +2543,6 @@ class StreamCheckerService:
                     parsed_fps = parse_fps_value(fps)
                     if parsed_fps:
                         fps_values.append(parsed_fps)
-                
-                # Check if stream is dead - use the status from stream_stats
-                if stats.get('status') == 'dead':
-                    dead_count += 1
-                elif not stats:
-                    # If no stats, check with dead_streams_tracker as fallback
-                    stream_url = stream.get('url')
-                    if stream_url and self.dead_streams_tracker and self.dead_streams_tracker.is_dead(stream_url):
-                        dead_count += 1
             
             # Calculate averages
             avg_resolution = 'N/A'
