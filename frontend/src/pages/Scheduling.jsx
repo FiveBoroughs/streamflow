@@ -142,6 +142,9 @@ export default function Scheduling() {
     }
   }
 
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [eventToDelete, setEventToDelete] = useState(null)
+
   const handleDeleteEvent = async (eventId) => {
     try {
       await schedulingAPI.deleteEvent(eventId)
@@ -150,6 +153,8 @@ export default function Scheduling() {
         description: "Scheduled event deleted"
       })
       await loadData()
+      setDeleteDialogOpen(false)
+      setEventToDelete(null)
     } catch (err) {
       console.error('Failed to delete event:', err)
       toast({
@@ -345,7 +350,9 @@ export default function Scheduling() {
                           <div
                             key={program.id || `${program.start_time}-${program.title}`}
                             className={`p-3 border-b last:border-b-0 cursor-pointer hover:bg-muted/50 transition-colors ${
-                              selectedProgram?.id === program.id ? 'bg-primary/10' : ''
+                              selectedProgram?.id === program.id 
+                                ? 'bg-primary/10 border-2 border-green-500/50 dark:border-green-400/50' 
+                                : ''
                             }`}
                             onClick={() => setSelectedProgram(program)}
                           >
@@ -446,9 +453,10 @@ export default function Scheduling() {
                         <div className="flex items-center gap-2">
                           {event.channel_logo_url && (
                             <img
-                              src={event.channel_logo_url}
+                              src={`/api/channels/logos/${event.channel_logo_url.split('/').pop()}/cache`}
                               alt={event.channel_name}
                               className="h-8 w-8 object-contain rounded"
+                              onError={(e) => { e.target.style.display = 'none' }}
                             />
                           )}
                           <span className="font-medium">{event.channel_name}</span>
@@ -474,9 +482,8 @@ export default function Scheduling() {
                           variant="ghost"
                           size="sm"
                           onClick={() => {
-                            if (window.confirm('Are you sure you want to delete this scheduled event?')) {
-                              handleDeleteEvent(event.id)
-                            }
+                            setEventToDelete(event.id)
+                            setDeleteDialogOpen(true)
                           }}
                         >
                           <Trash2 className="h-4 w-4 text-destructive" />
@@ -511,6 +518,35 @@ export default function Scheduling() {
           </p>
         </CardContent>
       </Card>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Scheduled Event</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete this scheduled event? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setDeleteDialogOpen(false)
+                setEventToDelete(null)
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => handleDeleteEvent(eventToDelete)}
+            >
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

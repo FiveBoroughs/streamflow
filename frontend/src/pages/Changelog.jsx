@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card.jsx'
 import { Badge } from '@/components/ui/badge.jsx'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table.jsx'
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion.jsx'
 import { useToast } from '@/hooks/use-toast.js'
 import { changelogAPI } from '@/services/api.js'
@@ -113,15 +114,37 @@ function ChannelItem({ item, groupType, groupIndex, itemIndex }) {
           )}
           
           {/* Stream details for check */}
-          {groupType === 'check' && item.stats && item.stats.stream_details && (
-            <ul className="list-none text-sm space-y-1">
-              {item.stats.stream_details.map((streamDetail, idx) => (
-                <li key={streamDetail.stream_id || `detail-${idx}`} className="text-muted-foreground">
-                  - {streamDetail.stream_name || 'Unknown'}: {streamDetail.resolution || 'N/A'}, {streamDetail.fps || 'N/A'} fps, {streamDetail.bitrate || 'N/A'}, {streamDetail.video_codec || 'N/A'}
-                  {streamDetail.score !== undefined && `, Score: ${streamDetail.score}`}
-                </li>
-              ))}
-            </ul>
+          {groupType === 'check' && item.stats && item.stats.stream_details && item.stats.stream_details.length > 0 && (
+            <div className="rounded-md border mt-2">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Stream Name</TableHead>
+                    <TableHead>Resolution</TableHead>
+                    <TableHead>Framerate</TableHead>
+                    <TableHead>Bitrate</TableHead>
+                    <TableHead>Codec</TableHead>
+                    {item.stats.stream_details.some(s => s.score !== undefined) && (
+                      <TableHead>Score</TableHead>
+                    )}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {item.stats.stream_details.map((streamDetail, idx) => (
+                    <TableRow key={streamDetail.stream_id || `detail-${idx}`}>
+                      <TableCell className="font-medium">{streamDetail.stream_name || 'Unknown'}</TableCell>
+                      <TableCell>{streamDetail.resolution || 'N/A'}</TableCell>
+                      <TableCell>{streamDetail.fps ? `${streamDetail.fps} fps` : 'N/A'}</TableCell>
+                      <TableCell>{streamDetail.bitrate || 'N/A'}</TableCell>
+                      <TableCell>{streamDetail.video_codec || 'N/A'}</TableCell>
+                      {item.stats.stream_details.some(s => s.score !== undefined) && (
+                        <TableCell>{streamDetail.score !== undefined ? streamDetail.score.toFixed(2) : 'N/A'}</TableCell>
+                      )}
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
           )}
         </div>
       </AccordionContent>

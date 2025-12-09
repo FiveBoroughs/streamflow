@@ -59,6 +59,103 @@ logger = setup_logging(__name__)
 CONFIG_DIR = Path(os.environ.get('CONFIG_DIR', '/app/data'))
 
 
+def parse_bitrate_value(bitrate_raw) -> Optional[float]:
+    """Parse bitrate from various formats to kbps.
+    
+    Handles formats like:
+    - "1234 kbps"
+    - "1234.5"
+    - "1.2 Mbps"
+    - "1234"
+    - 1234 (int/float)
+    
+    Returns:
+        Bitrate in kbps as float, or None if parsing fails
+    """
+    if not bitrate_raw:
+        return None
+    
+    try:
+        # If it's already a number
+        if isinstance(bitrate_raw, (int, float)):
+            return float(bitrate_raw)
+        
+        # If it's a string, parse it
+        if isinstance(bitrate_raw, str):
+            bitrate_str = bitrate_raw.strip().lower()
+            
+            # Remove any unit indicators and parse
+            # Try Mbps first (convert to kbps)
+            if 'mbps' in bitrate_str or 'mb/s' in bitrate_str:
+                value = float(''.join(c for c in bitrate_str if c.isdigit() or c == '.'))
+                return value * 1000  # Convert Mbps to kbps
+            
+            # Try kbps or kb/s
+            if 'kbps' in bitrate_str or 'kb/s' in bitrate_str:
+                value = float(''.join(c for c in bitrate_str if c.isdigit() or c == '.'))
+                return value
+            
+            # Try plain number (assume kbps)
+            value = float(''.join(c for c in bitrate_str if c.isdigit() or c == '.'))
+            return value if value > 0 else None
+    except (ValueError, TypeError, AttributeError):
+        pass
+    
+    return None
+
+
+def format_bitrate(bitrate_kbps: Optional[float]) -> str:
+    """Format bitrate for display.
+    
+    Args:
+        bitrate_kbps: Bitrate in kbps
+        
+    Returns:
+        Formatted string like "1234 kbps" or "N/A"
+    """
+    if bitrate_kbps is None or bitrate_kbps <= 0:
+        return 'N/A'
+    
+    # If over 1000 kbps, show in Mbps
+    if bitrate_kbps >= 1000:
+        return f"{bitrate_kbps / 1000:.1f} Mbps"
+    
+    return f"{bitrate_kbps:.0f} kbps"
+
+
+def parse_fps_value(fps_raw) -> Optional[float]:
+    """Parse FPS from various formats.
+    
+    Handles formats like:
+    - "25 fps"
+    - "25.0"
+    - "25"
+    - 25 (int/float)
+    
+    Returns:
+        FPS as float, or None if parsing fails
+    """
+    if not fps_raw:
+        return None
+    
+    try:
+        # If it's already a number
+        if isinstance(fps_raw, (int, float)):
+            return float(fps_raw)
+        
+        # If it's a string, parse it
+        if isinstance(fps_raw, str):
+            fps_str = fps_raw.strip().lower()
+            # Remove 'fps' if present and extract number
+            fps_str = fps_str.replace('fps', '').strip()
+            value = float(''.join(c for c in fps_str if c.isdigit() or c == '.'))
+            return value if value > 0 else None
+    except (ValueError, TypeError, AttributeError):
+        pass
+    
+    return None
+
+
 class StreamCheckConfig:
     """Configuration for stream checking service."""
     
@@ -2226,6 +2323,7 @@ class StreamCheckerService:
             dead_count = 0
             resolutions = []
             bitrates = []
+            fps_values = []
             
             for stream in streams:
                 stats = stream.get('stream_stats', {})
@@ -2234,17 +2332,26 @@ class StreamCheckerService:
                     if resolution and isinstance(resolution, str):
                         resolutions.append(resolution)
                     
+                    # Parse bitrate comprehensively
                     bitrate = stats.get('bitrate')
-                    if bitrate:
-                        try:
-                            bitrates.append(float(bitrate))
-                        except (ValueError, TypeError):
-                            pass
+                    parsed_bitrate = parse_bitrate_value(bitrate)
+                    if parsed_bitrate:
+                        bitrates.append(parsed_bitrate)
+                    
+                    # Parse FPS comprehensively
+                    fps = stats.get('fps')
+                    parsed_fps = parse_fps_value(fps)
+                    if parsed_fps:
+                        fps_values.append(parsed_fps)
                 
-                # Check if stream is dead
-                stream_url = stream.get('url')
-                if stream_url and self.dead_streams_tracker and self.dead_streams_tracker.is_dead(stream_url):
+                # Check if stream is dead - use the status from stream_stats
+                if stats.get('status') == 'dead':
                     dead_count += 1
+                elif not stats:
+                    # If no stats, check with dead_streams_tracker as fallback
+                    stream_url = stream.get('url')
+                    if stream_url and self.dead_streams_tracker and self.dead_streams_tracker.is_dead(stream_url):
+                        dead_count += 1
             
             # Calculate averages
             avg_resolution = 'N/A'
@@ -2256,26 +2363,43 @@ class StreamCheckerService:
             
             avg_bitrate = 'N/A'
             if bitrates:
-                avg_bitrate = f"{sum(bitrates) / len(bitrates):.0f} kbps"
+                avg_bitrate_kbps = sum(bitrates) / len(bitrates)
+                avg_bitrate = format_bitrate(avg_bitrate_kbps)
+            
+            avg_fps = 'N/A'
+            if fps_values:
+                avg_fps = f"{sum(fps_values) / len(fps_values):.1f} fps"
             
             check_stats = {
                 'total_streams': total_streams,
                 'dead_streams': dead_count,
                 'avg_resolution': avg_resolution,
                 'avg_bitrate': avg_bitrate,
+                'avg_fps': avg_fps,
                 'stream_details': []
             }
             
             # Add top stream details
             for stream in streams[:10]:  # Top 10 streams
                 stats = stream.get('stream_stats', {})
+                
+                # Parse bitrate and FPS for display
+                bitrate_raw = stats.get('bitrate')
+                parsed_bitrate = parse_bitrate_value(bitrate_raw)
+                bitrate_display = format_bitrate(parsed_bitrate)
+                
+                fps_raw = stats.get('fps')
+                parsed_fps = parse_fps_value(fps_raw)
+                fps_display = f"{parsed_fps:.1f}" if parsed_fps else 'N/A'
+                
                 check_stats['stream_details'].append({
                     'stream_id': stream.get('id'),
                     'stream_name': stream.get('name', 'Unknown'),
                     'resolution': stats.get('resolution', 'N/A'),
-                    'bitrate': stats.get('bitrate', 'N/A'),
+                    'bitrate': bitrate_display,
                     'video_codec': stats.get('video_codec', 'N/A'),
-                    'fps': stats.get('fps', 'N/A')
+                    'fps': fps_display,
+                    'score': stream.get('score')
                 })
             
             # Add changelog entry
