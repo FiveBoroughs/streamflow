@@ -10,6 +10,8 @@ import json
 import logging
 import os
 import requests
+import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any
@@ -54,6 +56,8 @@ CORS(app)  # Enable CORS for React frontend
 # Global instances
 automation_manager = None
 regex_matcher = None
+scheduled_event_processor_thread = None
+scheduled_event_processor_running = False
 
 def get_automation_manager():
     """Get or create automation manager instance."""
@@ -96,6 +100,97 @@ def check_wizard_complete():
     except Exception as e:
         logger.warning(f"Error checking wizard completion status: {e}")
         return False
+
+
+def scheduled_event_processor():
+    """Background thread to process scheduled EPG events.
+    
+    This function runs in a separate thread and checks for due scheduled events
+    every 60 seconds. When events are due, it executes the channel checks and
+    automatically deletes the completed events.
+    """
+    global scheduled_event_processor_running
+    
+    logger.info("Scheduled event processor thread started")
+    
+    while scheduled_event_processor_running:
+        try:
+            # Check for due events every 60 seconds
+            from scheduling_service import get_scheduling_service
+            
+            service = get_scheduling_service()
+            stream_checker = get_stream_checker_service()
+            
+            # Get all due events
+            due_events = service.get_due_events()
+            
+            if due_events:
+                logger.info(f"Found {len(due_events)} scheduled event(s) due for execution")
+                
+                for event in due_events:
+                    event_id = event.get('id')
+                    channel_name = event.get('channel_name', 'Unknown')
+                    program_title = event.get('program_title', 'Unknown')
+                    
+                    logger.info(f"Executing scheduled event {event_id} for {channel_name} (program: {program_title})")
+                    
+                    try:
+                        success = service.execute_scheduled_check(event_id, stream_checker)
+                        if success:
+                            logger.info(f"✓ Successfully executed and removed scheduled event {event_id}")
+                        else:
+                            logger.warning(f"✗ Failed to execute scheduled event {event_id}")
+                    except Exception as e:
+                        logger.error(f"Error executing scheduled event {event_id}: {e}", exc_info=True)
+            
+        except Exception as e:
+            logger.error(f"Error in scheduled event processor: {e}", exc_info=True)
+        
+        # Sleep for 60 seconds before checking again
+        time.sleep(60)
+    
+    logger.info("Scheduled event processor thread stopped")
+
+
+def start_scheduled_event_processor():
+    """Start the background thread for processing scheduled events."""
+    global scheduled_event_processor_thread, scheduled_event_processor_running
+    
+    if scheduled_event_processor_thread is not None and scheduled_event_processor_thread.is_alive():
+        logger.warning("Scheduled event processor is already running")
+        return False
+    
+    scheduled_event_processor_running = True
+    scheduled_event_processor_thread = threading.Thread(
+        target=scheduled_event_processor,
+        name="ScheduledEventProcessor",
+        daemon=True  # Daemon thread will exit when main program exits
+    )
+    scheduled_event_processor_thread.start()
+    logger.info("Scheduled event processor started")
+    return True
+
+
+def stop_scheduled_event_processor():
+    """Stop the background thread for processing scheduled events."""
+    global scheduled_event_processor_thread, scheduled_event_processor_running
+    
+    if scheduled_event_processor_thread is None or not scheduled_event_processor_thread.is_alive():
+        logger.warning("Scheduled event processor is not running")
+        return False
+    
+    logger.info("Stopping scheduled event processor...")
+    scheduled_event_processor_running = False
+    
+    # Wait for thread to finish (with timeout)
+    scheduled_event_processor_thread.join(timeout=5)
+    
+    if scheduled_event_processor_thread.is_alive():
+        logger.warning("Scheduled event processor thread did not stop gracefully")
+        return False
+    
+    logger.info("Scheduled event processor stopped")
+    return True
 
 
 
@@ -1590,6 +1685,76 @@ def process_due_scheduled_events():
         logger.error(f"Error processing due scheduled events: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
+
+@app.route('/api/scheduling/processor/status', methods=['GET'])
+@log_function_call
+def get_scheduled_event_processor_status():
+    """Get the status of the scheduled event processor background thread.
+    
+    Returns:
+        JSON with processor status
+    """
+    try:
+        global scheduled_event_processor_thread, scheduled_event_processor_running
+        
+        is_running = (
+            scheduled_event_processor_thread is not None and 
+            scheduled_event_processor_thread.is_alive() and
+            scheduled_event_processor_running
+        )
+        
+        return jsonify({
+            "running": is_running,
+            "thread_alive": scheduled_event_processor_thread.is_alive() if scheduled_event_processor_thread else False
+        }), 200
+    
+    except Exception as e:
+        logger.error(f"Error getting scheduled event processor status: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/scheduling/processor/start', methods=['POST'])
+@log_function_call
+def start_scheduled_event_processor_api():
+    """Start the scheduled event processor background thread.
+    
+    Returns:
+        JSON with result
+    """
+    try:
+        success = start_scheduled_event_processor()
+        
+        if success:
+            return jsonify({"message": "Scheduled event processor started"}), 200
+        else:
+            return jsonify({"message": "Scheduled event processor is already running"}), 200
+    
+    except Exception as e:
+        logger.error(f"Error starting scheduled event processor: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/scheduling/processor/stop', methods=['POST'])
+@log_function_call
+def stop_scheduled_event_processor_api():
+    """Stop the scheduled event processor background thread.
+    
+    Returns:
+        JSON with result
+    """
+    try:
+        success = stop_scheduled_event_processor()
+        
+        if success:
+            return jsonify({"message": "Scheduled event processor stopped"}), 200
+        else:
+            return jsonify({"message": "Scheduled event processor is not running"}), 200
+    
+    except Exception as e:
+        logger.error(f"Error stopping scheduled event processor: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 # Serve React app for all frontend routes (catch-all - must be last!)
 @app.route('/<path:path>')
 def serve_frontend(path):
@@ -1654,5 +1819,15 @@ if __name__ == '__main__':
                 logger.info(f"Automation service auto-started (mode: {pipeline_mode})")
     except Exception as e:
         logger.error(f"Failed to auto-start automation service: {e}")
+    
+    # Auto-start scheduled event processor if wizard is complete
+    try:
+        if not check_wizard_complete():
+            logger.info("Scheduled event processor will not start - setup wizard has not been completed")
+        else:
+            start_scheduled_event_processor()
+            logger.info("Scheduled event processor auto-started")
+    except Exception as e:
+        logger.error(f"Failed to auto-start scheduled event processor: {e}")
     
     app.run(host=args.host, port=args.port, debug=args.debug)

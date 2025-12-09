@@ -421,3 +421,83 @@ Returns service health status.
   }
 }
 ```
+
+## Scheduling & EPG-Based Checks
+
+### Get Scheduled Event Processor Status
+```
+GET /api/scheduling/processor/status
+```
+Get the status of the background thread that processes scheduled EPG events.
+
+**Response:**
+```json
+{
+  "running": true,
+  "thread_alive": true
+}
+```
+
+### Start Scheduled Event Processor
+```
+POST /api/scheduling/processor/start
+```
+Start the background thread for processing scheduled events. The processor runs every 60 seconds and automatically executes channel checks for due scheduled events.
+
+**Response:**
+```json
+{
+  "message": "Scheduled event processor started"
+}
+```
+
+**Note:** The processor is automatically started when the Flask app starts (if wizard is complete).
+
+### Stop Scheduled Event Processor
+```
+POST /api/scheduling/processor/stop
+```
+Stop the background thread for processing scheduled events.
+
+**Response:**
+```json
+{
+  "message": "Scheduled event processor stopped"
+}
+```
+
+### Process Due Events (Manual)
+```
+POST /api/scheduling/process-due-events
+```
+Manually trigger processing of all scheduled events that are due. This is handled automatically by the background thread, but can be called manually if needed.
+
+**Response:**
+```json
+{
+  "message": "Processed 2 event(s), 2 successful",
+  "processed": 2,
+  "successful": 2,
+  "results": [
+    {
+      "event_id": "abc123",
+      "channel_name": "ESPN HD",
+      "program_title": "Monday Night Football",
+      "success": true
+    }
+  ]
+}
+```
+
+**How It Works:**
+1. The background thread checks for due scheduled events every 60 seconds
+2. When an event is due (current time >= check_time), it executes a channel check
+3. The channel check includes the program name in the changelog entry
+4. After successful execution, the event is automatically deleted from the schedule
+5. Any errors are logged but don't stop the processor
+
+**Architecture:**
+- Runs as a daemon thread in the Flask application
+- Thread-safe using locks in SchedulingService
+- Survives Flask reloads in development mode (daemon thread)
+- Automatically starts with Flask app (when wizard is complete)
