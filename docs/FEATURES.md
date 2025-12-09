@@ -141,20 +141,43 @@ Automatically identifies and manages non-functional streams:
   - Delete patterns individually
 - **Individual Channel Checking**: Queue single channels for immediate quality checking
 - **Live Statistics**: Auto-loading channel stats from backend API
+- **Search and Filtering**: Find channels by name, number, or ID
+- **Pagination**: Efficient browsing of large channel lists
+  - Configurable items per page (10, 20, 50, 100)
+  - First/Previous/Next/Last navigation buttons
+  - Visual page number selection (shows 5 pages at a time)
+  - Current range indicator (e.g., "Showing 1-20 of 150 channels")
+  - Automatic reset to first page when search query changes
+- **Export/Import**: Backup and restore regex patterns as JSON
 
 ### Changelog Page
 - **Activity History**: View all system events and stream operations
-- **Structured Entries**: Three main action types:
+- **Structured Entries**: Multiple action types:
   - **Playlist Update & Match**: Shows streams added and channels checked
   - **Global Check**: Displays all channels checked during scheduled global actions
   - **Single Channel Check**: Individual channel check results
-- **Global Statistics**: Summary stats for each action (total streams, dead streams, avg resolution, avg bitrate)
+  - **Batch Stream Check**: Consolidated entries for checking batches
+- **Global Statistics**: Summary stats for each action (total channels, successful/failed checks, streams analyzed, dead streams, etc.)
 - **Collapsible Subentries**: Expandable dropdown blocks for detailed information
   - **Update & Match** group: Lists streams added to each channel
   - **Check** group: Shows per-channel statistics and scores
 - **Time Filtering**: View entries from last 24 hours, 7 days, 30 days, or 90 days
 - **Color-Coded Badges**: Visual indicators for different action types
 - **Stream Details**: Top streams with resolution, bitrate, codec, and FPS information
+
+### Scheduling Page
+- **EPG-Based Event Scheduling**: Schedule channel checks before program events
+- **Channel Selection**: Searchable dropdown with all available channels
+- **Program Browser**: Scrollable list of upcoming programs for selected channel
+  - Displays program title, start/end times, and descriptions
+  - Programs loaded from Dispatcharr's EPG grid endpoint
+- **Flexible Timing**: Input field for minutes before program start
+- **Event Management Table**: View all scheduled events
+  - Channel logo and name
+  - Program title and time
+  - Scheduled check time
+  - Delete action button
+- **Configuration Options**: Adjust EPG data refresh interval
 
 ### Configuration Page (unified)
 - **Pipeline Selection**: Choose from 5 automation modes with visual cards and hints
@@ -221,6 +244,11 @@ Automatically identifies and manages non-functional streams:
 - Timestamps and details
 - Persistent storage
 - Filterable history
+- **Batch Consolidation**: Stream checks batched into consolidated entries
+  - Single entry per checking batch instead of per-channel entries
+  - Aggregate statistics at batch level (total channels, streams analyzed, dead streams, etc.)
+  - Individual channel results shown as expandable subentries
+  - Cleaner, more organized changelog view
 
 ### Configuration Persistence
 - All settings in JSON files
@@ -233,6 +261,26 @@ Automatically identifies and manages non-functional streams:
 - Connection validation
 - Default settings
 - Quick deployment
+
+## EPG-Based Scheduling
+
+### Scheduled Channel Checks Before Events
+Schedule channel checks to run before EPG program events for optimal stream quality:
+- **EPG Integration**: Fetches program data from Dispatcharr's EPG grid endpoint
+- **Configurable Caching**: EPG data cached with configurable refresh interval (default: 60 minutes)
+- **Program Search**: Browse upcoming programs by channel
+- **Flexible Timing**: Configure minutes before program start to run the check
+- **Playlist Updates**: Playlist refresh triggered before scheduled checks
+- **Event Management**: Create, view, and delete scheduled events
+
+### User Workflow
+1. Navigate to Scheduling section in the UI
+2. Click "Add Event Check" button
+3. Select a channel from searchable dropdown
+4. View and select from channel's upcoming programs
+5. Specify minutes before program start for the check
+6. Save the scheduled event
+7. Monitor scheduled events in table with channel logos and program details
 
 ## API Integration
 

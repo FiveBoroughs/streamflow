@@ -30,6 +30,8 @@ function getActionLabel(action) {
       return 'Global Check'
     case 'single_channel_check':
       return 'Single Channel Check'
+    case 'batch_stream_check':
+      return 'Batch Stream Check'
     case 'playlist_refresh':
       return 'Playlist Refresh'
     case 'streams_assigned':
@@ -62,6 +64,8 @@ function getActionColor(action) {
       return 'bg-green-500/10 text-green-500 border-green-500/20'
     case 'single_channel_check':
       return 'bg-purple-500/10 text-purple-500 border-purple-500/20'
+    case 'batch_stream_check':
+      return 'bg-cyan-500/10 text-cyan-500 border-cyan-500/20'
     case 'playlist_refresh':
       return 'bg-orange-500/10 text-orange-500 border-orange-500/20'
     default:
@@ -144,16 +148,46 @@ function ChangelogEntry({ entry }) {
         
         {/* Global Stats */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3 pt-3 border-t">
+          {details.total_channels !== undefined && (
+            <div>
+              <p className="text-xs text-muted-foreground">Total Channels</p>
+              <p className="text-lg font-semibold">{details.total_channels}</p>
+            </div>
+          )}
+          {details.successful_checks !== undefined && (
+            <div>
+              <p className="text-xs text-muted-foreground">Successful</p>
+              <p className="text-lg font-semibold text-green-600">{details.successful_checks}</p>
+            </div>
+          )}
+          {details.failed_checks !== undefined && details.failed_checks > 0 && (
+            <div>
+              <p className="text-xs text-muted-foreground">Failed</p>
+              <p className="text-lg font-semibold text-destructive">{details.failed_checks}</p>
+            </div>
+          )}
           {details.total_streams !== undefined && (
             <div>
               <p className="text-xs text-muted-foreground">Total Streams</p>
               <p className="text-lg font-semibold">{details.total_streams}</p>
             </div>
           )}
+          {details.streams_analyzed !== undefined && (
+            <div>
+              <p className="text-xs text-muted-foreground">Streams Analyzed</p>
+              <p className="text-lg font-semibold">{details.streams_analyzed}</p>
+            </div>
+          )}
           {details.dead_streams !== undefined && (
             <div>
               <p className="text-xs text-muted-foreground">Dead Streams</p>
               <p className="text-lg font-semibold text-destructive">{details.dead_streams}</p>
+            </div>
+          )}
+          {details.streams_revived !== undefined && details.streams_revived > 0 && (
+            <div>
+              <p className="text-xs text-muted-foreground">Revived Streams</p>
+              <p className="text-lg font-semibold text-green-600">{details.streams_revived}</p>
             </div>
           )}
           {details.avg_resolution && (

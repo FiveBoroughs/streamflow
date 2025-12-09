@@ -229,6 +229,10 @@ export default function ChannelConfiguration() {
   const [testResults, setTestResults] = useState(null)
   const testRequestIdRef = useRef(0)
   const { toast } = useToast()
+  
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1)
+  const [itemsPerPage, setItemsPerPage] = useState(20)
 
   useEffect(() => {
     loadData()
@@ -493,6 +497,17 @@ export default function ChannelConfiguration() {
            channelId.includes(query)
   })
 
+  // Calculate pagination
+  const totalPages = Math.ceil(filteredChannels.length / itemsPerPage)
+  const startIndex = (currentPage - 1) * itemsPerPage
+  const endIndex = startIndex + itemsPerPage
+  const paginatedChannels = filteredChannels.slice(startIndex, endIndex)
+
+  // Reset to first page when search changes
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [searchQuery])
+
   const clearSearch = () => {
     setSearchQuery('')
   }
@@ -649,6 +664,32 @@ export default function ChannelConfiguration() {
       </div>
 
       <div className="space-y-4">
+        {/* Pagination info and controls at top */}
+        {filteredChannels.length > 0 && (
+          <div className="flex items-center justify-between">
+            <div className="text-sm text-muted-foreground">
+              Showing {startIndex + 1}-{Math.min(endIndex, filteredChannels.length)} of {filteredChannels.length} channels
+            </div>
+            <div className="flex items-center gap-2">
+              <Label htmlFor="items-per-page" className="text-sm whitespace-nowrap">Items per page:</Label>
+              <select
+                id="items-per-page"
+                value={itemsPerPage}
+                onChange={(e) => {
+                  setItemsPerPage(Number(e.target.value))
+                  setCurrentPage(1)
+                }}
+                className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm"
+              >
+                <option value={10}>10</option>
+                <option value={20}>20</option>
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+              </select>
+            </div>
+          </div>
+        )}
+
         {filteredChannels.length === 0 ? (
           <Card>
             <CardContent className="p-8 text-center">
@@ -668,7 +709,7 @@ export default function ChannelConfiguration() {
             </CardContent>
           </Card>
         ) : (
-          filteredChannels.map(channel => (
+          paginatedChannels.map(channel => (
             <ChannelCard
               key={channel.id}
               channel={channel}
@@ -679,6 +720,71 @@ export default function ChannelConfiguration() {
               loading={checkingChannel === channel.id}
             />
           ))
+        )}
+
+        {/* Pagination controls at bottom */}
+        {totalPages > 1 && (
+          <div className="flex items-center justify-center gap-2 pt-4">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setCurrentPage(1)}
+              disabled={currentPage === 1}
+            >
+              First
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setCurrentPage(currentPage - 1)}
+              disabled={currentPage === 1}
+            >
+              Previous
+            </Button>
+            <div className="flex items-center gap-1">
+              {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                // Show pages around current page
+                let pageNum
+                if (totalPages <= 5) {
+                  pageNum = i + 1
+                } else if (currentPage <= 3) {
+                  pageNum = i + 1
+                } else if (currentPage >= totalPages - 2) {
+                  pageNum = totalPages - 4 + i
+                } else {
+                  pageNum = currentPage - 2 + i
+                }
+                
+                return (
+                  <Button
+                    key={pageNum}
+                    variant={currentPage === pageNum ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setCurrentPage(pageNum)}
+                    className="w-9"
+                  >
+                    {pageNum}
+                  </Button>
+                )
+              })}
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setCurrentPage(currentPage + 1)}
+              disabled={currentPage === totalPages}
+            >
+              Next
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setCurrentPage(totalPages)}
+              disabled={currentPage === totalPages}
+            >
+              Last
+            </Button>
+          </div>
         )}
       </div>
 

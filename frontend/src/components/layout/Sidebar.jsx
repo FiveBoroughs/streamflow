@@ -8,7 +8,8 @@ import {
   ListChecks,
   History,
   Menu,
-  X
+  X,
+  Calendar
 } from 'lucide-react'
 import { Button } from '@/components/ui/button.jsx'
 import { ThemeToggle } from '@/components/ThemeToggle.jsx'
@@ -17,6 +18,7 @@ const menuItems = [
   { text: 'Dashboard', icon: LayoutDashboard, path: '/' },
   { text: 'Stream Checker', icon: CheckCircle, path: '/stream-checker' },
   { text: 'Channel Configuration', icon: ListChecks, path: '/channels' },
+  { text: 'Scheduling', icon: Calendar, path: '/scheduling' },
   { text: 'Automation Settings', icon: Settings, path: '/settings' },
   { text: 'Changelog', icon: History, path: '/changelog' },
 ]
