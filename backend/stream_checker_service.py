@@ -1504,6 +1504,27 @@ class StreamCheckerService:
                     logger.info(f"Found {len(streams_to_check)} new/unchecked streams (out of {len(streams)} total)")
                 else:
                     logger.info(f"All {len(streams)} streams have been recently checked, using cached scores")
+                    
+                    # Optimization: Skip check entirely if all conditions are met:
+                    # 1. No new streams to analyze (all have been checked)
+                    # 2. Stream count matches previous check (no additions/deletions)
+                    # 3. Set of stream IDs is identical (no stream replacements)
+                    previous_stream_count = len(checked_stream_ids)
+                    current_stream_count = len(current_stream_ids)
+                    
+                    if (current_stream_count == previous_stream_count and 
+                        set(current_stream_ids) == set(checked_stream_ids)):
+                        logger.info(f"Channel {channel_name} unchanged since last check - skipping reorder")
+                        self.check_queue.mark_completed(channel_id)
+                        # Update timestamp but keep existing checked_stream_ids
+                        self.update_tracker.mark_channel_checked(
+                            channel_id,
+                            stream_count=current_stream_count,
+                            checked_stream_ids=checked_stream_ids
+                        )
+                        return
+                    else:
+                        logger.info(f"Channel composition changed (prev: {previous_stream_count}, curr: {current_stream_count}) - will reorder")
             
             # Get configuration for analysis
             analysis_params = self.config.get('stream_analysis', {})
@@ -1929,6 +1950,27 @@ class StreamCheckerService:
                     logger.info(f"Found {len(streams_to_check)} new/unchecked streams (out of {len(streams)} total)")
                 else:
                     logger.info(f"All {len(streams)} streams have been recently checked, using cached scores")
+                    
+                    # Optimization: Skip check entirely if all conditions are met:
+                    # 1. No new streams to analyze (all have been checked)
+                    # 2. Stream count matches previous check (no additions/deletions)
+                    # 3. Set of stream IDs is identical (no stream replacements)
+                    previous_stream_count = len(checked_stream_ids)
+                    current_stream_count = len(current_stream_ids)
+                    
+                    if (current_stream_count == previous_stream_count and 
+                        set(current_stream_ids) == set(checked_stream_ids)):
+                        logger.info(f"Channel {channel_name} unchanged since last check - skipping reorder")
+                        self.check_queue.mark_completed(channel_id)
+                        # Update timestamp but keep existing checked_stream_ids
+                        self.update_tracker.mark_channel_checked(
+                            channel_id,
+                            stream_count=current_stream_count,
+                            checked_stream_ids=checked_stream_ids
+                        )
+                        return
+                    else:
+                        logger.info(f"Channel composition changed (prev: {previous_stream_count}, curr: {current_stream_count}) - will reorder")
             
             # Import stream analysis functions from stream_check_utils
             from stream_check_utils import analyze_stream
