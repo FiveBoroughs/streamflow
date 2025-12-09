@@ -84,20 +84,27 @@ def parse_bitrate_value(bitrate_raw) -> Optional[float]:
         if isinstance(bitrate_raw, str):
             bitrate_str = bitrate_raw.strip().lower()
             
-            # Remove any unit indicators and parse
+            # Use regex to extract numeric value (handles single decimal point correctly)
+            import re
+            
             # Try Mbps first (convert to kbps)
             if 'mbps' in bitrate_str or 'mb/s' in bitrate_str:
-                value = float(''.join(c for c in bitrate_str if c.isdigit() or c == '.'))
-                return value * 1000  # Convert Mbps to kbps
+                match = re.search(r'(\d+\.?\d*)', bitrate_str)
+                if match:
+                    value = float(match.group(1))
+                    return value * 1000  # Convert Mbps to kbps
             
             # Try kbps or kb/s
             if 'kbps' in bitrate_str or 'kb/s' in bitrate_str:
-                value = float(''.join(c for c in bitrate_str if c.isdigit() or c == '.'))
-                return value
+                match = re.search(r'(\d+\.?\d*)', bitrate_str)
+                if match:
+                    return float(match.group(1))
             
             # Try plain number (assume kbps)
-            value = float(''.join(c for c in bitrate_str if c.isdigit() or c == '.'))
-            return value if value > 0 else None
+            match = re.search(r'(\d+\.?\d*)', bitrate_str)
+            if match:
+                value = float(match.group(1))
+                return value if value > 0 else None
     except (ValueError, TypeError, AttributeError):
         pass
     
@@ -146,10 +153,13 @@ def parse_fps_value(fps_raw) -> Optional[float]:
         # If it's a string, parse it
         if isinstance(fps_raw, str):
             fps_str = fps_raw.strip().lower()
-            # Remove 'fps' if present and extract number
-            fps_str = fps_str.replace('fps', '').strip()
-            value = float(''.join(c for c in fps_str if c.isdigit() or c == '.'))
-            return value if value > 0 else None
+            
+            # Use regex to extract numeric value (handles single decimal point correctly)
+            import re
+            match = re.search(r'(\d+\.?\d*)', fps_str)
+            if match:
+                value = float(match.group(1))
+                return value if value > 0 else None
     except (ValueError, TypeError, AttributeError):
         pass
     

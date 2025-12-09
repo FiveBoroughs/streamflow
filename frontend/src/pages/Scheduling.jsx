@@ -453,7 +453,7 @@ export default function Scheduling() {
                         <div className="flex items-center gap-2">
                           {event.channel_logo_url && (
                             <img
-                              src={`/api/channels/logos/${event.channel_logo_url.split('/').pop()}/cache`}
+                              src={`/api/channels/logos/${event.channel_logo_url?.split('/').pop()}/cache`}
                               alt={event.channel_name}
                               className="h-8 w-8 object-contain rounded"
                               onError={(e) => { e.target.style.display = 'none' }}
