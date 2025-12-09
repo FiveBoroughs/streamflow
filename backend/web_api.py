@@ -59,6 +59,7 @@ automation_manager = None
 regex_matcher = None
 scheduled_event_processor_thread = None
 scheduled_event_processor_running = False
+scheduled_event_processor_wake = None  # threading.Event to wake up the processor early
 
 def get_automation_manager():
     """Get or create automation manager instance."""
@@ -107,16 +108,32 @@ def scheduled_event_processor():
     """Background thread to process scheduled EPG events.
     
     This function runs in a separate thread and checks for due scheduled events
-    every 60 seconds. When events are due, it executes the channel checks and
+    periodically. When events are due, it executes the channel checks and
     automatically deletes the completed events.
+    
+    Uses an event-based approach similar to the global action scheduler for
+    better responsiveness. Checks every 30 seconds but can be woken early.
     """
-    global scheduled_event_processor_running
+    global scheduled_event_processor_running, scheduled_event_processor_wake
     
     logger.info("Scheduled event processor thread started")
     
+    # Check interval in seconds - more frequent than the old 60s for better responsiveness
+    check_interval = 30
+    
     while scheduled_event_processor_running:
         try:
-            # Check for due events every 60 seconds
+            # Wait for wake event or timeout (similar to _scheduler_loop pattern)
+            # This allows the processor to be woken up early if needed
+            if scheduled_event_processor_wake is None:
+                # This should not happen during normal operation
+                logger.error("Wake event is None! This indicates a programming error. Using fallback sleep.")
+                time.sleep(check_interval)
+            else:
+                scheduled_event_processor_wake.wait(timeout=check_interval)
+                scheduled_event_processor_wake.clear()
+            
+            # Check for due events
             service = get_scheduling_service()
             stream_checker = get_stream_checker_service()
             
@@ -144,20 +161,20 @@ def scheduled_event_processor():
             
         except Exception as e:
             logger.error(f"Error in scheduled event processor: {e}", exc_info=True)
-        
-        # Sleep for 60 seconds before checking again
-        time.sleep(60)
     
     logger.info("Scheduled event processor thread stopped")
 
 
 def start_scheduled_event_processor():
     """Start the background thread for processing scheduled events."""
-    global scheduled_event_processor_thread, scheduled_event_processor_running
+    global scheduled_event_processor_thread, scheduled_event_processor_running, scheduled_event_processor_wake
     
     if scheduled_event_processor_thread is not None and scheduled_event_processor_thread.is_alive():
         logger.warning("Scheduled event processor is already running")
         return False
+    
+    # Initialize wake event for responsive control
+    scheduled_event_processor_wake = threading.Event()
     
     scheduled_event_processor_running = True
     scheduled_event_processor_thread = threading.Thread(
@@ -172,7 +189,7 @@ def start_scheduled_event_processor():
 
 def stop_scheduled_event_processor():
     """Stop the background thread for processing scheduled events."""
-    global scheduled_event_processor_thread, scheduled_event_processor_running
+    global scheduled_event_processor_thread, scheduled_event_processor_running, scheduled_event_processor_wake
     
     if scheduled_event_processor_thread is None or not scheduled_event_processor_thread.is_alive():
         logger.warning("Scheduled event processor is not running")
@@ -180,6 +197,10 @@ def stop_scheduled_event_processor():
     
     logger.info("Stopping scheduled event processor...")
     scheduled_event_processor_running = False
+    
+    # Wake the thread so it can exit promptly
+    if scheduled_event_processor_wake:
+        scheduled_event_processor_wake.set()
     
     # Wait for thread to finish (with timeout)
     scheduled_event_processor_thread.join(timeout=5)
@@ -1598,6 +1619,12 @@ def create_scheduled_event():
                 return jsonify({"error": f"Missing required field: {field}"}), 400
         
         event = service.create_scheduled_event(event_data)
+        
+        # Wake up the processor to check for new events immediately
+        global scheduled_event_processor_wake
+        if scheduled_event_processor_wake:
+            scheduled_event_processor_wake.set()
+        
         return jsonify(event), 201
     
     except ValueError as e:

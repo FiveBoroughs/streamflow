@@ -442,7 +442,7 @@ Get the status of the background thread that processes scheduled EPG events.
 ```
 POST /api/scheduling/processor/start
 ```
-Start the background thread for processing scheduled events. The processor runs every 60 seconds and automatically executes channel checks for due scheduled events.
+Start the background thread for processing scheduled events. The processor checks for due events every 30 seconds using an event-based approach for better responsiveness. When new events are created, the processor wakes up immediately to check them.
 
 **Response:**
 ```json
@@ -490,14 +490,17 @@ Manually trigger processing of all scheduled events that are due. This is handle
 ```
 
 **How It Works:**
-1. The background thread checks for due scheduled events every 60 seconds
-2. When an event is due (current time >= check_time), it executes a channel check
-3. The channel check includes the program name in the changelog entry
-4. After successful execution, the event is automatically deleted from the schedule
-5. Any errors are logged but don't stop the processor
+1. The background thread checks for due scheduled events every 30 seconds using an event-based approach
+2. When an event is created, the thread is woken up immediately to check for new due events
+3. When an event is due (current time >= check_time), it executes a channel check
+4. The channel check includes the program name in the changelog entry
+5. After successful execution, the event is automatically deleted from the schedule
+6. Any errors are logged but don't stop the processor
 
 **Architecture:**
 - Runs as a daemon thread in the Flask application
+- Uses threading.Event for responsive wake-up (inspired by Global Action scheduler)
 - Thread-safe using locks in SchedulingService
 - Survives Flask reloads in development mode (daemon thread)
 - Automatically starts with Flask app (when wizard is complete)
+- Check interval reduced from 60s to 30s for better responsiveness
