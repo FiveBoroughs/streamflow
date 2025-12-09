@@ -1263,6 +1263,57 @@ class StreamCheckerService:
         
         return False
     
+    def _calculate_channel_averages(self, analyzed_streams: List[Dict], dead_stream_ids: set) -> Dict[str, str]:
+        """Calculate channel-level average statistics from analyzed streams.
+        
+        Args:
+            analyzed_streams: List of analyzed stream dictionaries
+            dead_stream_ids: Set of stream IDs that are marked as dead
+            
+        Returns:
+            Dictionary with avg_resolution, avg_bitrate, and avg_fps
+        """
+        resolutions_for_avg = []
+        bitrates_for_avg = []
+        fps_for_avg = []
+        
+        for analyzed in analyzed_streams:
+            # Skip dead streams from averages
+            if analyzed.get('stream_id') not in dead_stream_ids:
+                resolution = analyzed.get('resolution')
+                if resolution and resolution != 'N/A' and resolution != '0x0':
+                    resolutions_for_avg.append(resolution)
+                
+                bitrate = analyzed.get('bitrate_kbps')
+                if bitrate and isinstance(bitrate, (int, float)) and bitrate > 0:
+                    bitrates_for_avg.append(bitrate)
+                
+                fps = analyzed.get('fps')
+                if fps and isinstance(fps, (int, float)) and fps > 0:
+                    fps_for_avg.append(fps)
+        
+        # Calculate averages
+        avg_resolution = 'N/A'
+        if resolutions_for_avg:
+            from collections import Counter
+            resolution_counts = Counter(resolutions_for_avg)
+            avg_resolution = resolution_counts.most_common(1)[0][0]
+        
+        avg_bitrate = 'N/A'
+        if bitrates_for_avg:
+            avg_bitrate_kbps = sum(bitrates_for_avg) / len(bitrates_for_avg)
+            avg_bitrate = format_bitrate(avg_bitrate_kbps)
+        
+        avg_fps = 'N/A'
+        if fps_for_avg:
+            avg_fps = f"{sum(fps_for_avg) / len(fps_for_avg):.1f} fps"
+        
+        return {
+            'avg_resolution': avg_resolution,
+            'avg_bitrate': avg_bitrate,
+            'avg_fps': avg_fps
+        }
+    
     
     def _update_stream_stats(self, stream_data: Dict) -> bool:
         """Update stream stats for a single stream on the server."""
@@ -1753,40 +1804,7 @@ class StreamCheckerService:
                             logo_url = logo.get('cache_url') or logo.get('url')
                     
                     # Calculate channel-level averages from analyzed streams
-                    resolutions_for_avg = []
-                    bitrates_for_avg = []
-                    fps_for_avg = []
-                    
-                    for analyzed in analyzed_streams:
-                        # Skip dead streams from averages
-                        if analyzed.get('stream_id') not in dead_stream_ids:
-                            resolution = analyzed.get('resolution')
-                            if resolution and resolution != 'N/A' and resolution != '0x0':
-                                resolutions_for_avg.append(resolution)
-                            
-                            bitrate = analyzed.get('bitrate_kbps')
-                            if bitrate and isinstance(bitrate, (int, float)) and bitrate > 0:
-                                bitrates_for_avg.append(bitrate)
-                            
-                            fps = analyzed.get('fps')
-                            if fps and isinstance(fps, (int, float)) and fps > 0:
-                                fps_for_avg.append(fps)
-                    
-                    # Calculate averages
-                    avg_resolution = 'N/A'
-                    if resolutions_for_avg:
-                        from collections import Counter
-                        resolution_counts = Counter(resolutions_for_avg)
-                        avg_resolution = resolution_counts.most_common(1)[0][0]
-                    
-                    avg_bitrate = 'N/A'
-                    if bitrates_for_avg:
-                        avg_bitrate_kbps = sum(bitrates_for_avg) / len(bitrates_for_avg)
-                        avg_bitrate = format_bitrate(avg_bitrate_kbps)
-                    
-                    avg_fps = 'N/A'
-                    if fps_for_avg:
-                        avg_fps = f"{sum(fps_for_avg) / len(fps_for_avg):.1f} fps"
+                    averages = self._calculate_channel_averages(analyzed_streams, dead_stream_ids)
                     
                     stream_stats = []
                     for analyzed in analyzed_streams[:10]:  # Limit to first 10
@@ -1823,9 +1841,9 @@ class StreamCheckerService:
                         'streams_analyzed': len(analyzed_streams),
                         'dead_streams_detected': len(dead_stream_ids),
                         'streams_revived': len(revived_stream_ids),
-                        'avg_resolution': avg_resolution,
-                        'avg_bitrate': avg_bitrate,
-                        'avg_fps': avg_fps,
+                        'avg_resolution': averages['avg_resolution'],
+                        'avg_bitrate': averages['avg_bitrate'],
+                        'avg_fps': averages['avg_fps'],
                         'success': True,
                         'stream_stats': stream_stats
                     })
@@ -2194,40 +2212,7 @@ class StreamCheckerService:
             if self.changelog:
                 try:
                     # Calculate channel-level averages from analyzed streams
-                    resolutions_for_avg = []
-                    bitrates_for_avg = []
-                    fps_for_avg = []
-                    
-                    for analyzed in analyzed_streams:
-                        # Skip dead streams from averages
-                        if analyzed.get('stream_id') not in dead_stream_ids:
-                            resolution = analyzed.get('resolution')
-                            if resolution and resolution != 'N/A' and resolution != '0x0':
-                                resolutions_for_avg.append(resolution)
-                            
-                            bitrate = analyzed.get('bitrate_kbps')
-                            if bitrate and isinstance(bitrate, (int, float)) and bitrate > 0:
-                                bitrates_for_avg.append(bitrate)
-                            
-                            fps = analyzed.get('fps')
-                            if fps and isinstance(fps, (int, float)) and fps > 0:
-                                fps_for_avg.append(fps)
-                    
-                    # Calculate averages
-                    avg_resolution = 'N/A'
-                    if resolutions_for_avg:
-                        from collections import Counter
-                        resolution_counts = Counter(resolutions_for_avg)
-                        avg_resolution = resolution_counts.most_common(1)[0][0]
-                    
-                    avg_bitrate = 'N/A'
-                    if bitrates_for_avg:
-                        avg_bitrate_kbps = sum(bitrates_for_avg) / len(bitrates_for_avg)
-                        avg_bitrate = format_bitrate(avg_bitrate_kbps)
-                    
-                    avg_fps = 'N/A'
-                    if fps_for_avg:
-                        avg_fps = f"{sum(fps_for_avg) / len(fps_for_avg):.1f} fps"
+                    averages = self._calculate_channel_averages(analyzed_streams, dead_stream_ids)
                     
                     # Prepare stream stats summary for changelog
                     stream_stats = []
@@ -2279,9 +2264,9 @@ class StreamCheckerService:
                         'streams_analyzed': len(analyzed_streams),
                         'dead_streams_detected': len(dead_stream_ids),
                         'streams_revived': len(revived_stream_ids),
-                        'avg_resolution': avg_resolution,
-                        'avg_bitrate': avg_bitrate,
-                        'avg_fps': avg_fps,
+                        'avg_resolution': averages['avg_resolution'],
+                        'avg_bitrate': averages['avg_bitrate'],
+                        'avg_fps': averages['avg_fps'],
                         'success': True,
                         'stream_stats': stream_stats[:10]  # Limit to top 10 for brevity
                     })
