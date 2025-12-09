@@ -10,7 +10,7 @@ import os
 import uuid
 import requests
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 
@@ -299,11 +299,11 @@ class SchedulingService:
             minutes_before = event_data.get('minutes_before', 0)
             check_time = program_start - timedelta(minutes=minutes_before)
             
-            # Ensure check_time is timezone-aware for proper comparison
-            # Convert to UTC if not already timezone-aware
+            # Defensive: Ensure check_time is timezone-aware for proper comparison
+            # program_start should already be timezone-aware after parsing, so this
+            # should only trigger if the input data was malformed
             if check_time.tzinfo is None:
-                # Assume local time and convert to UTC
-                from datetime import timezone
+                logger.warning(f"check_time is missing timezone info, assuming UTC: {check_time}")
                 check_time = check_time.replace(tzinfo=timezone.utc)
             
             # Get channel logo info
@@ -362,7 +362,6 @@ class SchedulingService:
         Returns:
             List of events where check_time is in the past or now
         """
-        from datetime import timezone
         now = datetime.now(timezone.utc)
         due_events = []
         
