@@ -295,16 +295,19 @@ export default function Scheduling() {
                         <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                       </Button>
                     </PopoverTrigger>
-                    <PopoverContent className="w-full p-0" align="start">
+                    <PopoverContent className="w-[500px] p-0" align="start">
                       <Command>
                         <CommandInput placeholder="Search channels..." className="h-9" />
                         <CommandList>
                           <CommandEmpty>No channel found.</CommandEmpty>
                           <CommandGroup>
-                            {channels.map((channel) => (
+                            {channels.map((channel) => {
+                              const channelNumber = channel.channel_number ? `${channel.channel_number} ` : '';
+                              const searchValue = `${channelNumber}${channel.name}`.toLowerCase().trim();
+                              return (
                               <CommandItem
                                 key={channel.id}
-                                value={`${channel.channel_number || ''} ${channel.name}`.toLowerCase()}
+                                value={searchValue}
                                 onSelect={() => handleChannelSelect(channel.id)}
                               >
                                 {channel.channel_number ? `${channel.channel_number} - ` : ''}{channel.name}
@@ -315,7 +318,8 @@ export default function Scheduling() {
                                   )}
                                 />
                               </CommandItem>
-                            ))}
+                              );
+                            })}
                           </CommandGroup>
                         </CommandList>
                       </Command>

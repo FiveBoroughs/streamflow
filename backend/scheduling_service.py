@@ -257,7 +257,7 @@ class SchedulingService:
         channel_programs = [p for p in programs if isinstance(p, dict) and p.get('tvg_id') == tvg_id]
         
         # Sort by start time
-        channel_programs.sort(key=lambda p: p.get('start_time', '') if isinstance(p, dict) else '')
+        channel_programs.sort(key=lambda p: p.get('start_time', ''))
         
         logger.debug(f"Found {len(channel_programs)} programs for channel {channel_id} (tvg_id: {tvg_id})")
         return channel_programs
