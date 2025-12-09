@@ -4,12 +4,14 @@ import { Button } from '@/components/ui/button.jsx'
 import { Badge } from '@/components/ui/badge.jsx'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table.jsx'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog.jsx'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select.jsx'
 import { Input } from '@/components/ui/input.jsx'
 import { Label } from '@/components/ui/label.jsx'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover.jsx'
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command.jsx'
 import { useToast } from '@/hooks/use-toast.js'
 import { schedulingAPI, channelsAPI } from '@/services/api.js'
-import { Plus, Trash2, Clock, Calendar, RefreshCw, Loader2, Settings } from 'lucide-react'
+import { Plus, Trash2, Clock, Calendar, RefreshCw, Loader2, Settings, ChevronsUpDown, Check } from 'lucide-react'
+import { cn } from '@/lib/utils.js'
 
 export default function Scheduling() {
   const [events, setEvents] = useState([])
@@ -20,6 +22,7 @@ export default function Scheduling() {
   const [loadingPrograms, setLoadingPrograms] = useState(false)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [configDialogOpen, setConfigDialogOpen] = useState(false)
+  const [channelComboboxOpen, setChannelComboboxOpen] = useState(false)
   const [selectedChannel, setSelectedChannel] = useState(null)
   const [selectedProgram, setSelectedProgram] = useState(null)
   const [minutesBefore, setMinutesBefore] = useState(5)
@@ -80,6 +83,7 @@ export default function Scheduling() {
     setSelectedChannel(channel)
     setSelectedProgram(null)
     setPrograms([])
+    setChannelComboboxOpen(false)
     if (channel) {
       loadPrograms(channel.id)
     }
@@ -125,6 +129,7 @@ export default function Scheduling() {
       setSelectedChannel(null)
       setSelectedProgram(null)
       setPrograms([])
+      setChannelComboboxOpen(false)
       setMinutesBefore(5)
       await loadData()
     } catch (err) {
@@ -276,18 +281,50 @@ export default function Scheduling() {
                 {/* Channel Selection */}
                 <div className="space-y-2">
                   <Label htmlFor="channel-select">Channel</Label>
-                  <Select onValueChange={handleChannelSelect}>
-                    <SelectTrigger id="channel-select">
-                      <SelectValue placeholder="Search and select a channel..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {channels.map((channel) => (
-                        <SelectItem key={channel.id} value={channel.id.toString()}>
-                          {channel.channel_number ? `${channel.channel_number} - ` : ''}{channel.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <Popover open={channelComboboxOpen} onOpenChange={setChannelComboboxOpen}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        role="combobox"
+                        aria-expanded={channelComboboxOpen}
+                        className="w-full justify-between"
+                      >
+                        {selectedChannel
+                          ? `${selectedChannel.channel_number ? `${selectedChannel.channel_number} - ` : ''}${selectedChannel.name}`
+                          : "Search and select a channel..."}
+                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-[500px] p-0" align="start">
+                      <Command>
+                        <CommandInput placeholder="Search channels..." className="h-9" />
+                        <CommandList>
+                          <CommandEmpty>No channel found.</CommandEmpty>
+                          <CommandGroup>
+                            {channels.map((channel) => {
+                              const channelNumber = channel.channel_number ? `${channel.channel_number} ` : '';
+                              const searchValue = `${channelNumber}${channel.name}`.toLowerCase().trim();
+                              return (
+                              <CommandItem
+                                key={channel.id}
+                                value={searchValue}
+                                onSelect={() => handleChannelSelect(channel.id)}
+                              >
+                                {channel.channel_number ? `${channel.channel_number} - ` : ''}{channel.name}
+                                <Check
+                                  className={cn(
+                                    "ml-auto h-4 w-4",
+                                    selectedChannel?.id === channel.id ? "opacity-100" : "opacity-0"
+                                  )}
+                                />
+                              </CommandItem>
+                              );
+                            })}
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
                 </div>
 
                 {/* Programs List */}
@@ -358,6 +395,7 @@ export default function Scheduling() {
                   setSelectedChannel(null)
                   setSelectedProgram(null)
                   setPrograms([])
+                  setChannelComboboxOpen(false)
                 }}>
                   Cancel
                 </Button>
