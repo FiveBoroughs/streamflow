@@ -2343,6 +2343,7 @@ class StreamCheckerService:
             # Step 2: Refresh playlists for those accounts
             if account_ids:
                 logger.info(f"Step 2/4: Refreshing playlists for {len(account_ids)} M3U account(s)...")
+                # Import here to allow better test mocking
                 from api_utils import refresh_m3u_playlists
                 for account_id in account_ids:
                     logger.info(f"Refreshing M3U account {account_id}")
@@ -2358,6 +2359,7 @@ class StreamCheckerService:
             # Step 3: Re-match and assign streams for this specific channel
             logger.info(f"Step 3/4: Re-matching streams for channel {channel_name}...")
             try:
+                # Import here to allow better test mocking
                 from automated_stream_manager import AutomatedStreamManager
                 automation_manager = AutomatedStreamManager()
                 

@@ -194,7 +194,7 @@ class TestSingleChannelForceCheck(unittest.TestCase):
         # Verify that discover_and_assign_streams was called with force=True
         mock_automation_instance.discover_and_assign_streams.assert_called_once()
         call_kwargs = mock_automation_instance.discover_and_assign_streams.call_args[1]
-        assert call_kwargs.get('force') == True, \
+        assert call_kwargs.get('force') is True, \
             "discover_and_assign_streams should be called with force=True"
 
 
