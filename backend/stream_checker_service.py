@@ -1857,7 +1857,7 @@ class StreamCheckerService:
                 checked_stream_ids=current_stream_ids
             )
             
-            # Return statistics for single channel checks
+            # Return statistics for callers that need them
             return {
                 'dead_streams_count': len(dead_stream_ids),
                 'revived_streams_count': len(revived_stream_ids)
@@ -2293,7 +2293,7 @@ class StreamCheckerService:
                 checked_stream_ids=current_stream_ids
             )
             
-            # Return statistics for single channel checks
+            # Return statistics for callers that need them
             return {
                 'dead_streams_count': len(dead_stream_ids),
                 'revived_streams_count': len(revived_stream_ids)
@@ -2510,8 +2510,9 @@ class StreamCheckerService:
             # Perform the check (this will now bypass immunity and check all streams)
             # Returns dict with dead_streams_count and revived_streams_count
             check_result = self._check_channel(channel_id)
-            if check_result is None:
-                # Fallback for compatibility (shouldn't happen with updated methods)
+            if not check_result or not isinstance(check_result, dict):
+                # This should not happen with updated methods, but provide safe fallback
+                logger.warning(f"_check_channel did not return expected result dict, using defaults")
                 check_result = {'dead_streams_count': 0, 'revived_streams_count': 0}
             
             # Get the count of dead streams that were removed during the check
