@@ -2290,13 +2290,14 @@ class StreamCheckerService:
         """Manually queue multiple channels for checking."""
         return self.check_queue.add_channels(channel_ids, priority)
     
-    def check_single_channel(self, channel_id: int) -> Dict:
+    def check_single_channel(self, channel_id: int, program_name: Optional[str] = None) -> Dict:
         """Check a single channel immediately and return results.
         
         This performs a synchronous check of a single channel and logs to changelog.
         
         Args:
             channel_id: ID of the channel to check
+            program_name: Optional program name if this is a scheduled EPG check
             
         Returns:
             Dict with check results and statistics
@@ -2420,7 +2421,8 @@ class StreamCheckerService:
                         channel_id=channel_id,
                         channel_name=channel_name,
                         check_stats=check_stats,
-                        logo_url=logo_url
+                        logo_url=logo_url,
+                        program_name=program_name
                     )
                 except Exception as e:
                     logger.warning(f"Failed to add changelog entry: {e}")

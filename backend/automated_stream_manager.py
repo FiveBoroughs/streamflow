@@ -188,7 +188,7 @@ class ChangelogManager:
             subentries=subentries
         )
     
-    def add_single_channel_check_entry(self, channel_id: int, channel_name: str, check_stats: Dict, logo_url: Optional[str] = None):
+    def add_single_channel_check_entry(self, channel_id: int, channel_name: str, check_stats: Dict, logo_url: Optional[str] = None, program_name: Optional[str] = None):
         """Add a single channel check entry.
         
         Args:
@@ -196,6 +196,7 @@ class ChangelogManager:
             channel_name: Name of the channel
             check_stats: Statistics from the channel check
             logo_url: Optional URL for the channel logo
+            program_name: Optional program name if this was a scheduled EPG check
         """
         check_subentries = [{
             'type': 'check',
@@ -207,16 +208,23 @@ class ChangelogManager:
         
         subentries = [{'group': 'check', 'items': check_subentries}]
         
+        # Build details dict
+        details = {
+            'channel_id': channel_id,
+            'channel_name': channel_name,
+            'total_streams': check_stats.get('total_streams', 0),
+            'dead_streams': check_stats.get('dead_streams', 0),
+            'avg_resolution': check_stats.get('avg_resolution', 'N/A'),
+            'avg_bitrate': check_stats.get('avg_bitrate', 'N/A')
+        }
+        
+        # Add program name if provided (for scheduled EPG checks)
+        if program_name:
+            details['program_name'] = program_name
+        
         self.add_entry(
             action='single_channel_check',
-            details={
-                'channel_id': channel_id,
-                'channel_name': channel_name,
-                'total_streams': check_stats.get('total_streams', 0),
-                'dead_streams': check_stats.get('dead_streams', 0),
-                'avg_resolution': check_stats.get('avg_resolution', 'N/A'),
-                'avg_bitrate': check_stats.get('avg_bitrate', 'N/A')
-            },
+            details=details,
             subentries=subentries
         )
     

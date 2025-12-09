@@ -1535,6 +1535,61 @@ def delete_scheduled_event(event_id):
         logger.error(f"Error deleting scheduled event: {e}")
         return jsonify({"error": str(e)}), 500
 
+
+@app.route('/api/scheduling/process-due-events', methods=['POST'])
+@log_function_call
+def process_due_scheduled_events():
+    """Process all scheduled events that are due for execution.
+    
+    This endpoint should be called periodically (e.g., by a cron job or scheduler)
+    to check for and execute any scheduled channel checks.
+    
+    Returns:
+        JSON with execution results
+    """
+    try:
+        from scheduling_service import get_scheduling_service
+        service = get_scheduling_service()
+        stream_checker = get_stream_checker_service()
+        
+        # Get all due events
+        due_events = service.get_due_events()
+        
+        if not due_events:
+            return jsonify({
+                "message": "No events due for execution",
+                "processed": 0
+            }), 200
+        
+        results = []
+        for event in due_events:
+            event_id = event.get('id')
+            channel_name = event.get('channel_name', 'Unknown')
+            program_title = event.get('program_title', 'Unknown')
+            
+            logger.info(f"Processing due event {event_id} for {channel_name} (program: {program_title})")
+            
+            success = service.execute_scheduled_check(event_id, stream_checker)
+            results.append({
+                'event_id': event_id,
+                'channel_name': channel_name,
+                'program_title': program_title,
+                'success': success
+            })
+        
+        successful = sum(1 for r in results if r['success'])
+        
+        return jsonify({
+            "message": f"Processed {len(results)} event(s), {successful} successful",
+            "processed": len(results),
+            "successful": successful,
+            "results": results
+        }), 200
+    
+    except Exception as e:
+        logger.error(f"Error processing due scheduled events: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
 # Serve React app for all frontend routes (catch-all - must be last!)
 @app.route('/<path:path>')
 def serve_frontend(path):

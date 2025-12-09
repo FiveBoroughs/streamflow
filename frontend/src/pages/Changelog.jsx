@@ -231,6 +231,12 @@ function ChangelogEntry({ entry }) {
               <p className="text-lg font-semibold truncate">{details.channel_name}</p>
             </div>
           )}
+          {details.program_name && (
+            <div className="col-span-2">
+              <p className="text-xs text-muted-foreground">Program (Scheduled Check)</p>
+              <p className="text-lg font-semibold truncate">{details.program_name}</p>
+            </div>
+          )}
         </div>
       </CardHeader>
       

@@ -348,6 +348,76 @@ class SchedulingService:
             
             logger.warning(f"Scheduled event {event_id} not found")
             return False
+    
+    def get_due_events(self) -> List[Dict[str, Any]]:
+        """Get all events that are due for execution.
+        
+        Returns:
+            List of events where check_time is in the past or now
+        """
+        now = datetime.now()
+        due_events = []
+        
+        for event in self._scheduled_events:
+            try:
+                check_time = datetime.fromisoformat(event['check_time'].replace('Z', '+00:00'))
+                # Remove timezone info for comparison if present
+                if check_time.tzinfo:
+                    check_time = check_time.replace(tzinfo=None)
+                if check_time <= now:
+                    due_events.append(event)
+            except (ValueError, KeyError) as e:
+                logger.warning(f"Invalid check_time for event {event.get('id')}: {e}")
+        
+        return due_events
+    
+    def execute_scheduled_check(self, event_id: str, stream_checker_service) -> bool:
+        """Execute a scheduled channel check and remove the event.
+        
+        Args:
+            event_id: Event ID to execute
+            stream_checker_service: Stream checker service instance
+            
+        Returns:
+            True if executed successfully, False otherwise
+        """
+        with self._lock:
+            # Find the event
+            event = None
+            for e in self._scheduled_events:
+                if e.get('id') == event_id:
+                    event = e
+                    break
+            
+            if not event:
+                logger.warning(f"Scheduled event {event_id} not found for execution")
+                return False
+            
+            channel_id = event.get('channel_id')
+            program_title = event.get('program_title', 'Unknown Program')
+            
+            logger.info(f"Executing scheduled check for channel {channel_id} (program: {program_title})")
+            
+            try:
+                # Execute the check with program context
+                result = stream_checker_service.check_single_channel(
+                    channel_id, 
+                    program_name=program_title
+                )
+                
+                if result.get('success'):
+                    # Delete the event after successful execution
+                    self._scheduled_events = [e for e in self._scheduled_events if e.get('id') != event_id]
+                    self._save_scheduled_events()
+                    logger.info(f"Scheduled event {event_id} executed and removed successfully")
+                    return True
+                else:
+                    logger.error(f"Scheduled check for event {event_id} failed: {result.get('error')}")
+                    return False
+                    
+            except Exception as e:
+                logger.error(f"Error executing scheduled event {event_id}: {e}", exc_info=True)
+                return False
 
 
 # Global singleton instance
