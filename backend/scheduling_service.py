@@ -185,7 +185,31 @@ class SchedulingService:
                 response = requests.get(url, headers=headers, timeout=30)
                 response.raise_for_status()
                 
-                programs = response.json()
+                data = response.json()
+                
+                # Handle different response formats from Dispatcharr API
+                # According to swagger, it should be an array, but handle edge cases
+                if isinstance(data, list):
+                    programs = data
+                elif isinstance(data, dict):
+                    # If wrapped in an object, try to extract the array
+                    # Common keys: results, data, programs
+                    programs = data.get('results', data.get('data', data.get('programs', [])))
+                    if not isinstance(programs, list):
+                        logger.error(f"Unexpected EPG grid response format: {type(data)}, keys: {data.keys() if isinstance(data, dict) else 'N/A'}")
+                        programs = []
+                else:
+                    logger.error(f"Unexpected EPG grid response type: {type(data)}")
+                    programs = []
+                
+                # Validate that programs is a list of dictionaries
+                if programs:
+                    # Filter out any non-dict items
+                    valid_programs = [p for p in programs if isinstance(p, dict)]
+                    if len(valid_programs) != len(programs):
+                        logger.warning(f"Filtered out {len(programs) - len(valid_programs)} invalid program entries")
+                    programs = valid_programs
+                
                 logger.info(f"Fetched {len(programs)} programs from EPG grid")
                 
                 # Update cache
@@ -229,11 +253,11 @@ class SchedulingService:
             logger.warning(f"No TVG ID found for channel {channel_id}")
             return []
         
-        # Filter programs by tvg_id
-        channel_programs = [p for p in programs if p.get('tvg_id') == tvg_id]
+        # Filter programs by tvg_id - ensure we only process dictionaries
+        channel_programs = [p for p in programs if isinstance(p, dict) and p.get('tvg_id') == tvg_id]
         
         # Sort by start time
-        channel_programs.sort(key=lambda p: p.get('start_time', ''))
+        channel_programs.sort(key=lambda p: p.get('start_time', '') if isinstance(p, dict) else '')
         
         logger.debug(f"Found {len(channel_programs)} programs for channel {channel_id} (tvg_id: {tvg_id})")
         return channel_programs
