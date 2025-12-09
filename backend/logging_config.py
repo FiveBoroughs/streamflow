@@ -9,6 +9,7 @@ environment variable and can be imported by all other modules.
 import logging
 import os
 import sys
+import inspect
 from typing import Optional, Callable, Any
 from functools import wraps
 
@@ -79,7 +80,7 @@ def setup_logging(module_name: Optional[str] = None) -> logging.Logger:
     return logger
 
 
-def log_function_call(func_or_logger=None, func_name: str = None, **kwargs):
+def log_function_call(func_or_logger=None, func_name: Optional[str] = None, **kwargs):
     """
     Log a function call with its parameters (only in debug mode).
     
@@ -96,8 +97,12 @@ def log_function_call(func_or_logger=None, func_name: str = None, **kwargs):
         When used as decorator: Returns a decorator function
         When used as function: Returns None
     """
-    # Check if being used as a decorator (first arg is a callable)
-    if callable(func_or_logger) and func_name is None:
+    # Check if being used as a decorator
+    # Must be a function (not just callable) and func_name must be None
+    # Also check that it's not a Logger instance
+    if (inspect.isfunction(func_or_logger) and 
+        func_name is None and 
+        not isinstance(func_or_logger, logging.Logger)):
         # Being used as @log_function_call
         func = func_or_logger
         
@@ -109,11 +114,24 @@ def log_function_call(func_or_logger=None, func_name: str = None, **kwargs):
             if module_logger.isEnabledFor(logging.DEBUG):
                 # Log function call with parameters
                 param_strs = []
-                # Log positional args (skip 'self' if it's a method)
-                if args:
-                    param_strs.extend(str(arg) for arg in args if not (hasattr(arg, '__class__') and hasattr(arg.__class__, func.__name__)))
-                # Log keyword args
-                param_strs.extend(f"{k}={v}" for k, v in kwargs.items() if v is not None)
+                
+                # Get function signature to properly handle parameters
+                try:
+                    sig = inspect.signature(func)
+                    bound_args = sig.bind_partial(*args, **kwargs)
+                    bound_args.apply_defaults()
+                    
+                    # Log parameters, skipping 'self' and 'cls'
+                    for param_name, param_value in bound_args.arguments.items():
+                        if param_name not in ('self', 'cls'):
+                            param_strs.append(f"{param_name}={param_value}")
+                except (ValueError, TypeError):
+                    # Fallback: just log positional and keyword args
+                    if args:
+                        param_strs.extend(str(arg) for arg in args)
+                    if kwargs:
+                        param_strs.extend(f"{k}={v}" for k, v in kwargs.items() if v is not None)
+                
                 params = ', '.join(param_strs)
                 module_logger.debug(f"→ {func.__name__}({params})")
             
@@ -124,7 +142,7 @@ def log_function_call(func_or_logger=None, func_name: str = None, **kwargs):
     else:
         # Being used as log_function_call(logger, 'func_name', ...)
         logger = func_or_logger
-        if logger and logger.isEnabledFor(logging.DEBUG):
+        if logger and hasattr(logger, 'isEnabledFor') and logger.isEnabledFor(logging.DEBUG):
             params = ', '.join(f"{k}={v}" for k, v in kwargs.items() if v is not None)
             logger.debug(f"→ {func_name}({params})")
 
