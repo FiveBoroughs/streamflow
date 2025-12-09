@@ -410,9 +410,14 @@ class SchedulingService:
             if result.get('success'):
                 # Re-acquire lock only to delete the event after successful execution
                 with self._lock:
-                    self._scheduled_events = [e for e in self._scheduled_events if e.get('id') != event_id]
-                    self._save_scheduled_events()
-                logger.info(f"Scheduled event {event_id} executed and removed successfully")
+                    # Check if event still exists (could have been removed by another thread)
+                    event_exists = any(e.get('id') == event_id for e in self._scheduled_events)
+                    if event_exists:
+                        self._scheduled_events = [e for e in self._scheduled_events if e.get('id') != event_id]
+                        self._save_scheduled_events()
+                        logger.info(f"Scheduled event {event_id} executed and removed successfully")
+                    else:
+                        logger.warning(f"Scheduled event {event_id} was already removed by another thread")
                 return True
             else:
                 logger.error(f"Scheduled check for event {event_id} failed: {result.get('error')}")
