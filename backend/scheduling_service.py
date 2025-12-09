@@ -381,8 +381,8 @@ class SchedulingService:
         Returns:
             True if executed successfully, False otherwise
         """
+        # First, find and extract event data while holding the lock
         with self._lock:
-            # Find the event
             event = None
             for e in self._scheduled_events:
                 if e.get('id') == event_id:
@@ -393,31 +393,40 @@ class SchedulingService:
                 logger.warning(f"Scheduled event {event_id} not found for execution")
                 return False
             
+            # Extract event data
             channel_id = event.get('channel_id')
             program_title = event.get('program_title', 'Unknown Program')
+        
+        # Release lock before executing the long-running channel check
+        logger.info(f"Executing scheduled check for channel {channel_id} (program: {program_title})")
+        
+        try:
+            # Execute the check with program context (without holding the lock)
+            result = stream_checker_service.check_single_channel(
+                channel_id, 
+                program_name=program_title
+            )
             
-            logger.info(f"Executing scheduled check for channel {channel_id} (program: {program_title})")
-            
-            try:
-                # Execute the check with program context
-                result = stream_checker_service.check_single_channel(
-                    channel_id, 
-                    program_name=program_title
-                )
-                
-                if result.get('success'):
-                    # Delete the event after successful execution
+            if result.get('success'):
+                # Re-acquire lock only to delete the event after successful execution
+                with self._lock:
+                    # Remove the event and check if it was actually present
+                    initial_count = len(self._scheduled_events)
                     self._scheduled_events = [e for e in self._scheduled_events if e.get('id') != event_id]
-                    self._save_scheduled_events()
-                    logger.info(f"Scheduled event {event_id} executed and removed successfully")
-                    return True
-                else:
-                    logger.error(f"Scheduled check for event {event_id} failed: {result.get('error')}")
-                    return False
                     
-            except Exception as e:
-                logger.error(f"Error executing scheduled event {event_id}: {e}", exc_info=True)
+                    if len(self._scheduled_events) < initial_count:
+                        self._save_scheduled_events()
+                        logger.info(f"Scheduled event {event_id} executed and removed successfully")
+                    else:
+                        logger.warning(f"Scheduled event {event_id} was already removed by another thread")
+                return True
+            else:
+                logger.error(f"Scheduled check for event {event_id} failed: {result.get('error')}")
                 return False
+                
+        except Exception as e:
+            logger.error(f"Error executing scheduled event {event_id}: {e}", exc_info=True)
+            return False
 
 
 # Global singleton instance
