@@ -9,7 +9,8 @@ environment variable and can be imported by all other modules.
 import logging
 import os
 import sys
-from typing import Optional
+from typing import Optional, Callable, Any
+from functools import wraps
 
 
 class HTTPLogFilter(logging.Filter):
@@ -78,18 +79,54 @@ def setup_logging(module_name: Optional[str] = None) -> logging.Logger:
     return logger
 
 
-def log_function_call(logger: logging.Logger, func_name: str, **kwargs):
+def log_function_call(func_or_logger=None, func_name: str = None, **kwargs):
     """
     Log a function call with its parameters (only in debug mode).
     
+    Can be used in two ways:
+    1. As a decorator: @log_function_call
+    2. As a function: log_function_call(logger, 'func_name', param1=val1, ...)
+    
     Args:
-        logger: Logger instance to use
-        func_name: Name of the function being called
-        **kwargs: Function parameters to log
+        func_or_logger: Either a function (when used as decorator) or a logger instance
+        func_name: Name of the function being called (only when used as function)
+        **kwargs: Function parameters to log (only when used as function)
+    
+    Returns:
+        When used as decorator: Returns a decorator function
+        When used as function: Returns None
     """
-    if logger.isEnabledFor(logging.DEBUG):
-        params = ', '.join(f"{k}={v}" for k, v in kwargs.items() if v is not None)
-        logger.debug(f"→ {func_name}({params})")
+    # Check if being used as a decorator (first arg is a callable)
+    if callable(func_or_logger) and func_name is None:
+        # Being used as @log_function_call
+        func = func_or_logger
+        
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            # Get logger from the module where the function is defined
+            module_logger = logging.getLogger(func.__module__)
+            
+            if module_logger.isEnabledFor(logging.DEBUG):
+                # Log function call with parameters
+                param_strs = []
+                # Log positional args (skip 'self' if it's a method)
+                if args:
+                    param_strs.extend(str(arg) for arg in args if not (hasattr(arg, '__class__') and hasattr(arg.__class__, func.__name__)))
+                # Log keyword args
+                param_strs.extend(f"{k}={v}" for k, v in kwargs.items() if v is not None)
+                params = ', '.join(param_strs)
+                module_logger.debug(f"→ {func.__name__}({params})")
+            
+            # Call the original function
+            return func(*args, **kwargs)
+        
+        return wrapper
+    else:
+        # Being used as log_function_call(logger, 'func_name', ...)
+        logger = func_or_logger
+        if logger and logger.isEnabledFor(logging.DEBUG):
+            params = ', '.join(f"{k}={v}" for k, v in kwargs.items() if v is not None)
+            logger.debug(f"→ {func_name}({params})")
 
 
 def log_function_return(logger: logging.Logger, func_name: str, result=None, elapsed_time: Optional[float] = None):
