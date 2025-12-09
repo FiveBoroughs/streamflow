@@ -24,7 +24,7 @@ import logging
 import os
 import threading
 import time
-from collections import defaultdict, deque
+from collections import defaultdict, deque, Counter
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple, Any
@@ -1295,7 +1295,6 @@ class StreamCheckerService:
         # Calculate averages
         avg_resolution = 'N/A'
         if resolutions_for_avg:
-            from collections import Counter
             resolution_counts = Counter(resolutions_for_avg)
             avg_resolution = resolution_counts.most_common(1)[0][0]
         
@@ -2527,7 +2526,6 @@ class StreamCheckerService:
             avg_resolution = 'N/A'
             if resolutions:
                 # Count resolutions and get most common
-                from collections import Counter
                 resolution_counts = Counter(resolutions)
                 avg_resolution = resolution_counts.most_common(1)[0][0]
             
