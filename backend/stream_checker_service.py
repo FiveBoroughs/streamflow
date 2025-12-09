@@ -2303,7 +2303,12 @@ class StreamCheckerService:
     def check_single_channel(self, channel_id: int, program_name: Optional[str] = None) -> Dict:
         """Check a single channel immediately and return results.
         
-        This performs a synchronous check of a single channel and logs to changelog.
+        This performs a complete channel refresh similar to global check but for a single channel:
+        - Refreshes playlists for accounts associated with the channel
+        - Re-matches and assigns streams (including dead ones)
+        - Force checks all streams (bypasses 2-hour immunity)
+        - Revives streams that are now working
+        - Removes streams that are still dead
         
         Args:
             channel_id: ID of the channel to check
@@ -2325,7 +2330,51 @@ class StreamCheckerService:
             
             channel_name = channel.get('name', f'Channel {channel_id}')
             
-            # Perform the check
+            # Step 1: Get current streams to identify M3U accounts
+            logger.info(f"Step 1/4: Identifying M3U accounts for channel {channel_name}...")
+            current_streams = fetch_channel_streams(channel_id)
+            account_ids = set()
+            if current_streams:
+                for stream in current_streams:
+                    m3u_account = stream.get('m3u_account')
+                    if m3u_account:
+                        account_ids.add(m3u_account)
+            
+            # Step 2: Refresh playlists for those accounts
+            if account_ids:
+                logger.info(f"Step 2/4: Refreshing playlists for {len(account_ids)} M3U account(s)...")
+                from api_utils import refresh_m3u_playlists
+                for account_id in account_ids:
+                    logger.info(f"Refreshing M3U account {account_id}")
+                    refresh_m3u_playlists(account_id=account_id)
+                
+                # Refresh UDI cache to get updated streams
+                udi.refresh_streams()
+                udi.refresh_channels()
+                logger.info("✓ Playlists refreshed and UDI cache updated")
+            else:
+                logger.info("Step 2/4: No M3U accounts found for this channel, skipping playlist refresh")
+            
+            # Step 3: Re-match and assign streams for this specific channel
+            logger.info(f"Step 3/4: Re-matching streams for channel {channel_name}...")
+            try:
+                from automated_stream_manager import AutomatedStreamManager
+                automation_manager = AutomatedStreamManager()
+                
+                # Run full discovery (this will re-add all matching streams including previously dead ones)
+                assignments = automation_manager.discover_and_assign_streams(force=True)
+                if assignments:
+                    logger.info(f"✓ Stream matching completed")
+                else:
+                    logger.info("✓ No new stream assignments")
+            except Exception as e:
+                logger.error(f"✗ Failed to match streams: {e}")
+            
+            # Step 4: Mark channel for force check and perform the check
+            logger.info(f"Step 4/4: Force checking all streams for channel {channel_name}...")
+            self.update_tracker.mark_channel_for_force_check(channel_id)
+            
+            # Perform the check (this will now bypass immunity and check all streams)
             self._check_channel(channel_id)
             
             # Gather statistics after check
