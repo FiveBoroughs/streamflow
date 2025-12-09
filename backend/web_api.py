@@ -23,6 +23,7 @@ from flask_cors import CORS
 from automated_stream_manager import AutomatedStreamManager, RegexChannelMatcher
 from api_utils import _get_base_url
 from stream_checker_service import get_stream_checker_service
+from scheduling_service import get_scheduling_service
 
 # Import UDI for direct data access
 from udi import get_udi_manager
@@ -116,8 +117,6 @@ def scheduled_event_processor():
     while scheduled_event_processor_running:
         try:
             # Check for due events every 60 seconds
-            from scheduling_service import get_scheduling_service
-            
             service = get_scheduling_service()
             stream_checker = get_stream_checker_service()
             
@@ -1697,15 +1696,12 @@ def get_scheduled_event_processor_status():
     try:
         global scheduled_event_processor_thread, scheduled_event_processor_running
         
-        is_running = (
-            scheduled_event_processor_thread is not None and 
-            scheduled_event_processor_thread.is_alive() and
-            scheduled_event_processor_running
-        )
+        thread_alive = scheduled_event_processor_thread is not None and scheduled_event_processor_thread.is_alive()
+        is_running = thread_alive and scheduled_event_processor_running
         
         return jsonify({
             "running": is_running,
-            "thread_alive": scheduled_event_processor_thread.is_alive() if scheduled_event_processor_thread else False
+            "thread_alive": thread_alive
         }), 200
     
     except Exception as e:
