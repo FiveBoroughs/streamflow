@@ -405,7 +405,8 @@ def get_channel_stats(channel_id):
         
         # Extract and parse average bitrate
         # The calculate_channel_averages returns formatted string (e.g., "5000 kbps")
-        # We need the numeric value for backward compatibility
+        # We need the numeric value for backward compatibility with existing UI
+        # TODO: Consider removing this conversion in v2.0 and have UI handle formatted strings
         avg_bitrate_str = channel_averages.get('avg_bitrate', 'N/A')
         avg_bitrate = 0
         if avg_bitrate_str != 'N/A':

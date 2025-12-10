@@ -132,6 +132,9 @@ def parse_fps_value(fps_raw) -> Optional[float]:
 def format_fps(fps: Optional[float]) -> str:
     """Format FPS for display.
     
+    Note: Uses 1 decimal place formatting, which will round values like 29.97 to 30.0.
+    This is intentional for cleaner display, as sub-decimal precision is rarely needed.
+    
     Args:
         fps: FPS value (float or None)
         
@@ -147,8 +150,9 @@ def format_fps(fps: Optional[float]) -> str:
 def normalize_resolution(resolution: Any) -> str:
     """Normalize resolution to standard format.
     
-    This function preserves "0x0" and other technically valid but dead resolutions
-    for dead stream detection. Use this for display purposes after dead stream check.
+    Important: This function preserves "0x0" and partial zero resolutions (e.g., "1920x0")
+    for dead stream detection. These are technically valid resolution formats but indicate
+    dead/broken streams. The is_stream_dead() function depends on this behavior.
     
     Args:
         resolution: Resolution in various formats (str, None, etc.)

@@ -113,9 +113,14 @@ class TestFormatFps(unittest.TestCase):
     """Test FPS formatting for display."""
     
     def test_format_fps(self):
-        """Test formatting FPS."""
+        """Test formatting FPS.
+        
+        Note: 29.97 is rounded to 30.0 by design - we use 1 decimal place
+        formatting for cleaner display. This is intentional behavior.
+        """
         self.assertEqual(format_fps(30), "30.0 fps")
-        self.assertEqual(format_fps(29.97), "30.0 fps")
+        self.assertEqual(format_fps(29.97), "30.0 fps")  # Intentional rounding
+        self.assertEqual(format_fps(25), "25.0 fps")
     
     def test_format_none(self):
         """Test formatting None."""
