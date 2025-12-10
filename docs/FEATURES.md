@@ -94,9 +94,36 @@ Automatically identifies and manages non-functional streams:
 - **Changelog Tracking**: Dead streams show status "dead" in changelog (not score:0)
 - **Revival Tracking**: Revived streams show status "revived" in changelog
 - **Removal**: Dead streams are removed from channels during regular checks
-- **Revival Check**: During global actions, dead streams are re-checked for revival
 - **Matching Exclusion**: Dead streams are not assigned to channels during stream matching
 - **Pipeline-Aware**: Only operates in pipelines with stream checking enabled (1, 1.5, 2.5, 3)
+
+#### Dead Stream Revival: Global Action vs Single Channel Check
+There is an important difference in how dead streams are handled:
+
+**Global Action** (gives ALL dead streams a second chance):
+1. **Step 1**: Refresh UDI cache
+2. **Step 2**: Clear ALL dead streams from tracker (giving them a second chance)
+3. **Step 3**: Update all M3U playlists
+4. **Step 4**: Match and assign streams (including previously dead ones since tracker was cleared)
+5. **Step 5**: Check all channels (force check bypasses immunity)
+6. **Result**: ALL previously dead streams can be re-added and re-checked
+
+**Single Channel Check** (does NOT give dead streams a second chance):
+1. **Step 1**: Identify M3U accounts used by the channel
+2. **Step 2**: Refresh playlists for those M3U accounts
+3. **Step 3**: Re-match and assign NEW streams (dead streams remain in tracker and are excluded)
+4. **Step 4**: Force check all streams (bypasses 2-hour immunity)
+5. **Result**: Dead streams remain in tracker and are NOT re-added during matching
+
+**Why the difference?**
+- Global Action is the comprehensive system-wide operation that clears the slate and gives every stream a fresh chance
+- Single Channel Check is designed for quick targeted checks of a specific channel and respects the dead stream tracker to avoid repeatedly checking known-bad streams
+- This ensures that dead streams are periodically re-evaluated (during Global Actions) without causing excessive load during individual channel checks
+
+**When dead streams get a second chance:**
+- During scheduled Global Actions (pipelines 1.5, 2.5, and 3)
+- During manually triggered Global Actions
+- When streams are manually re-added to channels outside of the automated system
 
 ## User Interface
 

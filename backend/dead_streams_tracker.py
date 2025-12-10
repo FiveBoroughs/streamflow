@@ -204,3 +204,25 @@ class DeadStreamsTracker:
         except Exception as e:
             logger.error(f"❌ Error cleaning up removed streams: {e}")
             return 0
+    
+    def clear_all_dead_streams(self) -> int:
+        """Clear ALL dead streams from tracking.
+        
+        This is used during global actions to give all previously dead streams
+        a second chance to be re-added and re-checked.
+        
+        Returns:
+            int: Number of dead streams cleared
+        """
+        try:
+            with self.lock:
+                count = len(self.dead_streams)
+                if count > 0:
+                    logger.info(f"🔄 Clearing ALL {count} dead stream(s) from tracker for global action")
+                    self.dead_streams.clear()
+                    self._save_dead_streams()
+                    logger.info(f"✓ Cleared {count} dead stream(s) - they will be given a second chance")
+                return count
+        except Exception as e:
+            logger.error(f"❌ Error clearing all dead streams: {e}")
+            return 0
