@@ -28,6 +28,14 @@ from scheduling_service import get_scheduling_service
 # Import UDI for direct data access
 from udi import get_udi_manager
 
+# Import centralized stream stats utilities
+from stream_stats_utils import (
+    extract_stream_stats,
+    format_bitrate,
+    parse_bitrate_value,
+    calculate_channel_averages
+)
+
 # Import croniter for cron expression validation
 try:
     from croniter import croniter
@@ -388,36 +396,30 @@ def get_channel_stats(channel_id):
         else:
             logger.warning(f"Dead streams tracker not available for channel {channel_id_int}")
         
-        # Calculate resolution statistics
-        resolutions = {}
-        bitrates = []
+        # Calculate resolution and bitrate statistics using centralized utility
+        # This ensures consistent handling across the application
+        channel_averages = calculate_channel_averages(streams, dead_stream_ids=set())
         
-        for stream in streams:
-            # Get resolution from stream_stats if available
-            stream_stats = stream.get('stream_stats')
-            resolution = 'Unknown'
-            bitrate = None
-            
-            if stream_stats and isinstance(stream_stats, dict):
-                resolution = stream_stats.get('resolution', 'Unknown')
-                # Try 'ffmpeg_output_bitrate', 'bitrate_kbps', or 'bitrate' field names for compatibility
-                bitrate = stream_stats.get('ffmpeg_output_bitrate') or stream_stats.get('bitrate_kbps') or stream_stats.get('bitrate')
-            
-            if resolution != 'Unknown':
-                resolutions[resolution] = resolutions.get(resolution, 0) + 1
-            
-            if bitrate and isinstance(bitrate, (int, float)) and bitrate > 0:
-                bitrates.append(bitrate)
+        # Extract most common resolution
+        most_common_resolution = channel_averages.get('avg_resolution', 'Unknown')
         
-        # Most common resolution
-        most_common_resolution = 'Unknown'
-        if resolutions:
-            most_common_resolution = max(resolutions, key=resolutions.get)
-        
-        # Average bitrate
+        # Extract and parse average bitrate
+        # The calculate_channel_averages returns formatted string (e.g., "5000 kbps")
+        # We need the numeric value for backward compatibility
+        avg_bitrate_str = channel_averages.get('avg_bitrate', 'N/A')
         avg_bitrate = 0
-        if bitrates:
-            avg_bitrate = int(sum(bitrates) / len(bitrates))
+        if avg_bitrate_str != 'N/A':
+            parsed_bitrate = parse_bitrate_value(avg_bitrate_str)
+            if parsed_bitrate:
+                avg_bitrate = int(parsed_bitrate)
+        
+        # Build resolutions dict for detailed breakdown (if needed by UI)
+        resolutions = {}
+        for stream in streams:
+            stats = extract_stream_stats(stream)
+            resolution = stats.get('resolution', 'Unknown')
+            if resolution not in ['Unknown', 'N/A']:
+                resolutions[resolution] = resolutions.get(resolution, 0) + 1
         
         return jsonify({
             "channel_id": channel_id_int,

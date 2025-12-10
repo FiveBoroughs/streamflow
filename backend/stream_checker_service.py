@@ -43,6 +43,18 @@ from udi import get_udi_manager
 # Import dead streams tracker
 from dead_streams_tracker import DeadStreamsTracker
 
+# Import centralized stream stats utilities
+from stream_stats_utils import (
+    parse_bitrate_value,
+    format_bitrate,
+    parse_fps_value,
+    format_fps,
+    extract_stream_stats,
+    format_stream_stats_for_display,
+    calculate_channel_averages,
+    is_stream_dead as utils_is_stream_dead
+)
+
 # Import changelog manager
 try:
     from automated_stream_manager import ChangelogManager
@@ -57,113 +69,6 @@ logger = setup_logging(__name__)
 
 # Configuration directory
 CONFIG_DIR = Path(os.environ.get('CONFIG_DIR', '/app/data'))
-
-
-def parse_bitrate_value(bitrate_raw) -> Optional[float]:
-    """Parse bitrate from various formats to kbps.
-    
-    Handles formats like:
-    - "1234 kbps"
-    - "1234.5"
-    - "1.2 Mbps"
-    - "1234"
-    - 1234 (int/float)
-    
-    Returns:
-        Bitrate in kbps as float, or None if parsing fails
-    """
-    if not bitrate_raw:
-        return None
-    
-    try:
-        # If it's already a number
-        if isinstance(bitrate_raw, (int, float)):
-            return float(bitrate_raw)
-        
-        # If it's a string, parse it
-        if isinstance(bitrate_raw, str):
-            bitrate_str = bitrate_raw.strip().lower()
-            
-            # Use regex to extract numeric value (handles single decimal point correctly)
-            import re
-            
-            # Try Mbps first (convert to kbps)
-            if 'mbps' in bitrate_str or 'mb/s' in bitrate_str:
-                match = re.search(r'(\d+\.?\d*)', bitrate_str)
-                if match:
-                    value = float(match.group(1))
-                    return value * 1000  # Convert Mbps to kbps
-            
-            # Try kbps or kb/s
-            if 'kbps' in bitrate_str or 'kb/s' in bitrate_str:
-                match = re.search(r'(\d+\.?\d*)', bitrate_str)
-                if match:
-                    return float(match.group(1))
-            
-            # Try plain number (assume kbps)
-            match = re.search(r'(\d+\.?\d*)', bitrate_str)
-            if match:
-                value = float(match.group(1))
-                return value if value > 0 else None
-    except (ValueError, TypeError, AttributeError):
-        pass
-    
-    return None
-
-
-def format_bitrate(bitrate_kbps: Optional[float]) -> str:
-    """Format bitrate for display.
-    
-    Args:
-        bitrate_kbps: Bitrate in kbps
-        
-    Returns:
-        Formatted string like "1234 kbps" or "N/A"
-    """
-    if bitrate_kbps is None or bitrate_kbps <= 0:
-        return 'N/A'
-    
-    # If over 1000 kbps, show in Mbps
-    if bitrate_kbps >= 1000:
-        return f"{bitrate_kbps / 1000:.1f} Mbps"
-    
-    return f"{bitrate_kbps:.0f} kbps"
-
-
-def parse_fps_value(fps_raw) -> Optional[float]:
-    """Parse FPS from various formats.
-    
-    Handles formats like:
-    - "25 fps"
-    - "25.0"
-    - "25"
-    - 25 (int/float)
-    
-    Returns:
-        FPS as float, or None if parsing fails
-    """
-    if not fps_raw:
-        return None
-    
-    try:
-        # If it's already a number
-        if isinstance(fps_raw, (int, float)):
-            return float(fps_raw)
-        
-        # If it's a string, parse it
-        if isinstance(fps_raw, str):
-            fps_str = fps_raw.strip().lower()
-            
-            # Use regex to extract numeric value (handles single decimal point correctly)
-            import re
-            match = re.search(r'(\d+\.?\d*)', fps_str)
-            if match:
-                value = float(match.group(1))
-                return value if value > 0 else None
-    except (ValueError, TypeError, AttributeError):
-        pass
-    
-    return None
 
 
 class StreamCheckConfig:
@@ -1228,9 +1133,7 @@ class StreamCheckerService:
     def _is_stream_dead(self, stream_data: Dict) -> bool:
         """Check if a stream should be considered dead based on analysis results.
         
-        A stream is dead if:
-        - Resolution is '0x0' or contains 0 in width or height
-        - Bitrate is 0 or None
+        Uses centralized utility function for consistent dead stream detection.
         
         Args:
             stream_data: Analyzed stream data dictionary
@@ -1238,33 +1141,12 @@ class StreamCheckerService:
         Returns:
             bool: True if stream is dead, False otherwise
         """
-        # Check resolution
-        resolution = stream_data.get('resolution', '')
-        if resolution and resolution != 'N/A':
-            resolution_str = str(resolution)
-            # Check if resolution is exactly 0x0 or starts/ends with 0
-            if resolution_str == '0x0':
-                return True
-            # Check if width or height is 0 (e.g., "0x1080" or "1920x0")
-            if 'x' in resolution_str:
-                try:
-                    parts = resolution_str.split('x')
-                    if len(parts) == 2:
-                        width, height = int(parts[0]), int(parts[1])
-                        if width == 0 or height == 0:
-                            return True
-                except (ValueError, IndexError):
-                    pass
-        
-        # Check bitrate
-        bitrate = stream_data.get('bitrate_kbps', 0)
-        if bitrate in [0, None, 'N/A'] or (isinstance(bitrate, (int, float)) and bitrate == 0):
-            return True
-        
-        return False
+        return utils_is_stream_dead(stream_data)
     
     def _calculate_channel_averages(self, analyzed_streams: List[Dict], dead_stream_ids: set) -> Dict[str, str]:
         """Calculate channel-level average statistics from analyzed streams.
+        
+        Uses centralized utility function for consistent average calculation.
         
         Args:
             analyzed_streams: List of analyzed stream dictionaries
@@ -1273,45 +1155,7 @@ class StreamCheckerService:
         Returns:
             Dictionary with avg_resolution, avg_bitrate, and avg_fps
         """
-        resolutions_for_avg = []
-        bitrates_for_avg = []
-        fps_for_avg = []
-        
-        for analyzed in analyzed_streams:
-            # Skip dead streams from averages
-            if analyzed.get('stream_id') not in dead_stream_ids:
-                resolution = analyzed.get('resolution')
-                if resolution and resolution != 'N/A' and resolution != '0x0':
-                    resolutions_for_avg.append(resolution)
-                
-                bitrate = analyzed.get('bitrate_kbps')
-                if bitrate and isinstance(bitrate, (int, float)) and bitrate > 0:
-                    bitrates_for_avg.append(bitrate)
-                
-                fps = analyzed.get('fps')
-                if fps and isinstance(fps, (int, float)) and fps > 0:
-                    fps_for_avg.append(fps)
-        
-        # Calculate averages
-        avg_resolution = 'N/A'
-        if resolutions_for_avg:
-            resolution_counts = Counter(resolutions_for_avg)
-            avg_resolution = resolution_counts.most_common(1)[0][0]
-        
-        avg_bitrate = 'N/A'
-        if bitrates_for_avg:
-            avg_bitrate_kbps = sum(bitrates_for_avg) / len(bitrates_for_avg)
-            avg_bitrate = format_bitrate(avg_bitrate_kbps)
-        
-        avg_fps = 'N/A'
-        if fps_for_avg:
-            avg_fps = f"{sum(fps_for_avg) / len(fps_for_avg):.1f} fps"
-        
-        return {
-            'avg_resolution': avg_resolution,
-            'avg_bitrate': avg_bitrate,
-            'avg_fps': avg_fps
-        }
+        return calculate_channel_averages(analyzed_streams, dead_stream_ids)
     
     
     def _update_stream_stats(self, stream_data: Dict) -> bool:
