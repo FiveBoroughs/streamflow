@@ -161,6 +161,11 @@ export default function Scheduling() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [eventToDelete, setEventToDelete] = useState(null)
 
+  const validateMinutesBefore = (value) => {
+    const minutesValue = parseInt(value)
+    return !isNaN(minutesValue) && minutesValue >= 0
+  }
+
   const handleRuleChannelSelect = (channelId) => {
     const channel = channels.find(c => c.id === parseInt(channelId))
     setRuleSelectedChannel(channel)
@@ -218,8 +223,7 @@ export default function Scheduling() {
       return
     }
 
-    const minutesBeforeValue = parseInt(ruleMinutesBefore)
-    if (isNaN(minutesBeforeValue) || minutesBeforeValue < 0) {
+    if (!validateMinutesBefore(ruleMinutesBefore)) {
       toast({
         title: "Validation Error",
         description: "Please enter a valid number of minutes (0 or greater)",
@@ -227,6 +231,8 @@ export default function Scheduling() {
       })
       return
     }
+
+    const minutesBeforeValue = parseInt(ruleMinutesBefore)
 
     try {
       const ruleData = {

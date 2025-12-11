@@ -26,6 +26,9 @@ SCHEDULING_CONFIG_FILE = CONFIG_DIR / 'scheduling_config.json'
 SCHEDULED_EVENTS_FILE = CONFIG_DIR / 'scheduled_events.json'
 AUTO_CREATE_RULES_FILE = CONFIG_DIR / 'auto_create_rules.json'
 
+# Constants
+DUPLICATE_DETECTION_WINDOW_SECONDS = 300  # 5 minutes window for detecting duplicate events
+
 
 class SchedulingService:
     """
@@ -219,11 +222,8 @@ class SchedulingService:
                 self._epg_cache = programs
                 self._epg_cache_time = datetime.now()
                 
-                # Match programs to auto-create rules (release lock first to avoid deadlock)
+                # Copy programs before releasing lock
                 programs_copy = programs.copy()
-                
-                # Release lock before matching to avoid deadlock
-                # Note: We're still inside the with block, but we've copied the data
                 
             except Exception as e:
                 logger.error(f"Error fetching EPG grid: {e}")
@@ -690,10 +690,10 @@ class SchedulingService:
                         except (ValueError, AttributeError):
                             continue
                         
-                        # Check if same date and similar title (within 5 minute window)
+                        # Check if same date and similar title (within duplicate detection window)
                         if event_date == program_date:
                             time_diff = abs((event_start_dt - start_dt).total_seconds())
-                            if time_diff < 300:  # Within 5 minutes
+                            if time_diff < DUPLICATE_DETECTION_WINDOW_SECONDS:
                                 existing_event = event
                                 break
                     
