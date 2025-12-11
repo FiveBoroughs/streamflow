@@ -322,14 +322,6 @@ export default function StreamChecker() {
               Clear Queue
             </Button>
           </CardHeader>
-          <CardContent>
-            <Alert>
-              <Clock className="h-4 w-4" />
-              <AlertDescription>
-                Channels are processed in priority order. Higher priority channels are checked first.
-              </AlertDescription>
-            </Alert>
-          </CardContent>
         </Card>
       )}
 

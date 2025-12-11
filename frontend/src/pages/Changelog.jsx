@@ -134,7 +134,7 @@ function ChannelItem({ item, groupType, groupIndex, itemIndex }) {
                     <TableRow key={streamDetail.stream_id || `detail-${idx}`}>
                       <TableCell className="font-medium">{streamDetail.stream_name || 'Unknown'}</TableCell>
                       <TableCell>{streamDetail.resolution || 'N/A'}</TableCell>
-                      <TableCell>{streamDetail.fps ? `${streamDetail.fps} fps`.replace(/\s+fps$/, ' fps') : 'N/A'}</TableCell>
+                      <TableCell>{streamDetail.fps || 'N/A'}</TableCell>
                       <TableCell>{streamDetail.bitrate || 'N/A'}</TableCell>
                       <TableCell>{streamDetail.video_codec || 'N/A'}</TableCell>
                       {item.stats.stream_details.some(s => s.score !== undefined && s.score !== null) && (
