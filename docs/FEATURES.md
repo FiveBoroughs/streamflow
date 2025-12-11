@@ -147,6 +147,55 @@ There is an important difference in how dead streams are handled:
 - Global Action trigger button
 - Queue management (clear queue)
 
+### EPG-Based Scheduling
+The Scheduling page provides powerful tools for managing channel checks before important programs:
+
+#### Manual Scheduled Events
+- **Schedule channel checks before specific EPG programs**
+  - Browse programs from Dispatcharr EPG data
+  - Select channel and program
+  - Set check timing (minutes before program starts)
+- **Playlist refresh included**: Each scheduled check also refreshes playlists
+- **Event management**: View all scheduled events with delete capability
+
+#### Auto-Create Rules (Regex-Based)
+Automatically create scheduled events based on program name patterns:
+
+- **Rule Configuration**:
+  - Rule name for easy identification
+  - Channel selection with search
+  - Regex pattern to match program names
+  - Minutes before setting (when to run check)
+
+- **Live Regex Testing**:
+  - Test patterns against real EPG data
+  - See matching programs before creating rule
+  - Case-insensitive matching for flexibility
+
+- **Automatic Event Creation**:
+  - Rules scan EPG on every refresh
+  - Creates events for matching programs
+  - Duplicate prevention (same channel/date/time within 5 minutes)
+  - Smart updates: adjusts event title and time if program changes
+
+- **Rule Management**:
+  - View all active rules
+  - Delete rules when no longer needed
+  - Rules table shows channel, pattern, and timing
+
+**Use Cases**:
+- Breaking news alerts: `^Breaking News|^Special Report`
+- Live sports: `^Live:|Championship|Finals`
+- Show-specific: `^Game of Thrones|^The Mandalorian`
+- Time-specific: `Monday Night Football` on specific channels
+
+**Example Workflow**:
+1. Create rule: "Breaking News" on CNN with pattern `^Breaking`
+2. EPG refreshes every hour
+3. Any program starting with "Breaking" automatically gets a scheduled check
+4. If program name or time changes, event updates automatically
+5. Check happens X minutes before program starts
+
 ### Channel Configuration
 - **Horizontal Channel Cards**: Modern card-based layout with expandable sections
   - Channel logo display (wider than taller for better visibility)

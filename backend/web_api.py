@@ -1644,6 +1644,129 @@ def delete_scheduled_event(event_id):
         return jsonify({"error": str(e)}), 500
 
 
+@app.route('/api/scheduling/auto-create-rules', methods=['GET'])
+@log_function_call
+def get_auto_create_rules():
+    """Get all auto-create rules."""
+    try:
+        from scheduling_service import get_scheduling_service
+        service = get_scheduling_service()
+        rules = service.get_auto_create_rules()
+        return jsonify(rules)
+    except Exception as e:
+        logger.error(f"Error getting auto-create rules: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/scheduling/auto-create-rules', methods=['POST'])
+@log_function_call
+def create_auto_create_rule():
+    """Create a new auto-create rule.
+    
+    Expected JSON body:
+    {
+        "name": "Rule Name",
+        "channel_id": 123,
+        "regex_pattern": "^Breaking News",
+        "minutes_before": 5
+    }
+    """
+    try:
+        from scheduling_service import get_scheduling_service
+        service = get_scheduling_service()
+        rule_data = request.get_json()
+        
+        if not rule_data:
+            return jsonify({"error": "No rule data provided"}), 400
+        
+        # Validate required fields
+        required_fields = ['name', 'channel_id', 'regex_pattern']
+        for field in required_fields:
+            if field not in rule_data:
+                return jsonify({"error": f"Missing required field: {field}"}), 400
+        
+        rule = service.create_auto_create_rule(rule_data)
+        
+        # Wake up the processor to check for new events immediately
+        global scheduled_event_processor_wake
+        if scheduled_event_processor_wake:
+            scheduled_event_processor_wake.set()
+        
+        return jsonify(rule), 201
+    
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        logger.error(f"Error creating auto-create rule: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/scheduling/auto-create-rules/<rule_id>', methods=['DELETE'])
+@log_function_call
+def delete_auto_create_rule(rule_id):
+    """Delete an auto-create rule.
+    
+    Args:
+        rule_id: Rule ID
+    """
+    try:
+        from scheduling_service import get_scheduling_service
+        service = get_scheduling_service()
+        
+        success = service.delete_auto_create_rule(rule_id)
+        
+        if success:
+            return jsonify({"message": "Rule deleted"}), 200
+        else:
+            return jsonify({"error": "Rule not found"}), 404
+    
+    except Exception as e:
+        logger.error(f"Error deleting auto-create rule: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/scheduling/auto-create-rules/test', methods=['POST'])
+@log_function_call
+def test_auto_create_rule():
+    """Test a regex pattern against EPG programs for a channel.
+    
+    Expected JSON body:
+    {
+        "channel_id": 123,
+        "regex_pattern": "^Breaking News"
+    }
+    """
+    try:
+        from scheduling_service import get_scheduling_service
+        service = get_scheduling_service()
+        test_data = request.get_json()
+        
+        if not test_data:
+            return jsonify({"error": "No test data provided"}), 400
+        
+        # Validate required fields
+        required_fields = ['channel_id', 'regex_pattern']
+        for field in required_fields:
+            if field not in test_data:
+                return jsonify({"error": f"Missing required field: {field}"}), 400
+        
+        matching_programs = service.test_regex_against_epg(
+            test_data['channel_id'],
+            test_data['regex_pattern']
+        )
+        
+        return jsonify({
+            "matches": len(matching_programs),
+            "programs": matching_programs
+        })
+    
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        logger.error(f"Error testing auto-create rule: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route('/api/scheduling/process-due-events', methods=['POST'])
 @log_function_call
 def process_due_scheduled_events():

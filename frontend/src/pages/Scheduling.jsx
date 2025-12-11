@@ -27,6 +27,20 @@ export default function Scheduling() {
   const [selectedProgram, setSelectedProgram] = useState(null)
   const [minutesBefore, setMinutesBefore] = useState(5)
   const [refreshInterval, setRefreshInterval] = useState(60)
+  
+  // Auto-create rules state
+  const [autoCreateRules, setAutoCreateRules] = useState([])
+  const [ruleDialogOpen, setRuleDialogOpen] = useState(false)
+  const [ruleChannelComboboxOpen, setRuleChannelComboboxOpen] = useState(false)
+  const [ruleSelectedChannel, setRuleSelectedChannel] = useState(null)
+  const [ruleName, setRuleName] = useState('')
+  const [ruleRegexPattern, setRuleRegexPattern] = useState('')
+  const [ruleMinutesBefore, setRuleMinutesBefore] = useState(5)
+  const [testingRegex, setTestingRegex] = useState(false)
+  const [regexMatches, setRegexMatches] = useState([])
+  const [deleteRuleDialogOpen, setDeleteRuleDialogOpen] = useState(false)
+  const [ruleToDelete, setRuleToDelete] = useState(null)
+  
   const { toast } = useToast()
 
   useEffect(() => {
@@ -36,16 +50,18 @@ export default function Scheduling() {
   const loadData = async () => {
     try {
       setLoading(true)
-      const [eventsResponse, channelsResponse, configResponse] = await Promise.all([
+      const [eventsResponse, channelsResponse, configResponse, rulesResponse] = await Promise.all([
         schedulingAPI.getEvents(),
         channelsAPI.getChannels(),
-        schedulingAPI.getConfig()
+        schedulingAPI.getConfig(),
+        schedulingAPI.getAutoCreateRules()
       ])
       
       setEvents(eventsResponse.data || [])
       setChannels(channelsResponse.data || [])
       setConfig(configResponse.data || {})
       setRefreshInterval(configResponse.data?.epg_refresh_interval_minutes || 60)
+      setAutoCreateRules(rulesResponse.data || [])
     } catch (err) {
       console.error('Failed to load scheduling data:', err)
       toast({
@@ -144,6 +160,132 @@ export default function Scheduling() {
 
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [eventToDelete, setEventToDelete] = useState(null)
+
+  const validateMinutesBefore = (value) => {
+    const minutesValue = parseInt(value)
+    return !isNaN(minutesValue) && minutesValue >= 0
+  }
+
+  const handleRuleChannelSelect = (channelId) => {
+    const channel = channels.find(c => c.id === parseInt(channelId))
+    setRuleSelectedChannel(channel)
+    setRuleChannelComboboxOpen(false)
+    // Clear regex matches when channel changes
+    setRegexMatches([])
+  }
+
+  const handleTestRegex = async () => {
+    if (!ruleSelectedChannel || !ruleRegexPattern) {
+      toast({
+        title: "Validation Error",
+        description: "Please select a channel and enter a regex pattern",
+        variant: "destructive"
+      })
+      return
+    }
+
+    try {
+      setTestingRegex(true)
+      const response = await schedulingAPI.testAutoCreateRule({
+        channel_id: ruleSelectedChannel.id,
+        regex_pattern: ruleRegexPattern
+      })
+      
+      setRegexMatches(response.data.programs || [])
+      
+      if (response.data.matches === 0) {
+        toast({
+          title: "No Matches",
+          description: "The regex pattern didn't match any programs in the EPG",
+          variant: "default"
+        })
+      }
+    } catch (err) {
+      console.error('Failed to test regex:', err)
+      toast({
+        title: "Error",
+        description: err.response?.data?.error || "Failed to test regex pattern",
+        variant: "destructive"
+      })
+      setRegexMatches([])
+    } finally {
+      setTestingRegex(false)
+    }
+  }
+
+  const handleCreateRule = async () => {
+    if (!ruleName || !ruleSelectedChannel || !ruleRegexPattern) {
+      toast({
+        title: "Validation Error",
+        description: "Please fill in all required fields",
+        variant: "destructive"
+      })
+      return
+    }
+
+    // Parse once and validate
+    const minutesBeforeValue = parseInt(ruleMinutesBefore)
+    if (!validateMinutesBefore(ruleMinutesBefore)) {
+      toast({
+        title: "Validation Error",
+        description: "Please enter a valid number of minutes (0 or greater)",
+        variant: "destructive"
+      })
+      return
+    }
+
+    try {
+      const ruleData = {
+        name: ruleName,
+        channel_id: ruleSelectedChannel.id,
+        regex_pattern: ruleRegexPattern,
+        minutes_before: minutesBeforeValue
+      }
+
+      await schedulingAPI.createAutoCreateRule(ruleData)
+      
+      toast({
+        title: "Success",
+        description: "Auto-create rule created successfully. Events will be created automatically when EPG is refreshed."
+      })
+
+      setRuleDialogOpen(false)
+      setRuleName('')
+      setRuleSelectedChannel(null)
+      setRuleRegexPattern('')
+      setRuleMinutesBefore(5)
+      setRegexMatches([])
+      setRuleChannelComboboxOpen(false)
+      await loadData()
+    } catch (err) {
+      console.error('Failed to create rule:', err)
+      toast({
+        title: "Error",
+        description: err.response?.data?.error || "Failed to create auto-create rule",
+        variant: "destructive"
+      })
+    }
+  }
+
+  const handleDeleteRule = async (ruleId) => {
+    try {
+      await schedulingAPI.deleteAutoCreateRule(ruleId)
+      toast({
+        title: "Success",
+        description: "Auto-create rule deleted"
+      })
+      await loadData()
+      setDeleteRuleDialogOpen(false)
+      setRuleToDelete(null)
+    } catch (err) {
+      console.error('Failed to delete rule:', err)
+      toast({
+        title: "Error",
+        description: "Failed to delete auto-create rule",
+        variant: "destructive"
+      })
+    }
+  }
 
   const handleDeleteEvent = async (eventId) => {
     try {
@@ -498,6 +640,245 @@ export default function Scheduling() {
         </CardContent>
       </Card>
 
+      {/* Auto-Create Rules Card */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle>Auto-Create Rules</CardTitle>
+              <CardDescription>
+                Automatically create scheduled events based on regex patterns matching EPG program names
+              </CardDescription>
+            </div>
+            <Dialog open={ruleDialogOpen} onOpenChange={setRuleDialogOpen}>
+              <DialogTrigger asChild>
+                <Button size="sm">
+                  <Plus className="h-4 w-4 mr-2" />
+                  Add Rule
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+                <DialogHeader>
+                  <DialogTitle>Create Auto-Create Rule</DialogTitle>
+                  <DialogDescription>
+                    Define a regex pattern to automatically create scheduled checks for matching programs
+                  </DialogDescription>
+                </DialogHeader>
+                
+                <div className="space-y-4 py-4">
+                  {/* Rule Name */}
+                  <div className="space-y-2">
+                    <Label htmlFor="rule-name">Rule Name</Label>
+                    <Input
+                      id="rule-name"
+                      placeholder="e.g., Breaking News Alert"
+                      value={ruleName}
+                      onChange={(e) => setRuleName(e.target.value)}
+                    />
+                  </div>
+
+                  {/* Channel Selection */}
+                  <div className="space-y-2">
+                    <Label htmlFor="rule-channel-select">Channel</Label>
+                    <Popover open={ruleChannelComboboxOpen} onOpenChange={setRuleChannelComboboxOpen}>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="outline"
+                          role="combobox"
+                          aria-expanded={ruleChannelComboboxOpen}
+                          className="w-full justify-between"
+                        >
+                          {ruleSelectedChannel
+                            ? `${ruleSelectedChannel.channel_number ? `${ruleSelectedChannel.channel_number} - ` : ''}${ruleSelectedChannel.name}`
+                            : "Search and select a channel..."}
+                          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-[600px] p-0" align="start">
+                        <Command>
+                          <CommandInput placeholder="Search channels..." className="h-9" />
+                          <CommandList>
+                            <CommandEmpty>No channel found.</CommandEmpty>
+                            <CommandGroup>
+                              {channels.map((channel) => {
+                                const channelNumber = channel.channel_number ? `${channel.channel_number} ` : '';
+                                const searchValue = `${channelNumber}${channel.name}`.toLowerCase().trim();
+                                return (
+                                <CommandItem
+                                  key={channel.id}
+                                  value={searchValue}
+                                  onSelect={() => handleRuleChannelSelect(channel.id)}
+                                >
+                                  {channel.channel_number ? `${channel.channel_number} - ` : ''}{channel.name}
+                                  <Check
+                                    className={cn(
+                                      "ml-auto h-4 w-4",
+                                      ruleSelectedChannel?.id === channel.id ? "opacity-100" : "opacity-0"
+                                    )}
+                                  />
+                                </CommandItem>
+                                );
+                              })}
+                            </CommandGroup>
+                          </CommandList>
+                        </Command>
+                      </PopoverContent>
+                    </Popover>
+                  </div>
+
+                  {/* Regex Pattern */}
+                  {ruleSelectedChannel && (
+                    <>
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <Label htmlFor="rule-regex">Regex Pattern</Label>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={handleTestRegex}
+                            disabled={!ruleRegexPattern || testingRegex}
+                          >
+                            {testingRegex ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <RefreshCw className="h-4 w-4 mr-2" />}
+                            Test Pattern
+                          </Button>
+                        </div>
+                        <Input
+                          id="rule-regex"
+                          placeholder="e.g., ^Breaking News|^Special Report"
+                          value={ruleRegexPattern}
+                          onChange={(e) => {
+                            setRuleRegexPattern(e.target.value)
+                            setRegexMatches([])  // Clear matches when pattern changes
+                          }}
+                        />
+                        <p className="text-sm text-muted-foreground">
+                          Use regex syntax to match program titles. Click "Test Pattern" to see live results.
+                        </p>
+                      </div>
+
+                      {/* Live Regex Results */}
+                      {regexMatches.length > 0 && (
+                        <div className="space-y-2">
+                          <Label>Matching Programs ({regexMatches.length})</Label>
+                          <div className="border rounded-lg max-h-48 overflow-y-auto">
+                            {regexMatches.map((program, idx) => (
+                              <div
+                                key={idx}
+                                className="p-2 border-b last:border-b-0 text-sm"
+                              >
+                                <div className="font-medium">{program.title}</div>
+                                <div className="text-muted-foreground text-xs mt-1">
+                                  {formatTime(program.start_time)} - {formatTime(program.end_time)}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Minutes Before Input */}
+                      <div className="space-y-2">
+                        <Label htmlFor="rule-minutes-before">Minutes Before Program Start</Label>
+                        <Input
+                          id="rule-minutes-before"
+                          type="number"
+                          min="0"
+                          max="120"
+                          value={ruleMinutesBefore}
+                          onChange={(e) => setRuleMinutesBefore(e.target.value)}
+                        />
+                        <p className="text-sm text-muted-foreground">
+                          Channel checks will run {ruleMinutesBefore || 0} minutes before matching programs start
+                        </p>
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => {
+                    setRuleDialogOpen(false)
+                    setRuleName('')
+                    setRuleSelectedChannel(null)
+                    setRuleRegexPattern('')
+                    setRuleMinutesBefore(5)
+                    setRegexMatches([])
+                    setRuleChannelComboboxOpen(false)
+                  }}>
+                    Cancel
+                  </Button>
+                  <Button 
+                    onClick={handleCreateRule}
+                    disabled={!ruleName || !ruleSelectedChannel || !ruleRegexPattern}
+                  >
+                    Create Rule
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {autoCreateRules.length === 0 ? (
+            <div className="text-center text-muted-foreground py-8">
+              <Settings className="h-10 w-10 mx-auto mb-3 opacity-50" />
+              <p className="text-base font-medium mb-1">No auto-create rules yet</p>
+              <p className="text-sm">Click "Add Rule" to automatically create events based on program names</p>
+            </div>
+          ) : (
+            <div className="rounded-md border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Rule Name</TableHead>
+                    <TableHead>Channel</TableHead>
+                    <TableHead>Regex Pattern</TableHead>
+                    <TableHead>Minutes Before</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {autoCreateRules.map((rule) => (
+                    <TableRow key={rule.id}>
+                      <TableCell className="font-medium">{rule.name}</TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          {rule.channel_logo_url && (
+                            <img
+                              src={rule.channel_logo_url}
+                              alt={rule.channel_name}
+                              className="h-6 w-6 object-contain rounded"
+                              onError={(e) => { e.target.style.display = 'none' }}
+                            />
+                          )}
+                          <span>{rule.channel_name}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <code className="text-xs bg-muted px-2 py-1 rounded">{rule.regex_pattern}</code>
+                      </TableCell>
+                      <TableCell>{rule.minutes_before} min</TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setRuleToDelete(rule.id)
+                            setDeleteRuleDialogOpen(true)
+                          }}
+                        >
+                          <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       {/* Info Card */}
       <Card>
         <CardHeader>
@@ -541,6 +922,35 @@ export default function Scheduling() {
             <Button
               variant="destructive"
               onClick={() => handleDeleteEvent(eventToDelete)}
+            >
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Rule Confirmation Dialog */}
+      <Dialog open={deleteRuleDialogOpen} onOpenChange={setDeleteRuleDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Auto-Create Rule</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete this rule? Future programs won't be automatically scheduled, but existing scheduled events will remain.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setDeleteRuleDialogOpen(false)
+                setRuleToDelete(null)
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => handleDeleteRule(ruleToDelete)}
             >
               Delete
             </Button>
