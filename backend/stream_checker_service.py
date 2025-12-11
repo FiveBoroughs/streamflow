@@ -2413,23 +2413,9 @@ class StreamCheckerService:
             # Step 3: Clear dead streams for this channel to give them a second chance
             logger.info(f"Step 3/5: Clearing dead streams for channel {channel_name} to give them a second chance...")
             try:
-                # Only clear dead streams that are currently assigned to THIS specific channel
-                # This prevents reviving dead streams from other channels that happen to use the same M3U account
-                channel_stream_urls = []
-                
-                # Use current_streams which we already fetched in Step 1 for this channel
-                if current_streams:
-                    for stream in current_streams:
-                        stream_url = stream.get('url')
-                        if stream_url:
-                            channel_stream_urls.append(stream_url)
-                
-                # Clear only dead streams that belong to this specific channel
-                cleared_count = 0
-                for stream_url in channel_stream_urls:
-                    if self.dead_streams_tracker.is_dead(stream_url):
-                        self.dead_streams_tracker.mark_as_alive(stream_url)
-                        cleared_count += 1
+                # Clear all dead streams that belong to this channel by channel_id
+                # This handles cases where playlist refresh creates new streams with different URLs
+                cleared_count = self.dead_streams_tracker.remove_dead_streams_by_channel_id(channel_id)
                 
                 if cleared_count > 0:
                     logger.info(f"✓ Cleared {cleared_count} dead stream(s) from tracker - they will be given a second chance")

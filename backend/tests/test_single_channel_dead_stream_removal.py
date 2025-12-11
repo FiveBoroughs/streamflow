@@ -76,8 +76,8 @@ class TestSingleChannelDeadStreamRemoval(unittest.TestCase):
         
         # Pre-mark some streams as dead in the tracker
         # These streams are from the channel we're about to check
-        service.dead_streams_tracker.mark_as_dead('http://example.com/stream1', 1, 'Stream 1')
-        service.dead_streams_tracker.mark_as_dead('http://example.com/stream2', 2, 'Stream 2')
+        service.dead_streams_tracker.mark_as_dead('http://example.com/stream1', 1, 'Stream 1', channel_id=16)
+        service.dead_streams_tracker.mark_as_dead('http://example.com/stream2', 2, 'Stream 2', channel_id=16)
         
         # Verify they are marked as dead
         self.assertTrue(service.dead_streams_tracker.is_dead('http://example.com/stream1'))
@@ -164,11 +164,11 @@ class TestSingleChannelDeadStreamRemoval(unittest.TestCase):
         service = StreamCheckerService()
         
         # Mark dead streams from channel 16
-        service.dead_streams_tracker.mark_as_dead('http://example.com/ch16/stream1', 1, 'CH16 Stream 1')
+        service.dead_streams_tracker.mark_as_dead('http://example.com/ch16/stream1', 1, 'CH16 Stream 1', channel_id=16)
         
         # Mark dead streams from OTHER channels (should NOT be removed)
-        service.dead_streams_tracker.mark_as_dead('http://example.com/ch99/stream1', 99, 'CH99 Stream 1')
-        service.dead_streams_tracker.mark_as_dead('http://example.com/ch88/stream1', 88, 'CH88 Stream 1')
+        service.dead_streams_tracker.mark_as_dead('http://example.com/ch99/stream1', 99, 'CH99 Stream 1', channel_id=99)
+        service.dead_streams_tracker.mark_as_dead('http://example.com/ch88/stream1', 88, 'CH88 Stream 1', channel_id=88)
         
         # Verify all are marked as dead
         self.assertTrue(service.dead_streams_tracker.is_dead('http://example.com/ch16/stream1'))
