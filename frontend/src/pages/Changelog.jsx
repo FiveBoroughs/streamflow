@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card.jsx'
 import { Badge } from '@/components/ui/badge.jsx'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table.jsx'
@@ -337,10 +337,12 @@ export default function Changelog() {
     }
   }
 
-  // Filter entries based on action type
-  const filteredEntries = actionFilter === 'all' 
-    ? entries 
-    : entries.filter(entry => entry.action === actionFilter)
+  // Filter entries based on action type (memoized to avoid re-computation on every render)
+  const filteredEntries = useMemo(() => {
+    return actionFilter === 'all' 
+      ? entries 
+      : entries.filter(entry => entry.action === actionFilter)
+  }, [entries, actionFilter])
 
   return (
     <div className="space-y-6">

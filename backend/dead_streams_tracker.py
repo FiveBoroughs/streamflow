@@ -152,6 +152,22 @@ class DeadStreamsTracker:
                     count += 1
             return count
     
+    def get_dead_streams_for_channel(self, channel_id: int) -> Dict[str, Dict]:
+        """Get dead streams for a specific channel.
+        
+        Args:
+            channel_id: The channel ID to get dead streams for
+            
+        Returns:
+            Dict mapping stream URLs to stream metadata for this channel
+        """
+        with self.lock:
+            channel_dead_streams = {}
+            for stream_url, stream_info in self.dead_streams.items():
+                if stream_info.get('channel_id') == channel_id:
+                    channel_dead_streams[stream_url] = stream_info.copy()
+            return channel_dead_streams
+    
     def remove_dead_streams_for_channel(self, channel_stream_urls: set) -> int:
         """Remove dead streams for a specific channel from tracking.
         
