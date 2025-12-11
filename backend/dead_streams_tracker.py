@@ -203,8 +203,7 @@ class DeadStreamsTracker:
                 if removed_count > 0:
                     self._save_dead_streams()
                     # Log all removed streams in a single batch message
-                    logger.info(f"🗑️ Removed {removed_count} dead stream(s) from channel {channel_id} tracking: {', '.join(removed_streams)}")
-                    logger.info(f"Cleared {removed_count} dead stream(s) for channel {channel_id} before refresh")
+                    logger.info(f"🗑️ Removed {removed_count} dead stream(s) from channel {channel_id} before refresh: {', '.join(removed_streams)}")
             
             return removed_count
         except Exception as e:
