@@ -3,6 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge.jsx'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table.jsx'
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion.jsx'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select.jsx'
 import { useToast } from '@/hooks/use-toast.js'
 import { changelogAPI } from '@/services/api.js'
 import { Loader2, CheckCircle2, AlertCircle, Activity } from 'lucide-react'
@@ -243,8 +244,84 @@ function ChangelogEntry({ entry }) {
               <p className="text-lg font-semibold truncate">{details.program_name}</p>
             </div>
           )}
+          {/* Streams Assigned specific stats */}
+          {details.total_assigned !== undefined && (
+            <div>
+              <p className="text-xs text-muted-foreground">Total Assigned</p>
+              <p className="text-lg font-semibold text-green-600">{details.total_assigned}</p>
+            </div>
+          )}
+          {details.channel_count !== undefined && (
+            <div>
+              <p className="text-xs text-muted-foreground">Channels Updated</p>
+              <p className="text-lg font-semibold">{details.channel_count}</p>
+            </div>
+          )}
         </div>
       </CardHeader>
+      
+      {/* Streams Assigned Details */}
+      {action === 'streams_assigned' && details.assignments && details.assignments.length > 0 && (
+        <CardContent className="pt-0">
+          <Accordion type="multiple" className="w-full">
+            <AccordionItem value="streams-assigned-details">
+              <AccordionTrigger className="hover:no-underline font-semibold">
+                <div className="flex items-center gap-2">
+                  {getActionIcon(action)}
+                  <span>Streams Assigned to Channels ({details.assignments.length} channels)</span>
+                </div>
+              </AccordionTrigger>
+              <AccordionContent>
+                <Accordion type="multiple" className="w-full pl-4">
+                  {details.assignments.map((assignment, idx) => (
+                    <AccordionItem key={idx} value={`assignment-${idx}`}>
+                      <AccordionTrigger className="hover:no-underline py-2">
+                        <div className="flex items-center gap-2">
+                          {assignment.logo_url && (
+                            <img 
+                              src={assignment.logo_url} 
+                              alt={assignment.channel_name}
+                              className="w-6 h-6 object-contain"
+                              onError={(e) => e.target.style.display = 'none'}
+                            />
+                          )}
+                          <span className="text-sm font-medium">{assignment.channel_name}</span>
+                          <span className="text-xs text-muted-foreground ml-2">
+                            ({assignment.stream_count} {assignment.stream_count === 1 ? 'stream' : 'streams'})
+                          </span>
+                        </div>
+                      </AccordionTrigger>
+                      <AccordionContent>
+                        <div className="space-y-1 pl-4">
+                          {assignment.streams && assignment.streams.length > 0 && (
+                            <ul className="list-none text-sm space-y-1">
+                              {assignment.streams.map((stream, streamIdx) => (
+                                <li key={streamIdx} className="text-muted-foreground">
+                                  - {stream.name || stream.stream_name || `Stream ${stream.id || stream.stream_id}`}
+                                </li>
+                              ))}
+                              {assignment.stream_count > assignment.streams.length && (
+                                <li className="text-xs text-muted-foreground italic">
+                                  ... and {assignment.stream_count - assignment.streams.length} more
+                                </li>
+                              )}
+                            </ul>
+                          )}
+                        </div>
+                      </AccordionContent>
+                    </AccordionItem>
+                  ))}
+                </Accordion>
+                {details.has_more_channels && (
+                  <p className="text-xs text-muted-foreground italic mt-2 pl-4">
+                    ... and more channels (showing top {details.assignments.length} by stream count)
+                  </p>
+                )}
+              </AccordionContent>
+            </AccordionItem>
+          </Accordion>
+        </CardContent>
+      )}
       
       {/* Subentries */}
       {hasSubentries && (
@@ -355,31 +432,33 @@ export default function Changelog() {
         </div>
         
         <div className="flex gap-3">
-          <select
-            value={actionFilter}
-            onChange={(e) => setActionFilter(e.target.value)}
-            className="px-3 py-2 border rounded-md bg-background"
-          >
-            <option value="all">All Actions</option>
-            <option value="playlist_update_match">Playlist Update & Match</option>
-            <option value="global_check">Global Check</option>
-            <option value="single_channel_check">Single Channel Check</option>
-            <option value="batch_stream_check">Batch Stream Check</option>
-            <option value="playlist_refresh">Playlist Refresh</option>
-            <option value="streams_assigned">Streams Assigned</option>
-            <option value="stream_check">Stream Check</option>
-          </select>
+          <Select value={actionFilter} onValueChange={setActionFilter}>
+            <SelectTrigger className="w-[200px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Actions</SelectItem>
+              <SelectItem value="playlist_update_match">Playlist Update & Match</SelectItem>
+              <SelectItem value="global_check">Global Check</SelectItem>
+              <SelectItem value="single_channel_check">Single Channel Check</SelectItem>
+              <SelectItem value="batch_stream_check">Batch Stream Check</SelectItem>
+              <SelectItem value="playlist_refresh">Playlist Refresh</SelectItem>
+              <SelectItem value="streams_assigned">Streams Assigned</SelectItem>
+              <SelectItem value="stream_check">Stream Check</SelectItem>
+            </SelectContent>
+          </Select>
           
-          <select
-            value={days}
-            onChange={(e) => setDays(Number(e.target.value))}
-            className="px-3 py-2 border rounded-md bg-background"
-          >
-            <option value={1}>Last 24 hours</option>
-            <option value={7}>Last 7 days</option>
-            <option value={30}>Last 30 days</option>
-            <option value={90}>Last 90 days</option>
-          </select>
+          <Select value={days.toString()} onValueChange={(value) => setDays(Number(value))}>
+            <SelectTrigger className="w-[150px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="1">Last 24 hours</SelectItem>
+              <SelectItem value="7">Last 7 days</SelectItem>
+              <SelectItem value="30">Last 30 days</SelectItem>
+              <SelectItem value="90">Last 90 days</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
       </div>
 

@@ -37,7 +37,7 @@ export default function StreamChecker() {
   useEffect(() => {
     loadData()
     // Poll for updates - use shorter interval when checking is active
-    const pollInterval = (status?.checking || status?.global_action_in_progress || (status?.queue?.queue_size > 0)) ? 2000 : 5000
+    const pollInterval = (status?.checking || status?.global_action_in_progress || (status?.queue?.queue_size > 0)) ? 1000 : 3000
     const interval = setInterval(() => {
       loadData()
     }, pollInterval)

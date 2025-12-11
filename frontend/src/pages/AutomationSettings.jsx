@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input.jsx'
 import { Label } from '@/components/ui/label.jsx'
 import { Switch } from '@/components/ui/switch.jsx'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group.jsx'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs.jsx'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert.jsx'
 import { Loader2, AlertCircle, CheckCircle2 } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast.js'
@@ -299,24 +300,68 @@ export default function AutomationSettings() {
       {showUpdateInterval && (
         <Card>
           <CardHeader>
-            <CardTitle>Update Interval</CardTitle>
+            <CardTitle>Playlist Update Configuration</CardTitle>
             <CardDescription>
-              Configure how often playlists are updated
+              Configure how often playlists are updated using either interval or cron expression
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="playlist_update_interval">Playlist Update Interval (minutes)</Label>
-              <Input
-                id="playlist_update_interval"
-                type="number"
-                min="1"
-                max="1440"
-                value={config.playlist_update_interval_minutes || 5}
-                onChange={(e) => handleConfigChange('playlist_update_interval_minutes', parseInt(e.target.value))}
-              />
-              <p className="text-sm text-muted-foreground">How often to check for playlist updates</p>
-            </div>
+            <Tabs 
+              defaultValue={config.playlist_update_cron ? "cron" : "interval"} 
+              onValueChange={(value) => {
+                // Clear the other option when switching tabs
+                if (value === "interval") {
+                  handleConfigChange('playlist_update_cron', '')
+                } else {
+                  handleConfigChange('playlist_update_interval_minutes', '')
+                }
+              }}
+            >
+              <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="interval">Interval (Minutes)</TabsTrigger>
+                <TabsTrigger value="cron">Cron Expression</TabsTrigger>
+              </TabsList>
+              
+              <TabsContent value="interval" className="space-y-2">
+                <Label htmlFor="playlist_update_interval">Playlist Update Interval (minutes)</Label>
+                <Input
+                  id="playlist_update_interval"
+                  type="number"
+                  min="1"
+                  max="1440"
+                  value={config.playlist_update_interval_minutes || 5}
+                  onChange={(e) => handleConfigChange('playlist_update_interval_minutes', parseInt(e.target.value))}
+                />
+                <p className="text-sm text-muted-foreground">How often to check for playlist updates (in minutes)</p>
+              </TabsContent>
+              
+              <TabsContent value="cron" className="space-y-2">
+                <Label htmlFor="playlist_update_cron">Cron Expression</Label>
+                <Input
+                  id="playlist_update_cron"
+                  type="text"
+                  value={config.playlist_update_cron || ''}
+                  onChange={(e) => handleConfigChange('playlist_update_cron', e.target.value)}
+                  placeholder="*/30 * * * *"
+                />
+                <p className="text-sm text-muted-foreground">Use cron expression for more precise scheduling</p>
+                <Alert>
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertTitle>Cron Expression Format</AlertTitle>
+                  <AlertDescription>
+                    <p className="font-semibold mb-2">Format: minute hour day month weekday</p>
+                    <p className="mb-1">Common examples:</p>
+                    <ul className="list-disc list-inside space-y-1">
+                      <li><code className="text-sm">*/5 * * * *</code> - Every 5 minutes</li>
+                      <li><code className="text-sm">*/30 * * * *</code> - Every 30 minutes</li>
+                      <li><code className="text-sm">0 * * * *</code> - Every hour</li>
+                      <li><code className="text-sm">0 */6 * * *</code> - Every 6 hours</li>
+                      <li><code className="text-sm">0 0 * * *</code> - Daily at midnight</li>
+                    </ul>
+                  </AlertDescription>
+                </Alert>
+              </TabsContent>
+            </Tabs>
           </CardContent>
         </Card>
       )}

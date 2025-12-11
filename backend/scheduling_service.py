@@ -548,8 +548,15 @@ class SchedulingService:
             
             logger.info(f"Created auto-create rule {rule_id} for channel {channel.get('name')}")
             
-            # Immediately try to match programs with this new rule
-            self.match_programs_to_rules()
+            # Schedule matching in background thread to avoid blocking
+            def match_in_background():
+                try:
+                    self.match_programs_to_rules()
+                except Exception as e:
+                    logger.error(f"Error matching programs to rules in background: {e}", exc_info=True)
+            
+            match_thread = threading.Thread(target=match_in_background, daemon=True)
+            match_thread.start()
             
             return rule
     

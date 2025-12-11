@@ -21,6 +21,13 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
 from collections import defaultdict
 
+# Import croniter for cron expression support
+try:
+    from croniter import croniter
+    CRONITER_AVAILABLE = True
+except ImportError:
+    CRONITER_AVAILABLE = False
+
 from api_utils import (
     refresh_m3u_playlists,
     get_m3u_accounts,
@@ -431,6 +438,7 @@ class AutomatedStreamManager:
         # Default configuration
         default_config = {
             "playlist_update_interval_minutes": 5,
+            "playlist_update_cron": "",  # Empty means use interval
             "enabled_m3u_accounts": [],  # Empty list means all accounts enabled
             "autostart_automation": False,  # Don't auto-start by default
             "enabled_features": {
@@ -886,6 +894,18 @@ class AutomatedStreamManager:
         if not self.last_playlist_update:
             return True
         
+        # Check if cron expression is configured
+        cron_expr = self.config.get("playlist_update_cron", "")
+        if cron_expr and CRONITER_AVAILABLE:
+            try:
+                # Use croniter to check if it's time to run
+                cron = croniter(cron_expr, self.last_playlist_update)
+                next_run = cron.get_next(datetime)
+                return datetime.now() >= next_run
+            except Exception as e:
+                logger.warning(f"Invalid cron expression '{cron_expr}', falling back to interval: {e}")
+        
+        # Fall back to interval-based scheduling
         interval = timedelta(minutes=self.config.get("playlist_update_interval_minutes", 5))
         return datetime.now() - self.last_playlist_update >= interval
     
@@ -978,12 +998,24 @@ class AutomatedStreamManager:
         # Calculate next update time properly
         next_update = None
         if self.running:
-            if self.last_playlist_update:
-                # Calculate when the next update should occur based on last update + interval
-                next_update = self.last_playlist_update + timedelta(minutes=self.config.get("playlist_update_interval_minutes", 5))
-            elif self.automation_start_time:
-                # If automation is running but no last update, calculate from start time
-                next_update = self.automation_start_time + timedelta(minutes=self.config.get("playlist_update_interval_minutes", 5))
+            cron_expr = self.config.get("playlist_update_cron", "")
+            if cron_expr and CRONITER_AVAILABLE:
+                try:
+                    # Use croniter to calculate next run time
+                    base_time = self.last_playlist_update or self.automation_start_time or datetime.now()
+                    cron = croniter(cron_expr, base_time)
+                    next_update = cron.get_next(datetime)
+                except Exception as e:
+                    logger.warning(f"Invalid cron expression '{cron_expr}': {e}")
+            
+            if not next_update:
+                # Fall back to interval-based calculation
+                if self.last_playlist_update:
+                    # Calculate when the next update should occur based on last update + interval
+                    next_update = self.last_playlist_update + timedelta(minutes=self.config.get("playlist_update_interval_minutes", 5))
+                elif self.automation_start_time:
+                    # If automation is running but no last update, calculate from start time
+                    next_update = self.automation_start_time + timedelta(minutes=self.config.get("playlist_update_interval_minutes", 5))
         
         return {
             "running": self.running,
