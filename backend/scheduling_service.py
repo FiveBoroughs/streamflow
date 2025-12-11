@@ -221,6 +221,18 @@ class SchedulingService:
                 
                 # Match programs to auto-create rules (release lock first to avoid deadlock)
                 programs_copy = programs.copy()
+                
+                # Release lock before matching to avoid deadlock
+                # Note: We're still inside the with block, but we've copied the data
+                
+            except Exception as e:
+                logger.error(f"Error fetching EPG grid: {e}")
+                # Return cached data if available, even if stale
+                if self._epg_cache:
+                    logger.warning("Returning stale cached EPG data due to fetch error")
+                    programs_copy = self._epg_cache.copy()
+                else:
+                    programs_copy = []
         
         # Match outside the lock to avoid deadlock
         try:
@@ -229,14 +241,6 @@ class SchedulingService:
             logger.error(f"Error matching programs to rules: {e}", exc_info=True)
         
         return programs_copy
-                
-            except Exception as e:
-                logger.error(f"Error fetching EPG grid: {e}")
-                # Return cached data if available, even if stale
-                if self._epg_cache:
-                    logger.warning("Returning stale cached EPG data due to fetch error")
-                    return self._epg_cache.copy()
-                return []
     
     def get_programs_by_channel(self, channel_id: int, tvg_id: Optional[str] = None) -> List[Dict[str, Any]]:
         """Get programs for a specific channel from cached EPG data.
