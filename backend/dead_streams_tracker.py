@@ -192,16 +192,19 @@ class DeadStreamsTracker:
                     if stream_info.get('channel_id') == channel_id:
                         dead_urls_to_remove.append(dead_url)
                 
-                # Remove them from tracking
+                # Remove them from tracking and collect names for batch logging
+                removed_streams = []
                 for url in dead_urls_to_remove:
                     stream_info = self.dead_streams.pop(url)
                     removed_count += 1
-                    logger.info(f"🗑️ Removed dead stream from channel {channel_id} tracking: {stream_info.get('stream_name', 'Unknown')} (URL: {url})")
+                    removed_streams.append(stream_info.get('stream_name', 'Unknown'))
                 
                 # Save if we removed any
                 if removed_count > 0:
                     self._save_dead_streams()
-                    logger.info(f"Removed {removed_count} dead stream(s) for channel {channel_id} before refresh")
+                    # Log all removed streams in a single batch message
+                    logger.info(f"🗑️ Removed {removed_count} dead stream(s) from channel {channel_id} tracking: {', '.join(removed_streams)}")
+                    logger.info(f"Cleared {removed_count} dead stream(s) for channel {channel_id} before refresh")
             
             return removed_count
         except Exception as e:
