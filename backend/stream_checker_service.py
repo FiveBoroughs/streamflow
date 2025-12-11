@@ -2361,19 +2361,18 @@ class StreamCheckerService:
             # Step 3: Clear dead streams for this channel to give them a second chance
             logger.info(f"Step 3/5: Clearing dead streams for channel {channel_name} to give them a second chance...")
             try:
-                # Get all streams from UDI that belong to the M3U accounts used by this channel
-                # This includes streams that are no longer assigned to the channel but were previously dead
-                all_udi_streams = udi.get_streams(log_result=False)
+                # Only clear dead streams that are currently assigned to THIS specific channel
+                # This prevents reviving dead streams from other channels that happen to use the same M3U account
                 channel_stream_urls = []
                 
-                # Filter streams by M3U accounts used by this channel
-                for stream in all_udi_streams:
-                    stream_m3u_account = stream.get('m3u_account')
-                    stream_url = stream.get('url')
-                    if stream_m3u_account in account_ids and stream_url:
-                        channel_stream_urls.append(stream_url)
+                # Use current_streams which we already fetched in Step 1 for this channel
+                if current_streams:
+                    for stream in current_streams:
+                        stream_url = stream.get('url')
+                        if stream_url:
+                            channel_stream_urls.append(stream_url)
                 
-                # Clear only dead streams that belong to this channel's M3U accounts
+                # Clear only dead streams that belong to this specific channel
                 cleared_count = 0
                 for stream_url in channel_stream_urls:
                     if self.dead_streams_tracker.is_dead(stream_url):
@@ -2441,6 +2440,33 @@ class StreamCheckerService:
                 extracted_stats = extract_stream_stats(stream)
                 formatted_stats = format_stream_stats_for_display(extracted_stats)
                 
+                # Calculate score for this stream using its stats
+                # The score needs to be calculated from the stream_stats data stored in Dispatcharr
+                stream_stats = stream.get('stream_stats', {})
+                if stream_stats is None:
+                    stream_stats = {}
+                if isinstance(stream_stats, str):
+                    try:
+                        stream_stats = json.loads(stream_stats)
+                        if stream_stats is None:
+                            stream_stats = {}
+                    except json.JSONDecodeError:
+                        stream_stats = {}
+                
+                # Build stream data dict for score calculation
+                score_data = {
+                    'stream_id': stream.get('id'),
+                    'stream_name': stream.get('name', 'Unknown'),
+                    'stream_url': stream.get('url', ''),
+                    'resolution': stream_stats.get('resolution', '0x0'),
+                    'fps': stream_stats.get('source_fps', 0),
+                    'video_codec': stream_stats.get('video_codec', 'N/A'),
+                    'bitrate_kbps': stream_stats.get('ffmpeg_output_bitrate', 0)
+                }
+                
+                # Calculate score
+                score = self._calculate_stream_score(score_data)
+                
                 check_stats['stream_details'].append({
                     'stream_id': stream.get('id'),
                     'stream_name': stream.get('name', 'Unknown'),
@@ -2448,7 +2474,7 @@ class StreamCheckerService:
                     'bitrate': formatted_stats['bitrate'],
                     'video_codec': formatted_stats['video_codec'],
                     'fps': formatted_stats['fps'],
-                    'score': stream.get('score')
+                    'score': score
                 })
             
             # Add changelog entry
