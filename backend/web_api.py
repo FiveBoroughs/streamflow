@@ -370,29 +370,13 @@ def get_channel_stats(channel_id):
                 if stream:
                     streams.append(stream)
         
-        # Get dead streams count for this channel
+        # Get dead streams count for this channel from the tracker
+        # The tracker now stores channel_id for each dead stream, so we can directly count them
         dead_count = 0
-        URL_LOG_TRUNCATE_LENGTH = 50
         checker = get_stream_checker_service()
         if checker and checker.dead_streams_tracker:
-            dead_streams = checker.dead_streams_tracker.get_dead_streams()
-            logger.debug(f"Checking dead streams for channel {channel_id_int}: Total dead URLs in tracker: {len(dead_streams)}")
-            
-            # Count dead streams for this channel
-            for stream in streams:
-                stream_url = stream.get('url', '')
-                if stream_url:
-                    if stream_url in dead_streams:
-                        dead_count += 1
-                        logger.debug(f"Found dead stream in channel {channel_id_int}: {stream.get('name', 'Unknown')} - URL: {stream_url[:URL_LOG_TRUNCATE_LENGTH]}...")
-            
-            logger.debug(f"Channel {channel_id_int} has {dead_count} dead streams out of {len(streams)} total streams")
-            
-            # If we have dead streams in tracker but found none for this channel, log sample URLs for debugging
-            if len(dead_streams) > 0 and dead_count == 0 and len(streams) > 0:
-                sample_stream_url = streams[0].get('url', 'N/A')[:URL_LOG_TRUNCATE_LENGTH] if streams else 'N/A'
-                sample_dead_url = list(dead_streams.keys())[0][:URL_LOG_TRUNCATE_LENGTH] if dead_streams else 'N/A'
-                logger.debug(f"Channel {channel_id_int}: No matches found. Sample stream URL: {sample_stream_url}... | Sample dead URL: {sample_dead_url}...")
+            dead_count = checker.dead_streams_tracker.get_dead_streams_count_for_channel(channel_id_int)
+            logger.debug(f"Channel {channel_id_int} has {dead_count} dead stream(s) in tracker")
         else:
             logger.warning(f"Dead streams tracker not available for channel {channel_id_int}")
         

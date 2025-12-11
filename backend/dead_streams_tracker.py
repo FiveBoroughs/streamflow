@@ -64,13 +64,14 @@ class DeadStreamsTracker:
         except Exception as e:
             logger.error(f"Failed to save dead streams: {e}")
     
-    def mark_as_dead(self, stream_url: str, stream_id: int, stream_name: str) -> bool:
+    def mark_as_dead(self, stream_url: str, stream_id: int, stream_name: str, channel_id: int = None) -> bool:
         """Mark a stream as dead.
         
         Args:
             stream_url: The URL of the stream (used as unique key)
             stream_id: The stream ID in Dispatcharr
             stream_name: The name of the stream
+            channel_id: The channel ID where this stream was found (optional)
             
         Returns:
             bool: True if successful
@@ -81,7 +82,8 @@ class DeadStreamsTracker:
                     'stream_id': stream_id,
                     'stream_name': stream_name,
                     'marked_dead_at': datetime.now().isoformat(),
-                    'url': stream_url
+                    'url': stream_url,
+                    'channel_id': channel_id
                 }
                 self._save_dead_streams()
             logger.warning(f"🔴 MARKED STREAM AS DEAD: {stream_name} (URL: {stream_url})")
@@ -133,6 +135,22 @@ class DeadStreamsTracker:
         """
         with self.lock:
             return self.dead_streams.copy()
+    
+    def get_dead_streams_count_for_channel(self, channel_id: int) -> int:
+        """Get count of dead streams for a specific channel.
+        
+        Args:
+            channel_id: The channel ID to count dead streams for
+            
+        Returns:
+            int: Number of dead streams for this channel
+        """
+        with self.lock:
+            count = 0
+            for stream_info in self.dead_streams.values():
+                if stream_info.get('channel_id') == channel_id:
+                    count += 1
+            return count
     
     def remove_dead_streams_for_channel(self, channel_stream_urls: set) -> int:
         """Remove dead streams for a specific channel from tracking.
