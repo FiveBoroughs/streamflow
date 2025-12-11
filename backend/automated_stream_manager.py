@@ -438,7 +438,7 @@ class AutomatedStreamManager:
         # Default configuration
         default_config = {
             "playlist_update_interval_minutes": 5,
-            "playlist_update_cron": "",  # Empty means use interval
+            "playlist_update_cron": "",  # Empty means use interval. When both are set, cron takes precedence.
             "enabled_m3u_accounts": [],  # Empty list means all accounts enabled
             "autostart_automation": False,  # Don't auto-start by default
             "enabled_features": {

@@ -312,8 +312,13 @@ export default function AutomationSettings() {
                 // Clear the other option when switching tabs
                 if (value === "interval") {
                   handleConfigChange('playlist_update_cron', '')
+                  // Ensure interval has a default value
+                  if (!config.playlist_update_interval_minutes) {
+                    handleConfigChange('playlist_update_interval_minutes', 5)
+                  }
                 } else {
-                  handleConfigChange('playlist_update_interval_minutes', '')
+                  // Don't clear interval, just switch to using cron
+                  // The backend will prioritize cron when both are set
                 }
               }}
             >
