@@ -11,6 +11,7 @@ import re
 import uuid
 import requests
 import threading
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Any
@@ -644,13 +645,11 @@ class SchedulingService:
         events_to_update = []
         
         # Pre-group programs by tvg_id for efficient lookup (performance optimization)
-        programs_by_tvg_id = {}
+        programs_by_tvg_id = defaultdict(list)
         for program in epg_cache_snapshot:
             if isinstance(program, dict):
                 tvg_id = program.get('tvg_id')
                 if tvg_id:
-                    if tvg_id not in programs_by_tvg_id:
-                        programs_by_tvg_id[tvg_id] = []
                     programs_by_tvg_id[tvg_id].append(program)
         
         # Sort programs by start time for each channel
