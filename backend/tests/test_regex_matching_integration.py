@@ -19,8 +19,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock
 from datetime import datetime, timedelta, timezone
 
-# Set up initial CONFIG_DIR before importing scheduling_service
-os.environ['CONFIG_DIR'] = tempfile.mkdtemp()
+# Set minimal environment before importing scheduling_service
 os.environ['DISPATCHARR_BASE_URL'] = 'http://test.local'
 os.environ['DISPATCHARR_TOKEN'] = 'test_token'
 

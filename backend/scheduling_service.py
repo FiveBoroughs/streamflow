@@ -643,6 +643,20 @@ class SchedulingService:
         events_to_add = []
         events_to_update = []
         
+        # Pre-group programs by tvg_id for efficient lookup (performance optimization)
+        programs_by_tvg_id = {}
+        for program in epg_cache_snapshot:
+            if isinstance(program, dict):
+                tvg_id = program.get('tvg_id')
+                if tvg_id:
+                    if tvg_id not in programs_by_tvg_id:
+                        programs_by_tvg_id[tvg_id] = []
+                    programs_by_tvg_id[tvg_id].append(program)
+        
+        # Sort programs by start time for each channel
+        for tvg_id in programs_by_tvg_id:
+            programs_by_tvg_id[tvg_id].sort(key=lambda p: p.get('start_time', ''))
+        
         for rule in rules_snapshot:
             channel_id = rule.get('channel_id')
             regex_pattern = rule.get('regex_pattern')
@@ -659,9 +673,8 @@ class SchedulingService:
                 logger.error(f"Invalid regex pattern in rule {rule.get('id')}: {e}")
                 continue
             
-            # Filter programs for this channel from the snapshot
-            programs = [p for p in epg_cache_snapshot if isinstance(p, dict) and p.get('tvg_id') == tvg_id]
-            programs.sort(key=lambda p: p.get('start_time', ''))
+            # Get programs for this channel from the pre-grouped dictionary
+            programs = programs_by_tvg_id.get(tvg_id, [])
             
             for program in programs:
                 title = program.get('title', '')
