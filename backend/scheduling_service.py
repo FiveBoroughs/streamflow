@@ -551,7 +551,9 @@ class SchedulingService:
             # Schedule matching in background thread to avoid blocking
             def match_in_background():
                 try:
-                    self.match_programs_to_rules()
+                    # Ensure EPG data is fetched before matching
+                    self.fetch_epg_grid()
+                    # Note: fetch_epg_grid already calls match_programs_to_rules at the end
                 except Exception as e:
                     logger.error(f"Error matching programs to rules in background: {e}", exc_info=True)
             
