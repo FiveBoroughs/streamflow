@@ -2361,14 +2361,14 @@ class StreamCheckerService:
             # Step 3: Clear dead streams for this channel to give them a second chance
             logger.info(f"Step 3/5: Clearing dead streams for channel {channel_name} to give them a second chance...")
             try:
-                # Get stream IDs for this channel from current_streams
-                channel_stream_ids = [s.get('id') for s in current_streams if s.get('id')]
+                # Get stream URLs for this channel from current_streams
+                channel_stream_urls = [s.get('url') for s in current_streams if s.get('url')]
                 
                 # Clear only dead streams that belong to this channel
                 cleared_count = 0
-                for stream_id in channel_stream_ids:
-                    if self.dead_streams_tracker.is_stream_dead(stream_id):
-                        self.dead_streams_tracker.mark_stream_alive(stream_id)
+                for stream_url in channel_stream_urls:
+                    if self.dead_streams_tracker.is_dead(stream_url):
+                        self.dead_streams_tracker.mark_as_alive(stream_url)
                         cleared_count += 1
                 
                 if cleared_count > 0:
