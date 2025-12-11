@@ -1668,13 +1668,17 @@ class StreamCheckerService:
                         is_dead = stream_id in dead_stream_ids
                         is_revived = stream_id in revived_stream_ids
                         
+                        # Extract and format stats using centralized utilities
+                        extracted_stats = extract_stream_stats(analyzed)
+                        formatted_stats = format_stream_stats_for_display(extracted_stats)
+                        
                         stream_stat = {
                             'stream_id': stream_id,
                             'stream_name': analyzed.get('stream_name'),
-                            'resolution': analyzed.get('resolution'),
-                            'fps': analyzed.get('fps'),
-                            'video_codec': analyzed.get('video_codec'),
-                            'bitrate_kbps': analyzed.get('bitrate_kbps'),
+                            'resolution': formatted_stats['resolution'],
+                            'fps': formatted_stats['fps'],
+                            'video_codec': formatted_stats['video_codec'],
+                            'bitrate': formatted_stats['bitrate'],
                         }
                         
                         # Mark dead streams as "dead" instead of showing score:0
@@ -2089,14 +2093,18 @@ class StreamCheckerService:
                         is_dead = stream_id in dead_stream_ids
                         is_revived = stream_id in revived_stream_ids
                         
+                        # Extract and format stats using centralized utilities
+                        extracted_stats = extract_stream_stats(analyzed)
+                        formatted_stats = format_stream_stats_for_display(extracted_stats)
+                        
                         stream_stat = {
                             'stream_id': stream_id,
                             'stream_name': analyzed.get('stream_name'),
-                            'resolution': analyzed.get('resolution'),
-                            'fps': analyzed.get('fps'),
-                            'video_codec': analyzed.get('video_codec'),
-                            'audio_codec': analyzed.get('audio_codec'),
-                            'bitrate_kbps': analyzed.get('bitrate_kbps'),
+                            'resolution': formatted_stats['resolution'],
+                            'fps': formatted_stats['fps'],
+                            'video_codec': formatted_stats['video_codec'],
+                            'audio_codec': formatted_stats['audio_codec'],
+                            'bitrate': formatted_stats['bitrate'],
                         }
                         
                         # Mark dead streams as "dead" instead of showing score:0
@@ -2294,14 +2302,15 @@ class StreamCheckerService:
         This performs a targeted channel refresh for a single channel:
         - Identifies M3U accounts used by the channel
         - Refreshes playlists for accounts associated with the channel
-        - Re-matches and assigns NEW streams (dead streams remain in tracker and are NOT re-added)
+        - Clears dead streams for THIS channel to give them a second chance (like global action)
+        - Re-matches and assigns streams (including previously dead ones)
         - Force checks all streams (bypasses 2-hour immunity)
         - Detects newly dead streams and marks them
-        - Detects revived streams (if they were somehow re-added) and marks them as alive
+        - Detects revived streams and marks them as alive
         - Removes dead streams from the channel
         
-        Note: Unlike Global Action, this does NOT clear the dead stream tracker.
-        Dead streams will only be given a second chance during Global Actions.
+        Note: This now works like Global Action but only for the specified channel.
+        Dead streams for other channels are not affected.
         
         Args:
             channel_id: ID of the channel to check
@@ -2335,7 +2344,7 @@ class StreamCheckerService:
             
             # Step 2: Refresh playlists for those accounts
             if account_ids:
-                logger.info(f"Step 2/4: Refreshing playlists for {len(account_ids)} M3U account(s)...")
+                logger.info(f"Step 2/5: Refreshing playlists for {len(account_ids)} M3U account(s)...")
                 # Import here to allow better test mocking
                 from api_utils import refresh_m3u_playlists
                 for account_id in account_ids:
@@ -2347,12 +2356,31 @@ class StreamCheckerService:
                 udi.refresh_channels()
                 logger.info("✓ Playlists refreshed and UDI cache updated")
             else:
-                logger.info("Step 2/4: No M3U accounts found for this channel, skipping playlist refresh")
+                logger.info("Step 2/5: No M3U accounts found for this channel, skipping playlist refresh")
             
-            # Step 3: Re-match and assign streams for this specific channel
-            # Note: This will NOT re-add dead streams since they are still in the dead stream tracker
-            # Only Global Actions clear the dead stream tracker to give all streams a second chance
-            logger.info(f"Step 3/4: Re-matching streams for channel {channel_name}...")
+            # Step 3: Clear dead streams for this channel to give them a second chance
+            logger.info(f"Step 3/5: Clearing dead streams for channel {channel_name} to give them a second chance...")
+            try:
+                # Get stream IDs for this channel from current_streams
+                channel_stream_ids = [s.get('id') for s in current_streams if s.get('id')]
+                
+                # Clear only dead streams that belong to this channel
+                cleared_count = 0
+                for stream_id in channel_stream_ids:
+                    if self.dead_streams_tracker.is_stream_dead(stream_id):
+                        self.dead_streams_tracker.mark_stream_alive(stream_id)
+                        cleared_count += 1
+                
+                if cleared_count > 0:
+                    logger.info(f"✓ Cleared {cleared_count} dead stream(s) from tracker - they will be given a second chance")
+                else:
+                    logger.info("✓ No dead streams to clear for this channel")
+            except Exception as e:
+                logger.error(f"✗ Failed to clear dead streams: {e}")
+            
+            # Step 4: Re-match and assign streams for this specific channel
+            # With dead streams cleared, previously dead streams can now be re-added
+            logger.info(f"Step 4/5: Re-matching streams for channel {channel_name}...")
             try:
                 # Import here to allow better test mocking
                 from automated_stream_manager import AutomatedStreamManager
@@ -2367,8 +2395,8 @@ class StreamCheckerService:
             except Exception as e:
                 logger.error(f"✗ Failed to match streams: {e}")
             
-            # Step 4: Mark channel for force check and perform the check
-            logger.info(f"Step 4/4: Force checking all streams for channel {channel_name}...")
+            # Step 5: Mark channel for force check and perform the check
+            logger.info(f"Step 5/5: Force checking all streams for channel {channel_name}...")
             self.update_tracker.mark_channel_for_force_check(channel_id)
             
             # Perform the check (this will now bypass immunity and check all streams)

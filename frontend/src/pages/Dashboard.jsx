@@ -183,9 +183,13 @@ export default function Dashboard() {
   const isAutomationRunning = status?.running || false
   const isStreamCheckerRunning = streamCheckerStatus?.running || false
   const queueSize = streamCheckerStatus?.queue?.queue_size || 0
-  const totalProcessed = streamCheckerStatus?.queue?.total_completed || 0
-  const queueProgress = queueSize > 0 
-    ? (totalProcessed / (queueSize + totalProcessed || 1)) * 100
+  const completed = streamCheckerStatus?.queue?.completed || 0
+  const inProgress = streamCheckerStatus?.queue?.in_progress || 0
+  
+  // Calculate progress for the current batch
+  const batchTotal = completed + inProgress + queueSize
+  const queueProgress = batchTotal > 0 
+    ? (completed / batchTotal) * 100
     : 0
 
   // Determine if actions should be disabled based on stream checker activity
@@ -208,8 +212,8 @@ export default function Dashboard() {
           <AlertDescription className="text-blue-900 dark:text-blue-100">
             <div className="font-medium mb-1">Stream checker is actively processing</div>
             <div className="text-sm">
-              Processing {queueSize} channels... 
-              {totalProcessed > 0 && ` (${totalProcessed} completed)`}
+              {completed} of {batchTotal} channels completed
+              {inProgress > 0 && ` (${inProgress} in progress, ${queueSize} in queue)`}
             </div>
             <Progress value={queueProgress} className="mt-2 h-2" />
             <div className="text-xs mt-1 text-muted-foreground">Quick actions are temporarily disabled</div>
@@ -374,7 +378,7 @@ export default function Dashboard() {
                 <dt className="text-muted-foreground">Update Interval:</dt>
                 <dd>
                   <Badge variant="secondary">
-                    {status?.config?.playlist_update_interval ? `${status.config.playlist_update_interval}s` : 'N/A'}
+                    {status?.config?.playlist_update_interval_minutes ? `${status.config.playlist_update_interval_minutes}m` : 'N/A'}
                   </Badge>
                 </dd>
               </div>
