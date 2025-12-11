@@ -7,6 +7,7 @@ It fetches EPG data from Dispatcharr, caches it, and manages scheduled events.
 
 import json
 import os
+import re
 import uuid
 import requests
 import threading
@@ -23,6 +24,7 @@ logger = setup_logging(__name__)
 CONFIG_DIR = Path(os.environ.get('CONFIG_DIR', '/app/data'))
 SCHEDULING_CONFIG_FILE = CONFIG_DIR / 'scheduling_config.json'
 SCHEDULED_EVENTS_FILE = CONFIG_DIR / 'scheduled_events.json'
+AUTO_CREATE_RULES_FILE = CONFIG_DIR / 'auto_create_rules.json'
 
 
 class SchedulingService:
@@ -37,6 +39,7 @@ class SchedulingService:
         self._epg_cache_time: Optional[datetime] = None
         self._config = self._load_config()
         self._scheduled_events = self._load_scheduled_events()
+        self._auto_create_rules = self._load_auto_create_rules()
         logger.info("Scheduling service initialized")
     
     def _load_config(self) -> Dict[str, Any]:
@@ -216,7 +219,16 @@ class SchedulingService:
                 self._epg_cache = programs
                 self._epg_cache_time = datetime.now()
                 
-                return programs.copy()
+                # Match programs to auto-create rules (release lock first to avoid deadlock)
+                programs_copy = programs.copy()
+        
+        # Match outside the lock to avoid deadlock
+        try:
+            self.match_programs_to_rules()
+        except Exception as e:
+            logger.error(f"Error matching programs to rules: {e}", exc_info=True)
+        
+        return programs_copy
                 
             except Exception as e:
                 logger.error(f"Error fetching EPG grid: {e}")
@@ -434,6 +446,321 @@ class SchedulingService:
         except Exception as e:
             logger.error(f"Error executing scheduled event {event_id}: {e}", exc_info=True)
             return False
+    
+    def _load_auto_create_rules(self) -> List[Dict[str, Any]]:
+        """Load auto-create rules from file.
+        
+        Returns:
+            List of auto-create rule dictionaries
+        """
+        try:
+            if AUTO_CREATE_RULES_FILE.exists():
+                with open(AUTO_CREATE_RULES_FILE, 'r') as f:
+                    rules = json.load(f)
+                    logger.info(f"Loaded {len(rules)} auto-create rules")
+                    return rules
+        except Exception as e:
+            logger.error(f"Error loading auto-create rules: {e}")
+        
+        return []
+    
+    def _save_auto_create_rules(self) -> bool:
+        """Save auto-create rules to file.
+        
+        Returns:
+            True if successful
+        """
+        try:
+            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+            with open(AUTO_CREATE_RULES_FILE, 'w') as f:
+                json.dump(self._auto_create_rules, f, indent=2)
+            logger.info(f"Saved {len(self._auto_create_rules)} auto-create rules")
+            return True
+        except Exception as e:
+            logger.error(f"Error saving auto-create rules: {e}")
+            return False
+    
+    def get_auto_create_rules(self) -> List[Dict[str, Any]]:
+        """Get all auto-create rules.
+        
+        Returns:
+            List of auto-create rule dictionaries
+        """
+        return self._auto_create_rules.copy()
+    
+    def create_auto_create_rule(self, rule_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a new auto-create rule.
+        
+        Args:
+            rule_data: Rule data dictionary containing:
+                - name: Rule name
+                - channel_id: Channel ID to match
+                - regex_pattern: Regex pattern to match program names
+                - minutes_before: Minutes before program start to check
+                
+        Returns:
+            Created rule dictionary
+        """
+        with self._lock:
+            # Generate unique ID
+            rule_id = str(uuid.uuid4())
+            
+            # Get channel info
+            udi = get_udi_manager()
+            channel = udi.get_channel_by_id(rule_data['channel_id'])
+            if not channel:
+                raise ValueError(f"Channel {rule_data['channel_id']} not found")
+            
+            # Validate regex pattern
+            try:
+                re.compile(rule_data['regex_pattern'])
+            except re.error as e:
+                raise ValueError(f"Invalid regex pattern: {e}")
+            
+            # Get channel logo info
+            logo_id = channel.get('logo_id')
+            logo_url = None
+            if logo_id:
+                logo = udi.get_logo_by_id(logo_id)
+                if logo:
+                    logo_url = logo.get('cache_url') or logo.get('url')
+            
+            # Create rule
+            rule = {
+                'id': rule_id,
+                'name': rule_data['name'],
+                'channel_id': rule_data['channel_id'],
+                'channel_name': channel.get('name', ''),
+                'channel_logo_url': logo_url,
+                'tvg_id': channel.get('tvg_id'),
+                'regex_pattern': rule_data['regex_pattern'],
+                'minutes_before': rule_data.get('minutes_before', 5),
+                'created_at': datetime.now().isoformat()
+            }
+            
+            self._auto_create_rules.append(rule)
+            self._save_auto_create_rules()
+            
+            logger.info(f"Created auto-create rule {rule_id} for channel {channel.get('name')}")
+            
+            # Immediately try to match programs with this new rule
+            self.match_programs_to_rules()
+            
+            return rule
+    
+    def delete_auto_create_rule(self, rule_id: str) -> bool:
+        """Delete an auto-create rule.
+        
+        Args:
+            rule_id: Rule ID
+            
+        Returns:
+            True if deleted, False if not found
+        """
+        with self._lock:
+            initial_count = len(self._auto_create_rules)
+            self._auto_create_rules = [r for r in self._auto_create_rules if r.get('id') != rule_id]
+            
+            if len(self._auto_create_rules) < initial_count:
+                self._save_auto_create_rules()
+                logger.info(f"Deleted auto-create rule {rule_id}")
+                return True
+            
+            logger.warning(f"Auto-create rule {rule_id} not found")
+            return False
+    
+    def test_regex_against_epg(self, channel_id: int, regex_pattern: str) -> List[Dict[str, Any]]:
+        """Test a regex pattern against EPG programs for a channel.
+        
+        Args:
+            channel_id: Channel ID
+            regex_pattern: Regex pattern to test
+            
+        Returns:
+            List of matching programs
+        """
+        # Validate regex pattern
+        try:
+            pattern = re.compile(regex_pattern, re.IGNORECASE)
+        except re.error as e:
+            raise ValueError(f"Invalid regex pattern: {e}")
+        
+        # Get programs for channel
+        programs = self.get_programs_by_channel(channel_id)
+        
+        # Filter matching programs
+        matching_programs = []
+        for program in programs:
+            title = program.get('title', '')
+            if pattern.search(title):
+                matching_programs.append(program)
+        
+        logger.debug(f"Regex '{regex_pattern}' matched {len(matching_programs)} programs for channel {channel_id}")
+        return matching_programs
+    
+    def match_programs_to_rules(self) -> Dict[str, Any]:
+        """Match EPG programs to auto-create rules and create/update scheduled events.
+        
+        This method:
+        1. Scans all programs in EPG cache
+        2. For each rule, finds matching programs
+        3. Creates new events for programs not yet scheduled
+        4. Updates existing events if program name or time changed
+        
+        Returns:
+            Dictionary with statistics about created/updated events
+        """
+        with self._lock:
+            if not self._auto_create_rules:
+                logger.debug("No auto-create rules to process")
+                return {'created': 0, 'updated': 0, 'skipped': 0}
+            
+            created_count = 0
+            updated_count = 0
+            skipped_count = 0
+            
+            udi = get_udi_manager()
+            
+            for rule in self._auto_create_rules:
+                channel_id = rule.get('channel_id')
+                regex_pattern = rule.get('regex_pattern')
+                minutes_before = rule.get('minutes_before', 5)
+                tvg_id = rule.get('tvg_id')
+                
+                if not tvg_id:
+                    logger.warning(f"Rule {rule.get('id')} has no TVG ID, skipping")
+                    continue
+                
+                try:
+                    pattern = re.compile(regex_pattern, re.IGNORECASE)
+                except re.error as e:
+                    logger.error(f"Invalid regex pattern in rule {rule.get('id')}: {e}")
+                    continue
+                
+                # Get programs for this channel
+                programs = self.get_programs_by_channel(channel_id, tvg_id)
+                
+                for program in programs:
+                    title = program.get('title', '')
+                    if not pattern.search(title):
+                        continue
+                    
+                    # Program matches! Check if we already have an event for it
+                    program_start = program.get('start_time')
+                    program_end = program.get('end_time')
+                    
+                    if not program_start or not program_end:
+                        logger.warning(f"Program missing start/end time: {title}")
+                        continue
+                    
+                    # Parse times
+                    try:
+                        start_dt = datetime.fromisoformat(program_start.replace('Z', '+00:00'))
+                        end_dt = datetime.fromisoformat(program_end.replace('Z', '+00:00'))
+                    except (ValueError, AttributeError) as e:
+                        logger.warning(f"Invalid program times for {title}: {e}")
+                        continue
+                    
+                    # Ensure timezone aware
+                    if start_dt.tzinfo is None:
+                        start_dt = start_dt.replace(tzinfo=timezone.utc)
+                    if end_dt.tzinfo is None:
+                        end_dt = end_dt.replace(tzinfo=timezone.utc)
+                    
+                    # Get the date of the program (for duplicate detection)
+                    program_date = start_dt.date().isoformat()
+                    
+                    # Look for existing event with same channel, program name base, and date
+                    # Use a fuzzy match on the program name to detect minor changes
+                    existing_event = None
+                    for event in self._scheduled_events:
+                        if event.get('channel_id') != channel_id:
+                            continue
+                        
+                        event_start = event.get('program_start_time', '')
+                        try:
+                            event_start_dt = datetime.fromisoformat(event_start.replace('Z', '+00:00'))
+                            if event_start_dt.tzinfo is None:
+                                event_start_dt = event_start_dt.replace(tzinfo=timezone.utc)
+                            event_date = event_start_dt.date().isoformat()
+                        except (ValueError, AttributeError):
+                            continue
+                        
+                        # Check if same date and similar title (within 5 minute window)
+                        if event_date == program_date:
+                            time_diff = abs((event_start_dt - start_dt).total_seconds())
+                            if time_diff < 300:  # Within 5 minutes
+                                existing_event = event
+                                break
+                    
+                    if existing_event:
+                        # Check if we need to update the event
+                        needs_update = False
+                        if existing_event.get('program_title') != title:
+                            logger.info(f"Updating event title: '{existing_event.get('program_title')}' -> '{title}'")
+                            existing_event['program_title'] = title
+                            needs_update = True
+                        
+                        if existing_event.get('program_start_time') != program_start:
+                            logger.info(f"Updating event time: {existing_event.get('program_start_time')} -> {program_start}")
+                            existing_event['program_start_time'] = program_start
+                            existing_event['program_end_time'] = program_end
+                            # Recalculate check time
+                            check_time = start_dt - timedelta(minutes=minutes_before)
+                            existing_event['check_time'] = check_time.isoformat()
+                            needs_update = True
+                        
+                        if needs_update:
+                            updated_count += 1
+                        else:
+                            skipped_count += 1
+                    else:
+                        # Create new event
+                        check_time = start_dt - timedelta(minutes=minutes_before)
+                        
+                        # Get channel info for logo
+                        channel = udi.get_channel_by_id(channel_id)
+                        logo_id = channel.get('logo_id') if channel else None
+                        logo_url = None
+                        if logo_id:
+                            logo = udi.get_logo_by_id(logo_id)
+                            if logo:
+                                logo_url = logo.get('cache_url') or logo.get('url')
+                        
+                        event = {
+                            'id': str(uuid.uuid4()),
+                            'channel_id': channel_id,
+                            'channel_name': channel.get('name', '') if channel else '',
+                            'channel_logo_url': logo_url,
+                            'program_title': title,
+                            'program_start_time': program_start,
+                            'program_end_time': program_end,
+                            'minutes_before': minutes_before,
+                            'check_time': check_time.isoformat(),
+                            'tvg_id': tvg_id,
+                            'created_at': datetime.now().isoformat(),
+                            'auto_created': True,  # Mark as auto-created
+                            'auto_create_rule_id': rule.get('id')
+                        }
+                        
+                        self._scheduled_events.append(event)
+                        created_count += 1
+                        logger.info(f"Auto-created event for '{title}' on channel {channel.get('name', channel_id)}")
+            
+            # Save if we made changes
+            if created_count > 0 or updated_count > 0:
+                self._save_scheduled_events()
+            
+            result = {
+                'created': created_count,
+                'updated': updated_count,
+                'skipped': skipped_count
+            }
+            
+            if created_count > 0 or updated_count > 0:
+                logger.info(f"Auto-create matching complete: {result}")
+            
+            return result
 
 
 # Global singleton instance
