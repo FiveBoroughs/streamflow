@@ -68,17 +68,13 @@ class TestGlobalActionCheckingMode(unittest.TestCase):
                     # Call _queue_all_channels
                     service._queue_all_channels(force_check=True)
                     
-                    # Check that the queue was called with correct channels
-                    # Channel 2 should be excluded
-                    # We can verify through the log or by checking internal state
-                    
-                    # Get the queued channels from the check queue
+                    # Verify that only channels with checking enabled were queued
                     queued_channels = []
                     while not service.check_queue.queue.empty():
                         try:
                             _, channel_id = service.check_queue.queue.get_nowait()
                             queued_channels.append(channel_id)
-                        except:
+                        except queue.Empty:
                             break
                     
                     # Should have 2 channels (1 and 3), not 2
@@ -163,7 +159,7 @@ class TestGlobalActionCheckingMode(unittest.TestCase):
                             try:
                                 _, channel_id = service.check_queue.queue.get_nowait()
                                 queued_channels.append(channel_id)
-                            except:
+                            except queue.Empty:
                                 break
                         
                         self.assertIn(1, queued_channels, "Channel 1 (enabled) should be queued")
