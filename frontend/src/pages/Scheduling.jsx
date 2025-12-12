@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card.jsx'
 import { Button } from '@/components/ui/button.jsx'
 import { Badge } from '@/components/ui/badge.jsx'
@@ -48,6 +48,23 @@ export default function Scheduling() {
   const [ruleToDelete, setRuleToDelete] = useState(null)
   
   const { toast } = useToast()
+
+  // Calculate paginated events with useMemo for performance
+  const paginationData = useMemo(() => {
+    const totalPages = Math.ceil(events.length / eventsPerPage)
+    const startIndex = (currentPage - 1) * eventsPerPage
+    const endIndex = startIndex + eventsPerPage
+    const paginatedEvents = events.slice(startIndex, endIndex)
+    
+    return {
+      totalPages,
+      startIndex,
+      endIndex,
+      paginatedEvents,
+      showingStart: startIndex + 1,
+      showingEnd: Math.min(endIndex, events.length)
+    }
+  }, [events, currentPage, eventsPerPage])
 
   useEffect(() => {
     loadData()
@@ -624,14 +641,7 @@ export default function Scheduling() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {(() => {
-                      // Calculate pagination
-                      const totalPages = Math.ceil(events.length / eventsPerPage)
-                      const startIndex = (currentPage - 1) * eventsPerPage
-                      const endIndex = startIndex + eventsPerPage
-                      const paginatedEvents = events.slice(startIndex, endIndex)
-                      
-                      return paginatedEvents.map((event) => (
+                    {paginationData.paginatedEvents.map((event) => (
                         <TableRow key={event.id}>
                           <TableCell>
                             <div className="flex items-center gap-2">
@@ -674,17 +684,16 @@ export default function Scheduling() {
                             </Button>
                           </TableCell>
                         </TableRow>
-                      ))
-                    })()}
+                      ))}
                   </TableBody>
                 </Table>
               </div>
               
               {/* Pagination Controls */}
-              {Math.ceil(events.length / eventsPerPage) > 1 && (
+              {paginationData.totalPages > 1 && (
                 <div className="flex items-center justify-between mt-4">
                   <div className="text-sm text-muted-foreground">
-                    Showing {((currentPage - 1) * eventsPerPage) + 1} to {Math.min(currentPage * eventsPerPage, events.length)} of {events.length} events
+                    Showing {paginationData.showingStart} to {paginationData.showingEnd} of {events.length} events
                   </div>
                   <Pagination>
                     <PaginationContent>
@@ -696,60 +705,75 @@ export default function Scheduling() {
                       </PaginationItem>
                       
                       {(() => {
-                        const totalPages = Math.ceil(events.length / eventsPerPage)
+                        const { totalPages } = paginationData
                         const pages = []
                         
-                        // Always show first page
-                        pages.push(
-                          <PaginationItem key={1}>
-                            <PaginationLink
-                              onClick={() => setCurrentPage(1)}
-                              isActive={currentPage === 1}
-                              className="cursor-pointer"
-                            >
-                              1
-                            </PaginationLink>
-                          </PaginationItem>
-                        )
-                        
-                        // Show ellipsis if needed
-                        if (currentPage > 3) {
+                        // For 2 or fewer pages, show all pages
+                        if (totalPages <= 2) {
+                          for (let i = 1; i <= totalPages; i++) {
+                            pages.push(
+                              <PaginationItem key={i}>
+                                <PaginationLink
+                                  onClick={() => setCurrentPage(i)}
+                                  isActive={currentPage === i}
+                                  className="cursor-pointer"
+                                >
+                                  {i}
+                                </PaginationLink>
+                              </PaginationItem>
+                            )
+                          }
+                        } else {
+                          // Always show first page
                           pages.push(
-                            <PaginationItem key="ellipsis-1">
-                              <PaginationEllipsis />
-                            </PaginationItem>
-                          )
-                        }
-                        
-                        // Show pages around current page
-                        const startPage = Math.max(2, currentPage - 1)
-                        const endPage = Math.min(totalPages - 1, currentPage + 1)
-                        
-                        for (let i = startPage; i <= endPage; i++) {
-                          pages.push(
-                            <PaginationItem key={i}>
+                            <PaginationItem key={1}>
                               <PaginationLink
-                                onClick={() => setCurrentPage(i)}
-                                isActive={currentPage === i}
+                                onClick={() => setCurrentPage(1)}
+                                isActive={currentPage === 1}
                                 className="cursor-pointer"
                               >
-                                {i}
+                                1
                               </PaginationLink>
                             </PaginationItem>
                           )
-                        }
-                        
-                        // Show ellipsis if needed
-                        if (currentPage < totalPages - 2) {
-                          pages.push(
-                            <PaginationItem key="ellipsis-2">
-                              <PaginationEllipsis />
-                            </PaginationItem>
-                          )
-                        }
-                        
-                        // Always show last page (if more than 1 page)
-                        if (totalPages > 1) {
+                          
+                          // Show ellipsis if needed
+                          if (currentPage > 3) {
+                            pages.push(
+                              <PaginationItem key="ellipsis-1">
+                                <PaginationEllipsis />
+                              </PaginationItem>
+                            )
+                          }
+                          
+                          // Show pages around current page
+                          const startPage = Math.max(2, currentPage - 1)
+                          const endPage = Math.min(totalPages - 1, currentPage + 1)
+                          
+                          for (let i = startPage; i <= endPage; i++) {
+                            pages.push(
+                              <PaginationItem key={i}>
+                                <PaginationLink
+                                  onClick={() => setCurrentPage(i)}
+                                  isActive={currentPage === i}
+                                  className="cursor-pointer"
+                                >
+                                  {i}
+                                </PaginationLink>
+                              </PaginationItem>
+                            )
+                          }
+                          
+                          // Show ellipsis if needed
+                          if (currentPage < totalPages - 2) {
+                            pages.push(
+                              <PaginationItem key="ellipsis-2">
+                                <PaginationEllipsis />
+                              </PaginationItem>
+                            )
+                          }
+                          
+                          // Always show last page
                           pages.push(
                             <PaginationItem key={totalPages}>
                               <PaginationLink
@@ -768,8 +792,8 @@ export default function Scheduling() {
                       
                       <PaginationItem>
                         <PaginationNext 
-                          onClick={() => setCurrentPage(prev => Math.min(Math.ceil(events.length / eventsPerPage), prev + 1))}
-                          className={currentPage === Math.ceil(events.length / eventsPerPage) ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
+                          onClick={() => setCurrentPage(prev => Math.min(paginationData.totalPages, prev + 1))}
+                          className={currentPage === paginationData.totalPages ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
                         />
                       </PaginationItem>
                     </PaginationContent>
