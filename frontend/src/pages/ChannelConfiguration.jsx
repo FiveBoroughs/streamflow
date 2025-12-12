@@ -8,19 +8,55 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion.jsx'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select.jsx'
 import { useToast } from '@/hooks/use-toast.js'
-import { channelsAPI, regexAPI, streamCheckerAPI } from '@/services/api.js'
+import { channelsAPI, regexAPI, streamCheckerAPI, channelSettingsAPI } from '@/services/api.js'
 import { CheckCircle, Edit, Plus, Trash2, Loader2, Search, X, Download, Upload } from 'lucide-react'
 
 // Constants for localStorage keys
 const CHANNEL_STATS_PREFIX = 'streamflow_channel_stats_'
 const CHANNEL_LOGO_PREFIX = 'streamflow_channel_logo_'
 
-function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheckChannel, loading }) {
+function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheckChannel, loading, channelSettings, onUpdateSettings }) {
   const [stats, setStats] = useState(null)
   const [loadingStats, setLoadingStats] = useState(true)
   const [expanded, setExpanded] = useState(false)
   const [logoUrl, setLogoUrl] = useState(null)
   const [logoError, setLogoError] = useState(false)
+  const { toast } = useToast()
+
+  const matchingMode = channelSettings?.matching_mode || 'enabled'
+  const checkingMode = channelSettings?.checking_mode || 'enabled'
+
+  const handleMatchingModeChange = async (value) => {
+    try {
+      await onUpdateSettings(channel.id, { matching_mode: value })
+      toast({
+        title: "Success",
+        description: "Matching mode updated successfully"
+      })
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: "Failed to update matching mode",
+        variant: "destructive"
+      })
+    }
+  }
+
+  const handleCheckingModeChange = async (value) => {
+    try {
+      await onUpdateSettings(channel.id, { checking_mode: value })
+      toast({
+        title: "Success",
+        description: "Checking mode updated successfully"
+      })
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: "Failed to update checking mode",
+        variant: "destructive"
+      })
+    }
+  }
 
   useEffect(() => {
     // Try to load stats from localStorage first for instant display
@@ -169,18 +205,62 @@ function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheckC
 
         {/* Expandable Regex Section */}
         {expanded && (
-          <div className="border-t p-4 bg-muted/50">
-            <div className="flex justify-between items-center mb-3">
-              <h4 className="font-medium text-sm">Regex Patterns</h4>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => onEditRegex(channel.id, null)}
-              >
-                <Plus className="h-4 w-4 mr-2" />
-                Add Pattern
-              </Button>
+          <div className="border-t p-4 bg-muted/50 space-y-4">
+            {/* Channel Settings */}
+            <div className="grid grid-cols-2 gap-4 pb-4 border-b">
+              <div className="space-y-2">
+                <Label htmlFor={`matching-mode-${channel.id}`} className="text-sm font-medium">
+                  Stream Matching
+                </Label>
+                <Select value={matchingMode} onValueChange={handleMatchingModeChange}>
+                  <SelectTrigger id={`matching-mode-${channel.id}`}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="enabled">Enabled</SelectItem>
+                    <SelectItem value="disabled">Disabled</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  {matchingMode === 'enabled' 
+                    ? 'Channel will be included in stream matching'
+                    : 'Channel will be excluded from stream matching'}
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor={`checking-mode-${channel.id}`} className="text-sm font-medium">
+                  Stream Checking
+                </Label>
+                <Select value={checkingMode} onValueChange={handleCheckingModeChange}>
+                  <SelectTrigger id={`checking-mode-${channel.id}`}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="enabled">Enabled</SelectItem>
+                    <SelectItem value="disabled">Disabled</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  {checkingMode === 'enabled'
+                    ? 'Channel streams will be quality checked'
+                    : 'Channel streams will not be quality checked'}
+                </p>
+              </div>
             </div>
+
+            {/* Regex Patterns */}
+            <div>
+              <div className="flex justify-between items-center mb-3">
+                <h4 className="font-medium text-sm">Regex Patterns</h4>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => onEditRegex(channel.id, null)}
+                >
+                  <Plus className="h-4 w-4 mr-2" />
+                  Add Pattern
+                </Button>
+              </div>
             
             {channelPatterns && channelPatterns.regex && channelPatterns.regex.length > 0 ? (
               <div className="space-y-2">
@@ -209,6 +289,7 @@ function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheckC
             ) : (
               <p className="text-sm text-muted-foreground">No regex patterns configured</p>
             )}
+            </div>
           </div>
         )}
       </CardContent>
@@ -219,6 +300,7 @@ function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheckC
 export default function ChannelConfiguration() {
   const [channels, setChannels] = useState([])
   const [patterns, setPatterns] = useState({})
+  const [channelSettings, setChannelSettings] = useState({})
   const [loading, setLoading] = useState(true)
   const [checkingChannel, setCheckingChannel] = useState(null)
   const [searchQuery, setSearchQuery] = useState('')
@@ -242,13 +324,15 @@ export default function ChannelConfiguration() {
   const loadData = async () => {
     try {
       setLoading(true)
-      const [channelsResponse, patternsResponse] = await Promise.all([
+      const [channelsResponse, patternsResponse, settingsResponse] = await Promise.all([
         channelsAPI.getChannels(),
-        regexAPI.getPatterns()
+        regexAPI.getPatterns(),
+        channelSettingsAPI.getAllSettings()
       ])
       
       setChannels(channelsResponse.data)
       setPatterns(patternsResponse.data.patterns || {})
+      setChannelSettings(settingsResponse.data || {})
     } catch (err) {
       console.error('Failed to load data:', err)
       toast({
@@ -258,6 +342,17 @@ export default function ChannelConfiguration() {
       })
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleUpdateSettings = async (channelId, settings) => {
+    try {
+      await channelSettingsAPI.updateSettings(channelId, settings)
+      // Reload settings to get updated values
+      const settingsResponse = await channelSettingsAPI.getAllSettings()
+      setChannelSettings(settingsResponse.data || {})
+    } catch (err) {
+      throw err
     }
   }
 
@@ -718,9 +813,11 @@ export default function ChannelConfiguration() {
               key={channel.id}
               channel={channel}
               patterns={patterns}
+              channelSettings={channelSettings[channel.id]}
               onEditRegex={handleEditRegex}
               onDeletePattern={handleDeletePattern}
               onCheckChannel={handleCheckChannel}
+              onUpdateSettings={handleUpdateSettings}
               loading={checkingChannel === channel.id}
             />
           ))

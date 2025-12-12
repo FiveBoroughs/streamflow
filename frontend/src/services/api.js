@@ -50,6 +50,12 @@ export const channelsAPI = {
   getLogoCached: (logoId) => `/api/channels/logos/${logoId}/cache`,
 };
 
+export const channelSettingsAPI = {
+  getAllSettings: () => api.get('/channel-settings'),
+  getSettings: (channelId) => api.get(`/channel-settings/${channelId}`),
+  updateSettings: (channelId, settings) => api.put(`/channel-settings/${channelId}`, settings),
+};
+
 export const regexAPI = {
   getPatterns: () => api.get('/regex-patterns'),
   addPattern: (pattern) => api.post('/regex-patterns', pattern),
