@@ -55,6 +55,11 @@ CONFIG_DIR = Path(os.environ.get('CONFIG_DIR', '/app/data'))
 CONCURRENT_STREAMS_GLOBAL_LIMIT_KEY = 'concurrent_streams.global_limit'
 CONCURRENT_STREAMS_ENABLED_KEY = 'concurrent_streams.enabled'
 
+# EPG refresh processor constants
+EPG_REFRESH_INITIAL_DELAY_SECONDS = 5  # Delay before first EPG refresh
+EPG_REFRESH_ERROR_RETRY_SECONDS = 300  # Retry interval after errors (5 minutes)
+THREAD_SHUTDOWN_TIMEOUT_SECONDS = 5  # Timeout for graceful thread shutdown
+
 # Initialize Flask app with static file serving
 # Note: static_folder set to None to disable Flask's built-in static route
 # The catch-all route will handle serving all static files from the React build
@@ -236,7 +241,7 @@ def epg_refresh_processor():
     logger.info("EPG refresh processor thread started")
     
     # Initial fetch with a small delay to allow service initialization
-    time.sleep(5)
+    time.sleep(EPG_REFRESH_INITIAL_DELAY_SECONDS)
     
     while epg_refresh_running:
         try:
@@ -254,17 +259,19 @@ def epg_refresh_processor():
             
             # Wait for the next refresh interval or wake event
             if epg_refresh_wake is None:
-                logger.error("EPG refresh wake event is None! Using fallback sleep.")
-                time.sleep(refresh_interval_seconds)
-            else:
-                logger.debug(f"EPG refresh will occur again in {refresh_interval_minutes} minutes")
-                epg_refresh_wake.wait(timeout=refresh_interval_seconds)
-                epg_refresh_wake.clear()
+                # This indicates a critical threading issue - the wake event should always be set
+                logger.critical("EPG refresh wake event is None! This is a programming error. Stopping processor.")
+                epg_refresh_running = False
+                break
+            
+            logger.debug(f"EPG refresh will occur again in {refresh_interval_minutes} minutes")
+            epg_refresh_wake.wait(timeout=refresh_interval_seconds)
+            epg_refresh_wake.clear()
             
         except Exception as e:
             logger.error(f"Error in EPG refresh processor: {e}", exc_info=True)
-            # On error, wait a bit before retrying (5 minutes)
-            time.sleep(300)
+            # On error, wait before retrying
+            time.sleep(EPG_REFRESH_ERROR_RETRY_SECONDS)
     
     logger.info("EPG refresh processor thread stopped")
 
@@ -307,7 +314,7 @@ def stop_epg_refresh_processor():
         epg_refresh_wake.set()
     
     # Wait for thread to finish (with timeout)
-    epg_refresh_thread.join(timeout=5)
+    epg_refresh_thread.join(timeout=THREAD_SHUTDOWN_TIMEOUT_SECONDS)
     
     if epg_refresh_thread.is_alive():
         logger.warning("EPG refresh processor thread did not stop gracefully")
