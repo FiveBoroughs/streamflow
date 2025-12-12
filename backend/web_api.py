@@ -68,6 +68,9 @@ regex_matcher = None
 scheduled_event_processor_thread = None
 scheduled_event_processor_running = False
 scheduled_event_processor_wake = None  # threading.Event to wake up the processor early
+epg_refresh_thread = None
+epg_refresh_running = False
+epg_refresh_wake = None  # threading.Event to wake up the refresh early
 
 def get_automation_manager():
     """Get or create automation manager instance."""
@@ -220,6 +223,98 @@ def stop_scheduled_event_processor():
     logger.info("Scheduled event processor stopped")
     return True
 
+
+def epg_refresh_processor():
+    """Background thread to periodically refresh EPG data and match programs to auto-create rules.
+    
+    This function runs in a separate thread and periodically fetches EPG data from
+    Dispatcharr, which automatically triggers matching of programs to auto-create rules.
+    The interval is configured in the scheduling service config (epg_refresh_interval_minutes).
+    """
+    global epg_refresh_running, epg_refresh_wake
+    
+    logger.info("EPG refresh processor thread started")
+    
+    # Initial fetch with a small delay to allow service initialization
+    time.sleep(5)
+    
+    while epg_refresh_running:
+        try:
+            service = get_scheduling_service()
+            config = service.get_config()
+            
+            # Get refresh interval from config (in minutes), with a minimum of 5 minutes
+            refresh_interval_minutes = max(config.get('epg_refresh_interval_minutes', 60), 5)
+            refresh_interval_seconds = refresh_interval_minutes * 60
+            
+            # Fetch EPG data (this will also trigger match_programs_to_rules)
+            logger.info(f"Fetching EPG data and matching programs to auto-create rules...")
+            programs = service.fetch_epg_grid(force_refresh=True)
+            logger.info(f"EPG refresh complete. Fetched {len(programs)} programs.")
+            
+            # Wait for the next refresh interval or wake event
+            if epg_refresh_wake is None:
+                logger.error("EPG refresh wake event is None! Using fallback sleep.")
+                time.sleep(refresh_interval_seconds)
+            else:
+                logger.debug(f"EPG refresh will occur again in {refresh_interval_minutes} minutes")
+                epg_refresh_wake.wait(timeout=refresh_interval_seconds)
+                epg_refresh_wake.clear()
+            
+        except Exception as e:
+            logger.error(f"Error in EPG refresh processor: {e}", exc_info=True)
+            # On error, wait a bit before retrying (5 minutes)
+            time.sleep(300)
+    
+    logger.info("EPG refresh processor thread stopped")
+
+
+def start_epg_refresh_processor():
+    """Start the background thread for periodic EPG refresh."""
+    global epg_refresh_thread, epg_refresh_running, epg_refresh_wake
+    
+    if epg_refresh_thread is not None and epg_refresh_thread.is_alive():
+        logger.warning("EPG refresh processor is already running")
+        return False
+    
+    # Initialize wake event
+    epg_refresh_wake = threading.Event()
+    
+    epg_refresh_running = True
+    epg_refresh_thread = threading.Thread(
+        target=epg_refresh_processor,
+        name="EPGRefreshProcessor",
+        daemon=True
+    )
+    epg_refresh_thread.start()
+    logger.info("EPG refresh processor started")
+    return True
+
+
+def stop_epg_refresh_processor():
+    """Stop the background thread for EPG refresh."""
+    global epg_refresh_thread, epg_refresh_running, epg_refresh_wake
+    
+    if epg_refresh_thread is None or not epg_refresh_thread.is_alive():
+        logger.warning("EPG refresh processor is not running")
+        return False
+    
+    logger.info("Stopping EPG refresh processor...")
+    epg_refresh_running = False
+    
+    # Wake the thread so it can exit promptly
+    if epg_refresh_wake:
+        epg_refresh_wake.set()
+    
+    # Wait for thread to finish (with timeout)
+    epg_refresh_thread.join(timeout=5)
+    
+    if epg_refresh_thread.is_alive():
+        logger.warning("EPG refresh processor thread did not stop gracefully")
+        return False
+    
+    logger.info("EPG refresh processor stopped")
+    return True
 
 
 @app.route('/', methods=['GET'])
@@ -1888,6 +1983,94 @@ def stop_scheduled_event_processor_api():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route('/api/scheduling/epg-refresh/status', methods=['GET'])
+@log_function_call
+def get_epg_refresh_processor_status():
+    """Get the status of the EPG refresh processor background thread.
+    
+    Returns:
+        JSON with processor status
+    """
+    try:
+        global epg_refresh_thread, epg_refresh_running
+        
+        thread_alive = epg_refresh_thread is not None and epg_refresh_thread.is_alive()
+        is_running = thread_alive and epg_refresh_running
+        
+        return jsonify({
+            "running": is_running,
+            "thread_alive": thread_alive
+        }), 200
+    
+    except Exception as e:
+        logger.error(f"Error getting EPG refresh processor status: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/scheduling/epg-refresh/start', methods=['POST'])
+@log_function_call
+def start_epg_refresh_processor_api():
+    """Start the EPG refresh processor background thread.
+    
+    Returns:
+        JSON with result
+    """
+    try:
+        success = start_epg_refresh_processor()
+        
+        if success:
+            return jsonify({"message": "EPG refresh processor started"}), 200
+        else:
+            return jsonify({"message": "EPG refresh processor is already running"}), 200
+    
+    except Exception as e:
+        logger.error(f"Error starting EPG refresh processor: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/scheduling/epg-refresh/stop', methods=['POST'])
+@log_function_call
+def stop_epg_refresh_processor_api():
+    """Stop the EPG refresh processor background thread.
+    
+    Returns:
+        JSON with result
+    """
+    try:
+        success = stop_epg_refresh_processor()
+        
+        if success:
+            return jsonify({"message": "EPG refresh processor stopped"}), 200
+        else:
+            return jsonify({"message": "EPG refresh processor is not running"}), 200
+    
+    except Exception as e:
+        logger.error(f"Error stopping EPG refresh processor: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/scheduling/epg-refresh/trigger', methods=['POST'])
+@log_function_call
+def trigger_epg_refresh():
+    """Manually trigger an immediate EPG refresh.
+    
+    Returns:
+        JSON with result
+    """
+    try:
+        global epg_refresh_wake
+        
+        if epg_refresh_wake and epg_refresh_running:
+            epg_refresh_wake.set()
+            return jsonify({"message": "EPG refresh triggered"}), 200
+        else:
+            return jsonify({"error": "EPG refresh processor is not running"}), 400
+    
+    except Exception as e:
+        logger.error(f"Error triggering EPG refresh: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 # Serve React app for all frontend routes (catch-all - must be last!)
 @app.route('/<path:path>')
 def serve_frontend(path):
@@ -1962,5 +2145,15 @@ if __name__ == '__main__':
             logger.info("Scheduled event processor auto-started")
     except Exception as e:
         logger.error(f"Failed to auto-start scheduled event processor: {e}")
+    
+    # Auto-start EPG refresh processor if wizard is complete
+    try:
+        if not check_wizard_complete():
+            logger.info("EPG refresh processor will not start - setup wizard has not been completed")
+        else:
+            start_epg_refresh_processor()
+            logger.info("EPG refresh processor auto-started")
+    except Exception as e:
+        logger.error(f"Failed to auto-start EPG refresh processor: {e}")
     
     app.run(host=args.host, port=args.port, debug=args.debug)
