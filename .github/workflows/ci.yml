@@ -65,8 +65,13 @@ jobs:
     - name: Set image tag based on branch
       id: set_tag
       run: |
-        # Set tag according to branch logic: main → latest, dev → dev, else sanitized branch name
-        if [ "${GITHUB_REF##*/}" = "main" ]; then
+        # For release events, use the tag name (strip leading "v" if present) so semver dots are preserved.
+        if [ "${{ github.event_name }}" = "release" ]; then
+          raw_tag="${GITHUB_REF##*/}"
+          # strip leading v if present, e.g. v2.0 -> 2.0
+          raw_tag="${raw_tag#v}"
+          image_tag="${raw_tag}"
+        elif [ "${GITHUB_REF##*/}" = "main" ]; then
           image_tag="latest"
         elif [ "${GITHUB_REF##*/}" = "dev" ]; then
           image_tag="dev"
@@ -142,7 +147,11 @@ jobs:
       - name: Set image tag based on branch
         id: set_tag
         run: |
-          if [ "${GITHUB_REF##*/}" = "main" ]; then
+          if [ "${{ github.event_name }}" = "release" ]; then
+            raw_tag="${GITHUB_REF##*/}"
+            raw_tag="${raw_tag#v}"
+            image_tag="${raw_tag}"
+          elif [ "${GITHUB_REF##*/}" = "main" ]; then
             image_tag="latest"
           elif [ "${GITHUB_REF##*/}" = "dev" ]; then
             image_tag="dev"
@@ -174,9 +183,11 @@ jobs:
       - name: Create manifest list and push
         working-directory: /tmp/digests
         run: |
+          # Start with the primary tag (preserves the sanitized or semver tag chosen above)
           tags="-t ghcr.io/${{ github.repository_owner }}/streamflow:${{ steps.set_tag.outputs.tag }}"
+          # For releases, also add the semver tags from metadata and a :latest tag
           if [ "${{ github.event_name }}" = "release" ]; then
-            tags="$tags $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON")"
+            tags="$tags -t ghcr.io/${{ github.repository_owner }}/streamflow:latest $(jq -cr '.tags | map(\"-t \" + .) | join(\" \")' <<< \"$DOCKER_METADATA_OUTPUT_JSON\")"
           fi
           docker buildx imagetools create $tags \
             $(printf 'ghcr.io/${{ github.repository_owner }}/streamflow@sha256:%s ' *)
