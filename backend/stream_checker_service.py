@@ -2417,10 +2417,11 @@ class StreamCheckerService:
             
             channel_name = channel.get('name', f'Channel {channel_id}')
             
-            # Check if checking is enabled for this channel
+            # Check channel settings for matching and checking modes
             channel_settings = get_channel_settings_manager()
-            checking_enabled = channel_settings.is_checking_enabled(channel_id)
-            matching_enabled = channel_settings.is_matching_enabled(channel_id)
+            settings = channel_settings.get_channel_settings(channel_id)
+            matching_enabled = settings['matching_mode'] == 'enabled'
+            checking_enabled = settings['checking_mode'] == 'enabled'
             
             logger.info(f"Channel {channel_name} settings: matching={matching_enabled}, checking={checking_enabled}")
             
