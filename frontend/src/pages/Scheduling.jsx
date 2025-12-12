@@ -32,7 +32,7 @@ export default function Scheduling() {
   
   // Pagination state for scheduled events
   const [currentPage, setCurrentPage] = useState(1)
-  const [eventsPerPage, setEventsPerPage] = useState(25)
+  const [eventsPerPage, setEventsPerPage] = useState(10)
   
   // Auto-create rules state
   const [autoCreateRules, setAutoCreateRules] = useState([])
