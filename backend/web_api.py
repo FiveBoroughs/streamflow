@@ -24,6 +24,7 @@ from automated_stream_manager import AutomatedStreamManager, RegexChannelMatcher
 from api_utils import _get_base_url
 from stream_checker_service import get_stream_checker_service
 from scheduling_service import get_scheduling_service
+from channel_settings_manager import get_channel_settings_manager
 
 # Import UDI for direct data access
 from udi import get_udi_manager
@@ -971,6 +972,65 @@ def get_dead_streams():
         })
     except Exception as e:
         logger.error(f"Error getting dead streams: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/channel-settings', methods=['GET'])
+def get_all_channel_settings():
+    """Get settings for all channels."""
+    try:
+        settings_manager = get_channel_settings_manager()
+        all_settings = settings_manager.get_all_settings()
+        return jsonify(all_settings)
+    except Exception as e:
+        logger.error(f"Error getting all channel settings: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/channel-settings/<int:channel_id>', methods=['GET'])
+def get_channel_settings_endpoint(channel_id):
+    """Get settings for a specific channel."""
+    try:
+        settings_manager = get_channel_settings_manager()
+        settings = settings_manager.get_channel_settings(channel_id)
+        return jsonify(settings)
+    except Exception as e:
+        logger.error(f"Error getting channel settings: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/channel-settings/<int:channel_id>', methods=['PUT', 'PATCH'])
+def update_channel_settings_endpoint(channel_id):
+    """Update settings for a specific channel."""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+        
+        matching_mode = data.get('matching_mode')
+        checking_mode = data.get('checking_mode')
+        
+        # Validate modes if provided
+        valid_modes = ['enabled', 'disabled']
+        if matching_mode and matching_mode not in valid_modes:
+            return jsonify({"error": f"Invalid matching_mode. Must be one of: {valid_modes}"}), 400
+        if checking_mode and checking_mode not in valid_modes:
+            return jsonify({"error": f"Invalid checking_mode. Must be one of: {valid_modes}"}), 400
+        
+        settings_manager = get_channel_settings_manager()
+        success = settings_manager.set_channel_settings(
+            channel_id,
+            matching_mode=matching_mode,
+            checking_mode=checking_mode
+        )
+        
+        if success:
+            updated_settings = settings_manager.get_channel_settings(channel_id)
+            return jsonify({
+                "message": "Channel settings updated successfully",
+                "settings": updated_settings
+            })
+        else:
+            return jsonify({"error": "Failed to update channel settings"}), 500
+    except Exception as e:
+        logger.error(f"Error updating channel settings: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/discover-streams', methods=['POST'])
