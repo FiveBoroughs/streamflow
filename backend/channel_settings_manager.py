@@ -170,7 +170,7 @@ class ChannelSettingsManager:
         settings = self.get_channel_settings(channel_id)
         return settings['checking_mode'] == self.MODE_ENABLED
     
-    def get_enabled_channels(self, channel_ids: list[int], mode: str = 'checking') -> list[int]:
+    def get_enabled_channels(self, channel_ids: List[int], mode: str = 'checking') -> List[int]:
         """Filter a list of channel IDs to only those with the specified mode enabled.
         
         Args:
