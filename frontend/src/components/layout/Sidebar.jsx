@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { cn } from '@/lib/utils.js'
 import {
@@ -13,6 +13,7 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button.jsx'
 import { ThemeToggle } from '@/components/ThemeToggle.jsx'
+import { versionAPI } from '@/services/api.js'
 
 const menuItems = [
   { text: 'Dashboard', icon: LayoutDashboard, path: '/' },
@@ -25,7 +26,22 @@ const menuItems = [
 
 export function Sidebar() {
   const [isOpen, setIsOpen] = useState(false)
+  const [version, setVersion] = useState(null)
   const location = useLocation()
+
+  useEffect(() => {
+    // Fetch version on mount
+    const fetchVersion = async () => {
+      try {
+        const response = await versionAPI.getVersion()
+        setVersion(response.data.version)
+      } catch (error) {
+        console.error('Failed to fetch version:', error)
+        setVersion('dev-unknown')
+      }
+    }
+    fetchVersion()
+  }, [])
 
   return (
     <>
@@ -82,11 +98,16 @@ export function Sidebar() {
           })}
         </nav>
 
-        <div className="p-3 border-t border-border">
+        <div className="p-3 border-t border-border space-y-2">
           <div className="flex items-center justify-between">
             <span className="text-sm text-muted-foreground">Theme</span>
             <ThemeToggle />
           </div>
+          {version && (
+            <div className="pt-2 text-xs text-muted-foreground text-center">
+              v{version}
+            </div>
+          )}
         </div>
       </aside>
     </>

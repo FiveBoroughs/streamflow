@@ -108,21 +108,30 @@ There is an important difference in how dead streams are handled:
 5. **Step 5**: Check all channels (force check bypasses immunity)
 6. **Result**: ALL previously dead streams can be re-added and re-checked
 
-**Single Channel Check** (does NOT give dead streams a second chance):
+**Single Channel Check** (gives dead streams for THAT CHANNEL a second chance):
 1. **Step 1**: Identify M3U accounts used by the channel
 2. **Step 2**: Refresh playlists for those M3U accounts
-3. **Step 3**: Re-match and assign NEW streams (dead streams remain in tracker and are excluded)
-4. **Step 4**: Force check all streams (bypasses 2-hour immunity)
-5. **Result**: Dead streams remain in tracker and are NOT re-added during matching
+3. **Step 3**: Clear dead streams for THAT CHANNEL from tracker (giving them a second chance)
+4. **Step 4**: Re-match and assign streams (if matching_mode is enabled for the channel)
+5. **Step 5**: Force check all streams (if checking_mode is enabled for the channel, bypasses 2-hour immunity)
+6. **Result**: Dead streams for that channel are cleared and can be re-added and re-checked
+
+**Channel Settings Override**:
+Single Channel Check respects per-channel `matching_mode` and `checking_mode` settings:
+- If `matching_mode='disabled'`: Stream matching (Step 4) is skipped
+- If `checking_mode='disabled'`: Stream quality checking (Step 5) is skipped
+- Steps 1-3 (playlist refresh, dead stream clearing) always execute regardless of settings
+- This allows users to configure channels individually (e.g., match but don't check, or check but don't match)
 
 **Why the difference?**
 - Global Action is the comprehensive system-wide operation that clears the slate and gives every stream a fresh chance
-- Single Channel Check is designed for quick targeted checks of a specific channel and respects the dead stream tracker to avoid repeatedly checking known-bad streams
-- This ensures that dead streams are periodically re-evaluated (during Global Actions) without causing excessive load during individual channel checks
+- Single Channel Check is a targeted operation that only affects the specified channel
+- This ensures efficient targeted operations while respecting per-channel configuration
 
 **When dead streams get a second chance:**
 - During scheduled Global Actions (pipelines 1.5, 2.5, and 3)
 - During manually triggered Global Actions
+- During Single Channel Check for that specific channel
 - When streams are manually re-added to channels outside of the automated system
 
 ## User Interface
@@ -221,11 +230,27 @@ Automatically create scheduled events based on program name patterns:
     - Most common resolution
     - Average bitrate (Kbps)
   - Quick actions: Edit Regex, **Check Channel**
+- **Per-Channel Settings**: Fine-grained control over each channel's behavior
+  - **Matching Mode**: Control whether the channel participates in stream matching
+    - `enabled` (default): Channel included in automatic stream discovery and assignment
+    - `disabled`: Channel excluded from stream matching operations
+  - **Checking Mode**: Control whether the channel participates in stream quality checking
+    - `enabled` (default): Channel streams are automatically checked for quality
+    - `disabled`: Channel streams are excluded from quality checking operations
+  - **Use Cases**:
+    - Match but don't check: Keep channels updated with new streams but skip quality checks
+    - Check but don't match: Only check existing streams without adding new ones
+    - Disable both: Fully manual channel management
+  - **Settings Respected By**:
+    - Global Actions (for checking_mode)
+    - Single Channel Check (for both matching_mode and checking_mode)
+    - Automated stream discovery (for matching_mode)
 - **Single Channel Check**: Immediately check a specific channel's streams
   - Synchronous checking with detailed feedback
   - Shows results: total streams, dead streams, avg resolution, avg bitrate
   - Updates channel stats after completion
   - Creates changelog entry for tracking
+  - **Respects channel settings**: Will skip matching or checking based on channel configuration
 - **Expandable Regex Editor**: Toggle pattern list within each card
   - View all configured patterns for the channel
   - Add new patterns inline

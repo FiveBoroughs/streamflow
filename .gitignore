@@ -6,6 +6,10 @@ automation_config.json
 channel_regex_config.json
 changelog.json
 
+# Version files (generated during build)
+backend/version.txt
+frontend/public/version.txt
+
 # CSV data files
 csv/*.csv
 

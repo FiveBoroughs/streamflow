@@ -276,12 +276,19 @@ export default function StreamChecker() {
 
             {progress.current_stream_name && (
               <div className="space-y-2">
-                <Label className="text-sm">Current Stream</Label>
+                <Label className="text-sm">
+                  {status?.parallel?.enabled ? 'Recently Completed Stream' : 'Current Stream'}
+                </Label>
                 <div className="text-sm font-mono bg-muted p-2 rounded-md">
                   {progress.current_stream_name}
                 </div>
                 <p className="text-xs text-muted-foreground">
                   Stream {progress.current_stream}/{progress.total_streams}
+                  {status?.parallel?.enabled && inProgress > 1 && (
+                    <span className="ml-2 text-blue-600 dark:text-blue-400">
+                      ({inProgress} streams checking concurrently)
+                    </span>
+                  )}
                 </p>
               </div>
             )}

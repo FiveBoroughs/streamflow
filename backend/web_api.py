@@ -24,6 +24,7 @@ from automated_stream_manager import AutomatedStreamManager, RegexChannelMatcher
 from api_utils import _get_base_url
 from stream_checker_service import get_stream_checker_service
 from scheduling_service import get_scheduling_service
+from channel_settings_manager import get_channel_settings_manager
 
 # Import UDI for direct data access
 from udi import get_udi_manager
@@ -354,6 +355,20 @@ def health_check():
 def health_check_stripped():
     """Health check endpoint for nginx proxy (stripped /api prefix)."""
     return health_check()
+
+@app.route('/api/version', methods=['GET'])
+def get_version():
+    """Get application version."""
+    try:
+        version_file = Path(__file__).parent / 'version.txt'
+        if version_file.exists():
+            version = version_file.read_text().strip()
+        else:
+            version = "dev-unknown"
+        return jsonify({"version": version})
+    except Exception as e:
+        logger.error(f"Failed to read version: {e}")
+        return jsonify({"version": "dev-unknown"})
 
 @app.route('/api/automation/status', methods=['GET'])
 def get_automation_status():
@@ -971,6 +986,65 @@ def get_dead_streams():
         })
     except Exception as e:
         logger.error(f"Error getting dead streams: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/channel-settings', methods=['GET'])
+def get_all_channel_settings():
+    """Get settings for all channels."""
+    try:
+        settings_manager = get_channel_settings_manager()
+        all_settings = settings_manager.get_all_settings()
+        return jsonify(all_settings)
+    except Exception as e:
+        logger.error(f"Error getting all channel settings: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/channel-settings/<int:channel_id>', methods=['GET'])
+def get_channel_settings_endpoint(channel_id):
+    """Get settings for a specific channel."""
+    try:
+        settings_manager = get_channel_settings_manager()
+        settings = settings_manager.get_channel_settings(channel_id)
+        return jsonify(settings)
+    except Exception as e:
+        logger.error(f"Error getting channel settings: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/channel-settings/<int:channel_id>', methods=['PUT', 'PATCH'])
+def update_channel_settings_endpoint(channel_id):
+    """Update settings for a specific channel."""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+        
+        matching_mode = data.get('matching_mode')
+        checking_mode = data.get('checking_mode')
+        
+        # Validate modes if provided
+        valid_modes = ['enabled', 'disabled']
+        if matching_mode and matching_mode not in valid_modes:
+            return jsonify({"error": f"Invalid matching_mode. Must be one of: {valid_modes}"}), 400
+        if checking_mode and checking_mode not in valid_modes:
+            return jsonify({"error": f"Invalid checking_mode. Must be one of: {valid_modes}"}), 400
+        
+        settings_manager = get_channel_settings_manager()
+        success = settings_manager.set_channel_settings(
+            channel_id,
+            matching_mode=matching_mode,
+            checking_mode=checking_mode
+        )
+        
+        if success:
+            updated_settings = settings_manager.get_channel_settings(channel_id)
+            return jsonify({
+                "message": "Channel settings updated successfully",
+                "settings": updated_settings
+            })
+        else:
+            return jsonify({"error": "Failed to update channel settings"}), 500
+    except Exception as e:
+        logger.error(f"Error updating channel settings: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/discover-streams', methods=['POST'])
@@ -1782,7 +1856,7 @@ def create_auto_create_rule():
     Expected JSON body:
     {
         "name": "Rule Name",
-        "channel_id": 123,
+        "channel_ids": [123, 456],  // or "channel_id": 123 for backward compatibility
         "regex_pattern": "^Breaking News",
         "minutes_before": 5
     }
@@ -1795,11 +1869,15 @@ def create_auto_create_rule():
         if not rule_data:
             return jsonify({"error": "No rule data provided"}), 400
         
-        # Validate required fields
-        required_fields = ['name', 'channel_id', 'regex_pattern']
+        # Validate required fields - accept either channel_id or channel_ids
+        required_fields = ['name', 'regex_pattern']
         for field in required_fields:
             if field not in rule_data:
                 return jsonify({"error": f"Missing required field: {field}"}), 400
+        
+        # Validate that either channel_id or channel_ids is provided
+        if 'channel_id' not in rule_data and 'channel_ids' not in rule_data:
+            return jsonify({"error": "Missing required field: channel_id or channel_ids"}), 400
         
         rule = service.create_auto_create_rule(rule_data)
         
@@ -1845,6 +1923,56 @@ def delete_auto_create_rule(rule_id):
     
     except Exception as e:
         logger.error(f"Error deleting auto-create rule: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/scheduling/auto-create-rules/<rule_id>', methods=['PUT', 'PATCH'])
+@log_function_call
+def update_auto_create_rule(rule_id):
+    """Update an auto-create rule.
+    
+    Args:
+        rule_id: Rule ID
+        
+    Expected JSON body (all fields optional):
+    {
+        "name": "Updated Rule Name",
+        "channel_id": 123,
+        "regex_pattern": "^Updated Pattern",
+        "minutes_before": 10
+    }
+    """
+    try:
+        from scheduling_service import get_scheduling_service
+        service = get_scheduling_service()
+        rule_data = request.get_json()
+        
+        if not rule_data:
+            return jsonify({"error": "No rule data provided"}), 400
+        
+        updated_rule = service.update_auto_create_rule(rule_id, rule_data)
+        
+        if updated_rule:
+            # Immediately match programs to the updated rule
+            try:
+                service.match_programs_to_rules()
+                logger.info("Triggered immediate program matching after updating auto-create rule")
+            except Exception as e:
+                logger.warning(f"Failed to immediately match programs to updated rule: {e}")
+            
+            # Wake up the processor to check for new events immediately
+            global scheduled_event_processor_wake
+            if scheduled_event_processor_wake:
+                scheduled_event_processor_wake.set()
+            
+            return jsonify(updated_rule), 200
+        else:
+            return jsonify({"error": "Rule not found"}), 404
+    
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        logger.error(f"Error updating auto-create rule: {e}")
         return jsonify({"error": str(e)}), 500
 
 

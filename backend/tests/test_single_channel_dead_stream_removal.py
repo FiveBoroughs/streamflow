@@ -106,7 +106,7 @@ class TestSingleChannelDeadStreamRemoval(unittest.TestCase):
         mock_automation_instance.discover_and_assign_streams.assert_called_once()
         
         # Verify _check_channel was called (after everything else)
-        service._check_channel.assert_called_once_with(16)
+        service._check_channel.assert_called_once_with(16, skip_batch_changelog=True)
     
     @patch('stream_checker_service.StreamCheckConfig')
     @patch('stream_checker_service.get_udi_manager')
@@ -253,7 +253,7 @@ class TestSingleChannelDeadStreamRemoval(unittest.TestCase):
         # All other steps should still execute normally
         mock_refresh.assert_called()
         mock_automation_instance.discover_and_assign_streams.assert_called_once()
-        service._check_channel.assert_called_once_with(16)
+        service._check_channel.assert_called_once_with(16, skip_batch_changelog=True)
 
 
 if __name__ == '__main__':

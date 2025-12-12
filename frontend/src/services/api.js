@@ -50,6 +50,12 @@ export const channelsAPI = {
   getLogoCached: (logoId) => `/api/channels/logos/${logoId}/cache`,
 };
 
+export const channelSettingsAPI = {
+  getAllSettings: () => api.get('/channel-settings'),
+  getSettings: (channelId) => api.get(`/channel-settings/${channelId}`),
+  updateSettings: (channelId, settings) => api.put(`/channel-settings/${channelId}`, settings),
+};
+
 export const regexAPI = {
   getPatterns: () => api.get('/regex-patterns'),
   addPattern: (pattern) => api.post('/regex-patterns', pattern),
@@ -79,7 +85,8 @@ export const streamCheckerAPI = {
   updateConfig: (config) => api.put('/stream-checker/config', config),
   getProgress: () => api.get('/stream-checker/progress'),
   checkChannel: (channelId) => api.post('/stream-checker/check-channel', { channel_id: channelId }),
-  checkSingleChannel: (channelId) => api.post('/stream-checker/check-single-channel', { channel_id: channelId }),
+  // Use longer timeout for single channel check as it can take time
+  checkSingleChannel: (channelId) => api.post('/stream-checker/check-single-channel', { channel_id: channelId }, { timeout: 120000 }),
   markUpdated: (data) => api.post('/stream-checker/mark-updated', data),
   queueAllChannels: () => api.post('/stream-checker/queue-all'),
   triggerGlobalAction: () => api.post('/stream-checker/global-action'),
@@ -113,6 +120,11 @@ export const schedulingAPI = {
   deleteEvent: (eventId) => api.delete(`/scheduling/events/${eventId}`),
   getAutoCreateRules: () => api.get('/scheduling/auto-create-rules'),
   createAutoCreateRule: (ruleData) => api.post('/scheduling/auto-create-rules', ruleData),
+  updateAutoCreateRule: (ruleId, ruleData) => api.put(`/scheduling/auto-create-rules/${ruleId}`, ruleData),
   deleteAutoCreateRule: (ruleId) => api.delete(`/scheduling/auto-create-rules/${ruleId}`),
   testAutoCreateRule: (testData) => api.post('/scheduling/auto-create-rules/test', testData),
+};
+
+export const versionAPI = {
+  getVersion: () => api.get('/version'),
 };

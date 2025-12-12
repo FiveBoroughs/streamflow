@@ -43,6 +43,9 @@ from udi import get_udi_manager
 # Import dead streams tracker
 from dead_streams_tracker import DeadStreamsTracker
 
+# Import channel settings manager
+from channel_settings_manager import get_channel_settings_manager
+
 # Import centralized stream stats utilities
 from stream_stats_utils import (
     parse_bitrate_value,
@@ -391,11 +394,19 @@ class ChannelUpdateTracker:
                     if max_channels and len(channels) >= max_channels:
                         break
             
-            if channels:
-                self._save_updates()
-                logger.debug(f"Atomically retrieved and cleared {len(channels)} channels needing check")
+            # Filter channels by checking_mode setting
+            channel_settings = get_channel_settings_manager()
+            filtered_channels = [cid for cid in channels if channel_settings.is_checking_enabled(cid)]
+            excluded_count = len(channels) - len(filtered_channels)
             
-            return channels
+            if excluded_count > 0:
+                logger.info(f"Excluding {excluded_count} channel(s) with checking disabled")
+            
+            if filtered_channels:
+                self._save_updates()
+                logger.debug(f"Atomically retrieved and cleared {len(filtered_channels)} channels needing check")
+            
+            return filtered_channels
     
     def mark_channel_checked(self, channel_id: int, timestamp: str = None, stream_count: int = None, checked_stream_ids: List[int] = None):
         """Mark a channel as checked (completed).
@@ -1120,26 +1131,38 @@ class StreamCheckerService:
             if channels:
                 channel_ids = [ch['id'] for ch in channels if isinstance(ch, dict) and 'id' in ch]
                 
+                # Filter channels by checking_mode setting
+                channel_settings = get_channel_settings_manager()
+                filtered_channel_ids = [cid for cid in channel_ids if channel_settings.is_checking_enabled(cid)]
+                excluded_count = len(channel_ids) - len(filtered_channel_ids)
+                
+                if excluded_count > 0:
+                    logger.info(f"Excluding {excluded_count} channel(s) with checking disabled from global action")
+                
+                if not filtered_channel_ids:
+                    logger.info("No channels with checking enabled to queue for global check")
+                    return
+                
                 if force_check:
-                    # Mark all channels for force check (bypasses immunity)
-                    for channel_id in channel_ids:
+                    # Mark all enabled channels for force check (bypasses immunity)
+                    for channel_id in filtered_channel_ids:
                         self.update_tracker.mark_channel_for_force_check(channel_id)
                 
                 # Remove channels from completed set to allow re-queueing
                 # This is necessary for global checks to re-check all channels
-                for channel_id in channel_ids:
+                for channel_id in filtered_channel_ids:
                     self.check_queue.remove_from_completed(channel_id)
                 
                 max_channels = self.config.get('queue.max_channels_per_run', 50)
                 
                 # Queue in batches with higher priority for global checks
                 total_added = 0
-                for i in range(0, len(channel_ids), max_channels):
-                    batch = channel_ids[i:i+max_channels]
+                for i in range(0, len(filtered_channel_ids), max_channels):
+                    batch = filtered_channel_ids[i:i+max_channels]
                     added = self.check_queue.add_channels(batch, priority=5)
                     total_added += added
                 
-                logger.info(f"Queued {total_added}/{len(channel_ids)} channels for global check (force_check={force_check})")
+                logger.info(f"Queued {total_added}/{len(filtered_channel_ids)} channels for global check (force_check={force_check})")
         except Exception as e:
             logger.error(f"Failed to queue all channels: {e}")
     
@@ -2358,14 +2381,18 @@ class StreamCheckerService:
         - Identifies M3U accounts used by the channel
         - Refreshes playlists for accounts associated with the channel
         - Clears dead streams for the specified channel to give them a second chance (like global action)
-        - Re-matches and assigns streams (including previously dead ones)
-        - Force checks all streams (bypasses 2-hour immunity)
-        - Detects newly dead streams and marks them
-        - Detects revived streams and marks them as alive
-        - Removes dead streams from the channel
+        - Re-matches and assigns streams (including previously dead ones) if matching_mode is enabled
+        - Force checks all streams (bypasses 2-hour immunity) if checking_mode is enabled
+        - Detects newly dead streams and marks them (if checking is enabled)
+        - Detects revived streams and marks them as alive (if checking is enabled)
+        - Removes dead streams from the channel (if checking is enabled)
         
         Note: This now works like Global Action but only for the specified channel.
         Dead streams for other channels are not affected.
+        
+        Channel settings (matching_mode and checking_mode) are respected:
+        - If matching_mode is disabled, stream matching is skipped
+        - If checking_mode is disabled, stream quality checking is skipped
         
         Args:
             channel_id: ID of the channel to check
@@ -2390,8 +2417,16 @@ class StreamCheckerService:
             
             channel_name = channel.get('name', f'Channel {channel_id}')
             
+            # Check channel settings for matching and checking modes
+            channel_settings = get_channel_settings_manager()
+            settings = channel_settings.get_channel_settings(channel_id)
+            matching_enabled = settings['matching_mode'] == 'enabled'
+            checking_enabled = settings['checking_mode'] == 'enabled'
+            
+            logger.info(f"Channel {channel_name} settings: matching={matching_enabled}, checking={checking_enabled}")
+            
             # Step 1: Get current streams to identify M3U accounts
-            logger.info(f"Step 1/4: Identifying M3U accounts for channel {channel_name}...")
+            logger.info(f"Step 1/5: Identifying M3U accounts for channel {channel_name}...")
             current_streams = fetch_channel_streams(channel_id)
             account_ids = set()
             if current_streams:
@@ -2444,38 +2479,45 @@ class StreamCheckerService:
             except Exception as e:
                 logger.error(f"✗ Failed to clear dead streams: {e}")
             
-            # Step 4: Re-match and assign streams for this specific channel
+            # Step 4: Re-match and assign streams for this specific channel (if matching is enabled)
             # With dead streams cleared, previously dead streams can now be re-added
-            logger.info(f"Step 4/5: Re-matching streams for channel {channel_name}...")
-            try:
-                # Import here to allow better test mocking
-                from automated_stream_manager import AutomatedStreamManager
-                automation_manager = AutomatedStreamManager()
+            if matching_enabled:
+                logger.info(f"Step 4/5: Re-matching streams for channel {channel_name}...")
+                try:
+                    # Import here to allow better test mocking
+                    from automated_stream_manager import AutomatedStreamManager
+                    automation_manager = AutomatedStreamManager()
+                    
+                    # Run full discovery (this will add new matching streams but skip dead ones)
+                    assignments = automation_manager.discover_and_assign_streams(force=True)
+                    if assignments:
+                        logger.info(f"✓ Stream matching completed")
+                    else:
+                        logger.info("✓ No new stream assignments")
+                except Exception as e:
+                    logger.error(f"✗ Failed to match streams: {e}")
+            else:
+                logger.info(f"Step 4/5: Skipping stream matching (matching is disabled for this channel)")
+            
+            # Step 5: Mark channel for force check and perform the check (if checking is enabled)
+            dead_count = 0
+            if checking_enabled:
+                logger.info(f"Step 5/5: Force checking all streams for channel {channel_name}...")
+                self.update_tracker.mark_channel_for_force_check(channel_id)
                 
-                # Run full discovery (this will add new matching streams but skip dead ones)
-                assignments = automation_manager.discover_and_assign_streams(force=True)
-                if assignments:
-                    logger.info(f"✓ Stream matching completed")
-                else:
-                    logger.info("✓ No new stream assignments")
-            except Exception as e:
-                logger.error(f"✗ Failed to match streams: {e}")
-            
-            # Step 5: Mark channel for force check and perform the check
-            logger.info(f"Step 5/5: Force checking all streams for channel {channel_name}...")
-            self.update_tracker.mark_channel_for_force_check(channel_id)
-            
-            # Perform the check (this will now bypass immunity and check all streams)
-            # Returns dict with dead_streams_count and revived_streams_count
-            # Skip batch changelog since this is a single channel check
-            check_result = self._check_channel(channel_id, skip_batch_changelog=True)
-            if not check_result or not isinstance(check_result, dict):
-                # This should not happen with updated methods, but provide safe fallback
-                logger.warning(f"_check_channel did not return expected result dict, using defaults")
-                check_result = {'dead_streams_count': 0, 'revived_streams_count': 0}
-            
-            # Get the count of dead streams that were removed during the check
-            dead_count = check_result.get('dead_streams_count', 0)
+                # Perform the check (this will now bypass immunity and check all streams)
+                # Returns dict with dead_streams_count and revived_streams_count
+                # Skip batch changelog since this is a single channel check
+                check_result = self._check_channel(channel_id, skip_batch_changelog=True)
+                if not check_result or not isinstance(check_result, dict):
+                    # This should not happen with updated methods, but provide safe fallback
+                    logger.warning(f"_check_channel did not return expected result dict, using defaults")
+                    check_result = {'dead_streams_count': 0, 'revived_streams_count': 0}
+                
+                # Get the count of dead streams that were removed during the check
+                dead_count = check_result.get('dead_streams_count', 0)
+            else:
+                logger.info(f"Step 5/5: Skipping stream checking (checking is disabled for this channel)")
             
             # Gather statistics after check using centralized utility
             streams = fetch_channel_streams(channel_id)

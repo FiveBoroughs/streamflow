@@ -39,6 +39,9 @@ from api_utils import (
 # Import UDI for direct data access
 from udi import get_udi_manager
 
+# Import channel settings manager
+from channel_settings_manager import get_channel_settings_manager
+
 # Setup centralized logging
 from logging_config import setup_logging, log_function_call, log_function_return, log_exception, log_state_change
 
@@ -707,6 +710,31 @@ class AutomatedStreamManager:
             all_channels = udi.get_channels()
             if not all_channels:
                 logger.warning("No channels found")
+                return {}
+            
+            # Filter channels by matching_mode setting
+            channel_settings = get_channel_settings_manager()
+            matching_enabled_channel_ids = []
+            
+            for channel in all_channels:
+                if not isinstance(channel, dict) or 'id' not in channel:
+                    continue
+                channel_id = channel['id']
+                if channel_settings.is_matching_enabled(channel_id):
+                    matching_enabled_channel_ids.append(channel_id)
+            
+            # Filter channels to only those with matching enabled
+            filtered_channels = [ch for ch in all_channels if ch.get('id') in matching_enabled_channel_ids]
+            
+            excluded_count = len(all_channels) - len(filtered_channels)
+            if excluded_count > 0:
+                logger.info(f"Excluding {excluded_count} channel(s) with matching disabled from stream assignment")
+            
+            # Use filtered channels for the rest of the logic
+            all_channels = filtered_channels
+            
+            if not all_channels:
+                logger.info("No channels with matching enabled found")
                 return {}
             
             # Create a map of existing channel streams

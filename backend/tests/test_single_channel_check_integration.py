@@ -77,6 +77,8 @@ class TestSingleChannelCheckIntegration(unittest.TestCase):
         mock_udi_instance.refresh_streams = Mock()
         mock_udi_instance.refresh_channels = Mock()
         mock_udi_instance.get_streams = Mock(return_value=refreshed_streams)
+        # Mock get_stream_by_id for dead stream lookup
+        mock_udi_instance.get_stream_by_id = Mock(return_value=initial_streams[2])  # Return the 4K stream
         
         mock_automation_instance = Mock()
         mock_automation_class.return_value = mock_automation_instance
@@ -89,7 +91,7 @@ class TestSingleChannelCheckIntegration(unittest.TestCase):
         # SETUP: Mark stream 3 (DAZN F1 4K) as previously dead
         # This simulates it being dead in a previous check
         service.dead_streams_tracker.mark_as_dead(
-            'http://example.com/dazn-f1-4k', 3, 'DAZN F1 4K'
+            'http://example.com/dazn-f1-4k', 3, 'DAZN F1 4K', channel_id=16
         )
         
         # Verify it's marked as dead before the check
@@ -132,7 +134,7 @@ class TestSingleChannelCheckIntegration(unittest.TestCase):
             "Stream matching should be forced")
         
         # c) Force check was performed (Step 5)
-        service._check_channel.assert_called_once_with(16)
+        service._check_channel.assert_called_once_with(16, skip_batch_changelog=True)
         
         # 4. Verify final stats reflect the revived stream
         self.assertEqual(result['stats']['total_streams'], 3,

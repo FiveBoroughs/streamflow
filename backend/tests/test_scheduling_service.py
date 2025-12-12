@@ -94,10 +94,14 @@ class TestSchedulingService(unittest.TestCase):
         
         self.assertIsNotNone(rule['id'])
         self.assertEqual(rule['name'], 'Test Rule')
-        self.assertEqual(rule['channel_id'], 1)
+        # Check new multi-channel structure
+        self.assertEqual(rule['channel_ids'], [1])
+        self.assertIn('channels_info', rule)
+        self.assertEqual(len(rule['channels_info']), 1)
+        self.assertEqual(rule['channels_info'][0]['id'], 1)
+        self.assertEqual(rule['channels_info'][0]['name'], 'Test Channel')
         self.assertEqual(rule['regex_pattern'], '^Breaking News')
         self.assertEqual(rule['minutes_before'], 5)
-        self.assertEqual(rule['channel_name'], 'Test Channel')
     
     def test_create_rule_with_invalid_regex(self):
         """Test creating a rule with invalid regex raises ValueError."""
