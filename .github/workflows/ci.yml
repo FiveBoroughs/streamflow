@@ -213,10 +213,20 @@ jobs:
           tags="-t ghcr.io/${{ github.repository_owner }}/streamflow:${{ steps.set_tag.outputs.tag }}"
           # For releases, also add the semver tags from metadata and a :latest tag
           if [ "${{ github.event_name }}" = "release" ]; then
-            tags="$tags -t ghcr.io/${{ github.repository_owner }}/streamflow:latest $(jq -cr '.tags | map(\"-t \" + .) | join(\" \")' <<< \"$DOCKER_METADATA_OUTPUT_JSON\")"
+            tags="$tags -t ghcr.io/${{ github.repository_owner }}/streamflow:latest"
+            # Add semver tags produced by docker/metadata-action (steps.meta.outputs.tags is a newline-separated list)
+            while IFS= read -r t; do
+              if [ -n "$t" ]; then
+                tags="$tags -t ghcr.io/${{ github.repository_owner }}/streamflow:${t}"
+              fi
+            done <<< "${{ steps.meta.outputs.tags }}"
           fi
-          docker buildx imagetools create $tags \
-            $(printf 'ghcr.io/${{ github.repository_owner }}/streamflow@sha256:%s ' *)
+
+          # Buildx imagetools expects a list of tag args followed by the list of digests
+          # The files in this directory are the digest filenames (sha256:... stripped when created above)
+          digest_args=$(printf 'ghcr.io/${{ github.repository_owner }}/streamflow@sha256:%s ' *)
+
+          docker buildx imagetools create $tags $digest_args
 
       - name: Inspect image
         run: |
