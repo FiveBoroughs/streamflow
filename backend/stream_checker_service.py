@@ -1131,26 +1131,38 @@ class StreamCheckerService:
             if channels:
                 channel_ids = [ch['id'] for ch in channels if isinstance(ch, dict) and 'id' in ch]
                 
+                # Filter channels by checking_mode setting
+                channel_settings = get_channel_settings_manager()
+                filtered_channel_ids = [cid for cid in channel_ids if channel_settings.is_checking_enabled(cid)]
+                excluded_count = len(channel_ids) - len(filtered_channel_ids)
+                
+                if excluded_count > 0:
+                    logger.info(f"Excluding {excluded_count} channel(s) with checking disabled from global action")
+                
+                if not filtered_channel_ids:
+                    logger.info("No channels with checking enabled to queue for global check")
+                    return
+                
                 if force_check:
-                    # Mark all channels for force check (bypasses immunity)
-                    for channel_id in channel_ids:
+                    # Mark all enabled channels for force check (bypasses immunity)
+                    for channel_id in filtered_channel_ids:
                         self.update_tracker.mark_channel_for_force_check(channel_id)
                 
                 # Remove channels from completed set to allow re-queueing
                 # This is necessary for global checks to re-check all channels
-                for channel_id in channel_ids:
+                for channel_id in filtered_channel_ids:
                     self.check_queue.remove_from_completed(channel_id)
                 
                 max_channels = self.config.get('queue.max_channels_per_run', 50)
                 
                 # Queue in batches with higher priority for global checks
                 total_added = 0
-                for i in range(0, len(channel_ids), max_channels):
-                    batch = channel_ids[i:i+max_channels]
+                for i in range(0, len(filtered_channel_ids), max_channels):
+                    batch = filtered_channel_ids[i:i+max_channels]
                     added = self.check_queue.add_channels(batch, priority=5)
                     total_added += added
                 
-                logger.info(f"Queued {total_added}/{len(channel_ids)} channels for global check (force_check={force_check})")
+                logger.info(f"Queued {total_added}/{len(filtered_channel_ids)} channels for global check (force_check={force_check})")
         except Exception as e:
             logger.error(f"Failed to queue all channels: {e}")
     
