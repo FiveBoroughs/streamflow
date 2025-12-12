@@ -115,7 +115,7 @@ jobs:
       with:
         images: ghcr.io/${{ github.repository_owner }}/streamflow
         tags: |
-          ${{ steps.set_tag.outputs.tag }}
+          type=raw,value=${{ steps.set_tag.outputs.tag }}
           type=semver,pattern={{version}}
           type=semver,pattern={{major}}.{{minor}}
           type=semver,pattern={{major}}
@@ -194,7 +194,7 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository_owner }}/streamflow
           tags: |
-            ${{ steps.set_tag.outputs.tag }}
+            type=raw,value=${{ steps.set_tag.outputs.tag }}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
@@ -213,7 +213,7 @@ jobs:
           tags="-t ghcr.io/${{ github.repository_owner }}/streamflow:${{ steps.set_tag.outputs.tag }}"
           # For releases, also add the semver tags from metadata and a :latest tag
           if [ "${{ github.event_name }}" = "release" ]; then
-            tags="$tags -t ghcr.io/${{ github.repository_owner }}/streamflow:latest $(jq -cr '.tags | map(\"-t \" + .) | join(\" \")' <<< \"$DOCKER_METADATA_OUTPUT_JSON\")"
+            tags="$tags -t ghcr.io/${{ github.repository_owner }}/streamflow:latest $(jq -cr '.tags | map(\"-t \" + .) | join(\" \")' <<< '${{ steps.meta.outputs.json }}')"
           fi
           docker buildx imagetools create $tags \
             $(printf 'ghcr.io/${{ github.repository_owner }}/streamflow@sha256:%s ' *)
