@@ -16,7 +16,9 @@ cp .env.template .env
 docker compose up -d
 ```
 
-**Access**: http://localhost:3000
+**Access**: http://localhost:5000
+
+For **local development** with hot-reload, see [DEVELOPMENT.md](DEVELOPMENT.md).
 
 See [Deployment Guide](docs/DEPLOYMENT.md) for detailed instructions.
 

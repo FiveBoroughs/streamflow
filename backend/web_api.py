@@ -9,9 +9,13 @@ the automated stream management system.
 import json
 import logging
 import os
+import requests
+import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any
+from werkzeug.utils import secure_filename
 
 from flask import Flask, request, jsonify, send_from_directory, send_file
 from flask_cors import CORS
@@ -19,9 +23,18 @@ from flask_cors import CORS
 from automated_stream_manager import AutomatedStreamManager, RegexChannelMatcher
 from api_utils import _get_base_url
 from stream_checker_service import get_stream_checker_service
+from scheduling_service import get_scheduling_service
 
 # Import UDI for direct data access
 from udi import get_udi_manager
+
+# Import centralized stream stats utilities
+from stream_stats_utils import (
+    extract_stream_stats,
+    format_bitrate,
+    parse_bitrate_value,
+    calculate_channel_averages
+)
 
 # Import croniter for cron expression validation
 try:
@@ -42,6 +55,11 @@ CONFIG_DIR = Path(os.environ.get('CONFIG_DIR', '/app/data'))
 CONCURRENT_STREAMS_GLOBAL_LIMIT_KEY = 'concurrent_streams.global_limit'
 CONCURRENT_STREAMS_ENABLED_KEY = 'concurrent_streams.enabled'
 
+# EPG refresh processor constants
+EPG_REFRESH_INITIAL_DELAY_SECONDS = 5  # Delay before first EPG refresh
+EPG_REFRESH_ERROR_RETRY_SECONDS = 300  # Retry interval after errors (5 minutes)
+THREAD_SHUTDOWN_TIMEOUT_SECONDS = 5  # Timeout for graceful thread shutdown
+
 # Initialize Flask app with static file serving
 # Note: static_folder set to None to disable Flask's built-in static route
 # The catch-all route will handle serving all static files from the React build
@@ -52,6 +70,12 @@ CORS(app)  # Enable CORS for React frontend
 # Global instances
 automation_manager = None
 regex_matcher = None
+scheduled_event_processor_thread = None
+scheduled_event_processor_running = False
+scheduled_event_processor_wake = None  # threading.Event to wake up the processor early
+epg_refresh_thread = None
+epg_refresh_running = False
+epg_refresh_wake = None  # threading.Event to wake up the refresh early
 
 def get_automation_manager():
     """Get or create automation manager instance."""
@@ -95,6 +119,213 @@ def check_wizard_complete():
         logger.warning(f"Error checking wizard completion status: {e}")
         return False
 
+
+def scheduled_event_processor():
+    """Background thread to process scheduled EPG events.
+    
+    This function runs in a separate thread and checks for due scheduled events
+    periodically. When events are due, it executes the channel checks and
+    automatically deletes the completed events.
+    
+    Uses an event-based approach similar to the global action scheduler for
+    better responsiveness. Checks every 30 seconds but can be woken early.
+    """
+    global scheduled_event_processor_running, scheduled_event_processor_wake
+    
+    logger.info("Scheduled event processor thread started")
+    
+    # Check interval in seconds - more frequent than the old 60s for better responsiveness
+    check_interval = 30
+    
+    while scheduled_event_processor_running:
+        try:
+            # Wait for wake event or timeout (similar to _scheduler_loop pattern)
+            # This allows the processor to be woken up early if needed
+            if scheduled_event_processor_wake is None:
+                # This should not happen during normal operation
+                logger.error("Wake event is None! This indicates a programming error. Using fallback sleep.")
+                time.sleep(check_interval)
+            else:
+                scheduled_event_processor_wake.wait(timeout=check_interval)
+                scheduled_event_processor_wake.clear()
+            
+            # Check for due events
+            service = get_scheduling_service()
+            stream_checker = get_stream_checker_service()
+            
+            # Get all due events
+            due_events = service.get_due_events()
+            
+            if due_events:
+                logger.info(f"Found {len(due_events)} scheduled event(s) due for execution")
+                
+                for event in due_events:
+                    event_id = event.get('id')
+                    channel_name = event.get('channel_name', 'Unknown')
+                    program_title = event.get('program_title', 'Unknown')
+                    
+                    logger.info(f"Executing scheduled event {event_id} for {channel_name} (program: {program_title})")
+                    
+                    try:
+                        success = service.execute_scheduled_check(event_id, stream_checker)
+                        if success:
+                            logger.info(f"✓ Successfully executed and removed scheduled event {event_id}")
+                        else:
+                            logger.warning(f"✗ Failed to execute scheduled event {event_id}")
+                    except Exception as e:
+                        logger.error(f"Error executing scheduled event {event_id}: {e}", exc_info=True)
+            
+        except Exception as e:
+            logger.error(f"Error in scheduled event processor: {e}", exc_info=True)
+    
+    logger.info("Scheduled event processor thread stopped")
+
+
+def start_scheduled_event_processor():
+    """Start the background thread for processing scheduled events."""
+    global scheduled_event_processor_thread, scheduled_event_processor_running, scheduled_event_processor_wake
+    
+    if scheduled_event_processor_thread is not None and scheduled_event_processor_thread.is_alive():
+        logger.warning("Scheduled event processor is already running")
+        return False
+    
+    # Initialize wake event for responsive control
+    scheduled_event_processor_wake = threading.Event()
+    
+    scheduled_event_processor_running = True
+    scheduled_event_processor_thread = threading.Thread(
+        target=scheduled_event_processor,
+        name="ScheduledEventProcessor",
+        daemon=True  # Daemon thread will exit when main program exits
+    )
+    scheduled_event_processor_thread.start()
+    logger.info("Scheduled event processor started")
+    return True
+
+
+def stop_scheduled_event_processor():
+    """Stop the background thread for processing scheduled events."""
+    global scheduled_event_processor_thread, scheduled_event_processor_running, scheduled_event_processor_wake
+    
+    if scheduled_event_processor_thread is None or not scheduled_event_processor_thread.is_alive():
+        logger.warning("Scheduled event processor is not running")
+        return False
+    
+    logger.info("Stopping scheduled event processor...")
+    scheduled_event_processor_running = False
+    
+    # Wake the thread so it can exit promptly
+    if scheduled_event_processor_wake:
+        scheduled_event_processor_wake.set()
+    
+    # Wait for thread to finish (with timeout)
+    scheduled_event_processor_thread.join(timeout=5)
+    
+    if scheduled_event_processor_thread.is_alive():
+        logger.warning("Scheduled event processor thread did not stop gracefully")
+        return False
+    
+    logger.info("Scheduled event processor stopped")
+    return True
+
+
+def epg_refresh_processor():
+    """Background thread to periodically refresh EPG data and match programs to auto-create rules.
+    
+    This function runs in a separate thread and periodically fetches EPG data from
+    Dispatcharr, which automatically triggers matching of programs to auto-create rules.
+    The interval is configured in the scheduling service config (epg_refresh_interval_minutes).
+    """
+    global epg_refresh_running, epg_refresh_wake
+    
+    logger.info("EPG refresh processor thread started")
+    
+    # Initial fetch with a small delay to allow service initialization
+    time.sleep(EPG_REFRESH_INITIAL_DELAY_SECONDS)
+    
+    while epg_refresh_running:
+        try:
+            service = get_scheduling_service()
+            config = service.get_config()
+            
+            # Get refresh interval from config (in minutes), with a minimum of 5 minutes
+            refresh_interval_minutes = max(config.get('epg_refresh_interval_minutes', 60), 5)
+            refresh_interval_seconds = refresh_interval_minutes * 60
+            
+            # Fetch EPG data (this will also trigger match_programs_to_rules)
+            logger.info(f"Fetching EPG data and matching programs to auto-create rules...")
+            programs = service.fetch_epg_grid(force_refresh=True)
+            logger.info(f"EPG refresh complete. Fetched {len(programs)} programs.")
+            
+            # Wait for the next refresh interval or wake event
+            if epg_refresh_wake is None:
+                # This indicates a critical threading issue - the wake event should always be set
+                logger.critical("EPG refresh wake event is None! This is a programming error. Stopping processor.")
+                epg_refresh_running = False
+                break
+            
+            logger.debug(f"EPG refresh will occur again in {refresh_interval_minutes} minutes")
+            epg_refresh_wake.wait(timeout=refresh_interval_seconds)
+            epg_refresh_wake.clear()
+            
+        except Exception as e:
+            logger.error(f"Error in EPG refresh processor: {e}", exc_info=True)
+            # On error, wait before retrying (using wake event for responsiveness)
+            if epg_refresh_wake and epg_refresh_running:
+                epg_refresh_wake.wait(timeout=EPG_REFRESH_ERROR_RETRY_SECONDS)
+                epg_refresh_wake.clear()
+            else:
+                break  # Exit if wake event is invalid or processor is stopping
+    
+    logger.info("EPG refresh processor thread stopped")
+
+
+def start_epg_refresh_processor():
+    """Start the background thread for periodic EPG refresh."""
+    global epg_refresh_thread, epg_refresh_running, epg_refresh_wake
+    
+    if epg_refresh_thread is not None and epg_refresh_thread.is_alive():
+        logger.warning("EPG refresh processor is already running")
+        return False
+    
+    # Initialize wake event
+    epg_refresh_wake = threading.Event()
+    
+    epg_refresh_running = True
+    epg_refresh_thread = threading.Thread(
+        target=epg_refresh_processor,
+        name="EPGRefreshProcessor",
+        daemon=True
+    )
+    epg_refresh_thread.start()
+    logger.info("EPG refresh processor started")
+    return True
+
+
+def stop_epg_refresh_processor():
+    """Stop the background thread for EPG refresh."""
+    global epg_refresh_thread, epg_refresh_running, epg_refresh_wake
+    
+    if epg_refresh_thread is None or not epg_refresh_thread.is_alive():
+        logger.warning("EPG refresh processor is not running")
+        return False
+    
+    logger.info("Stopping EPG refresh processor...")
+    epg_refresh_running = False
+    
+    # Wake the thread so it can exit promptly
+    if epg_refresh_wake:
+        epg_refresh_wake.set()
+    
+    # Wait for thread to finish (with timeout)
+    epg_refresh_thread.join(timeout=THREAD_SHUTDOWN_TIMEOUT_SECONDS)
+    
+    if epg_refresh_thread.is_alive():
+        logger.warning("EPG refresh processor thread did not stop gracefully")
+        return False
+    
+    logger.info("EPG refresh processor stopped")
+    return True
 
 
 @app.route('/', methods=['GET'])
@@ -208,6 +439,93 @@ def get_channels():
         logger.error(f"Error fetching channels: {e}")
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/channels/<channel_id>/stats', methods=['GET'])
+def get_channel_stats(channel_id):
+    """Get channel statistics including stream count, dead streams, resolution, and bitrate."""
+    try:
+        # Convert channel_id to int for comparison
+        try:
+            channel_id_int = int(channel_id)
+        except (ValueError, TypeError):
+            return jsonify({"error": "Invalid channel ID: must be a valid integer"}), 400
+        
+        udi = get_udi_manager()
+        channels = udi.get_channels()
+        
+        if channels is None:
+            return jsonify({"error": "Failed to fetch channels"}), 500
+        
+        # Find the specific channel - convert to dict for O(1) lookup
+        # Filter out any invalid channel objects and build lookup dict
+        channels_dict = {ch['id']: ch for ch in channels if isinstance(ch, dict) and 'id' in ch}
+        channel = channels_dict.get(channel_id_int)
+        
+        if not channel:
+            return jsonify({"error": "Channel not found"}), 404
+        
+        # Get streams for this channel
+        # channel['streams'] is a list of stream IDs, need to fetch full stream objects
+        stream_ids = channel.get('streams', [])
+        total_streams = len(stream_ids)
+        
+        # Fetch full stream objects for each stream ID
+        streams = []
+        for stream_id in stream_ids:
+            if isinstance(stream_id, int):
+                stream = udi.get_stream_by_id(stream_id)
+                if stream:
+                    streams.append(stream)
+        
+        # Get dead streams count for this channel from the tracker
+        # The tracker now stores channel_id for each dead stream, so we can directly count them
+        dead_count = 0
+        checker = get_stream_checker_service()
+        if checker and checker.dead_streams_tracker:
+            dead_count = checker.dead_streams_tracker.get_dead_streams_count_for_channel(channel_id_int)
+            logger.debug(f"Channel {channel_id_int} has {dead_count} dead stream(s) in tracker")
+        else:
+            logger.warning(f"Dead streams tracker not available for channel {channel_id_int}")
+        
+        # Calculate resolution and bitrate statistics using centralized utility
+        # This ensures consistent handling across the application
+        channel_averages = calculate_channel_averages(streams, dead_stream_ids=set())
+        
+        # Extract most common resolution
+        most_common_resolution = channel_averages.get('avg_resolution', 'Unknown')
+        
+        # Extract and parse average bitrate
+        # The calculate_channel_averages returns formatted string (e.g., "5000 kbps")
+        # We need the numeric value for backward compatibility with existing UI
+        # TODO: Consider removing this conversion in v2.0 and have UI handle formatted strings
+        avg_bitrate_str = channel_averages.get('avg_bitrate', 'N/A')
+        avg_bitrate = 0
+        if avg_bitrate_str != 'N/A':
+            parsed_bitrate = parse_bitrate_value(avg_bitrate_str)
+            if parsed_bitrate:
+                avg_bitrate = int(parsed_bitrate)
+        
+        # Build resolutions dict for detailed breakdown (if needed by UI)
+        resolutions = {}
+        for stream in streams:
+            stats = extract_stream_stats(stream)
+            resolution = stats.get('resolution', 'Unknown')
+            if resolution not in ['Unknown', 'N/A']:
+                resolutions[resolution] = resolutions.get(resolution, 0) + 1
+        
+        return jsonify({
+            "channel_id": channel_id_int,
+            "channel_name": channel.get('name', ''),
+            "logo_id": channel.get('logo_id'),
+            "total_streams": total_streams,
+            "dead_streams": dead_count,
+            "most_common_resolution": most_common_resolution,
+            "average_bitrate": avg_bitrate,
+            "resolutions": resolutions
+        })
+    except Exception as e:
+        logger.error(f"Error fetching channel stats: {e}")
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/api/channels/groups', methods=['GET'])
 def get_channel_groups():
     """Get all channel groups from UDI."""
@@ -236,6 +554,117 @@ def get_channel_logo(logo_id):
         return jsonify(logo)
     except Exception as e:
         logger.error(f"Error fetching logo: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/channels/logos/<logo_id>/cache', methods=['GET'])
+def get_channel_logo_cached(logo_id):
+    """Download and cache channel logo locally, then serve it.
+    
+    This endpoint:
+    1. Checks if logo is already cached locally
+    2. If not, downloads it from Dispatcharr
+    3. Saves it to local storage
+    4. Serves the cached file
+    """
+    try:
+        # Validate logo_id is a positive integer
+        try:
+            logo_id_int = int(logo_id)
+        except (ValueError, TypeError):
+            return jsonify({"error": "Invalid logo ID: must be a valid integer"}), 400
+        
+        if logo_id_int <= 0:
+            return jsonify({"error": "Invalid logo ID: must be a positive integer"}), 400
+        
+        # Create logos cache directory if it doesn't exist
+        logos_cache_dir = CONFIG_DIR / 'logos_cache'
+        logos_cache_dir.mkdir(exist_ok=True)
+        
+        # Check if logo is already cached
+        logo_filename = f"logo_{logo_id_int}"
+        
+        # Try common image extensions
+        for ext in ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg']:
+            cached_path = logos_cache_dir / f"{logo_filename}{ext}"
+            if cached_path.exists():
+                # Serve cached logo
+                return send_file(cached_path, mimetype=f'image/{ext[1:]}')
+        
+        # Logo not cached, download it from Dispatcharr
+        udi = get_udi_manager()
+        logo = udi.get_logo_by_id(logo_id_int)
+        
+        if not logo:
+            return jsonify({"error": "Logo not found"}), 404
+        
+        # Get the logo URL from Dispatcharr
+        # Prefer cache_url if available, otherwise use url
+        dispatcharr_base_url = os.getenv("DISPATCHARR_BASE_URL", "")
+        if not dispatcharr_base_url:
+            return jsonify({"error": "DISPATCHARR_BASE_URL not configured"}), 500
+            
+        logo_url = logo.get('cache_url') or logo.get('url')
+        
+        if not logo_url:
+            return jsonify({"error": "Logo URL not available"}), 404
+        
+        # If cache_url is a relative path, make it absolute
+        if logo_url.startswith('/'):
+            logo_url = f"{dispatcharr_base_url}{logo_url}"
+        
+        # Validate URL scheme (must be http or https)
+        if not logo_url.startswith(('http://', 'https://')):
+            return jsonify({"error": "Invalid logo URL scheme"}), 400
+        
+        # Download the logo with SSL verification enabled
+        logger.info(f"Downloading logo {logo_id_int} from {logo_url}")
+        response = requests.get(logo_url, timeout=10, verify=True)
+        response.raise_for_status()
+        
+        # Determine file extension from content-type or URL
+        content_type = response.headers.get('content-type', '').lower()
+        ext = '.png'  # default
+        if 'jpeg' in content_type or 'jpg' in content_type:
+            ext = '.jpg'
+        elif 'png' in content_type:
+            ext = '.png'
+        elif 'gif' in content_type:
+            ext = '.gif'
+        elif 'webp' in content_type:
+            ext = '.webp'
+        elif 'svg' in content_type:
+            ext = '.svg'
+        else:
+            # Try to extract from URL
+            if logo_url.lower().endswith('.jpg') or logo_url.lower().endswith('.jpeg'):
+                ext = '.jpg'
+            elif logo_url.lower().endswith('.png'):
+                ext = '.png'
+            elif logo_url.lower().endswith('.gif'):
+                ext = '.gif'
+            elif logo_url.lower().endswith('.webp'):
+                ext = '.webp'
+            elif logo_url.lower().endswith('.svg'):
+                ext = '.svg'
+        
+        # Save the logo to cache
+        cached_path = logos_cache_dir / f"{logo_filename}{ext}"
+        with open(cached_path, 'wb') as f:
+            f.write(response.content)
+        
+        logger.info(f"Cached logo {logo_id} to {cached_path}")
+        
+        # Serve the cached logo
+        mimetype = f'image/{ext[1:]}'
+        if ext == '.svg':
+            mimetype = 'image/svg+xml'
+        return send_file(cached_path, mimetype=mimetype)
+        
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error downloading logo {logo_id}: {e}")
+        return jsonify({"error": f"Failed to download logo: {str(e)}"}), 500
+    except Exception as e:
+        logger.error(f"Error caching logo {logo_id}: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/regex-patterns', methods=['GET'])
@@ -993,6 +1422,9 @@ def update_stream_checker_config():
                 if manager.running:
                     manager.stop_automation()
                     logger.info("Automation service stopped (pipeline disabled)")
+                # Stop background processors
+                stop_scheduled_event_processor()
+                stop_epg_refresh_processor()
             else:
                 # Start services if pipeline is active and they're not already running
                 if not service.running:
@@ -1001,6 +1433,13 @@ def update_stream_checker_config():
                 if not manager.running:
                     manager.start_automation()
                     logger.info(f"Automation service auto-started after config update (mode: {pipeline_mode})")
+                # Start background processors if not running
+                if not (scheduled_event_processor_thread and scheduled_event_processor_thread.is_alive()):
+                    start_scheduled_event_processor()
+                    logger.info("Scheduled event processor auto-started after config update")
+                if not (epg_refresh_thread and epg_refresh_thread.is_alive()):
+                    start_epg_refresh_processor()
+                    logger.info("EPG refresh processor auto-started after config update")
         
         return jsonify({"message": "Configuration updated successfully", "config": service.config.config})
     except Exception as e:
@@ -1038,6 +1477,29 @@ def check_specific_channel():
     
     except Exception as e:
         logger.error(f"Error checking specific channel: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/stream-checker/check-single-channel', methods=['POST'])
+def check_single_channel_now():
+    """Immediately check a single channel synchronously and return results."""
+    try:
+        data = request.get_json()
+        if not data or 'channel_id' not in data:
+            return jsonify({"error": "channel_id required"}), 400
+        
+        channel_id = data['channel_id']
+        service = get_stream_checker_service()
+        
+        # Perform synchronous check
+        result = service.check_single_channel(channel_id)
+        
+        if result.get('success'):
+            return jsonify(result)
+        else:
+            return jsonify(result), 500
+    
+    except Exception as e:
+        logger.error(f"Error checking single channel: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/stream-checker/mark-updated', methods=['POST'])
@@ -1129,6 +1591,515 @@ def trigger_global_action():
         logger.error(f"Error triggering global action: {e}")
         return jsonify({"error": str(e)}), 500
 
+# ============================================================================
+# Scheduling API Endpoints
+# ============================================================================
+
+@app.route('/api/scheduling/config', methods=['GET'])
+@log_function_call
+def get_scheduling_config():
+    """Get scheduling configuration including EPG refresh interval."""
+    try:
+        from scheduling_service import get_scheduling_service
+        service = get_scheduling_service()
+        config = service.get_config()
+        return jsonify(config)
+    except Exception as e:
+        logger.error(f"Error getting scheduling config: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/scheduling/config', methods=['PUT'])
+@log_function_call
+def update_scheduling_config():
+    """Update scheduling configuration.
+    
+    Expected JSON body:
+    {
+        "epg_refresh_interval_minutes": 60,
+        "enabled": true
+    }
+    """
+    try:
+        from scheduling_service import get_scheduling_service
+        service = get_scheduling_service()
+        config = request.get_json()
+        
+        if not config:
+            return jsonify({"error": "No configuration provided"}), 400
+        
+        success = service.update_config(config)
+        
+        if success:
+            return jsonify({"message": "Configuration updated", "config": service.get_config()})
+        else:
+            return jsonify({"error": "Failed to save configuration"}), 500
+    
+    except Exception as e:
+        logger.error(f"Error updating scheduling config: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/scheduling/epg/grid', methods=['GET'])
+@log_function_call
+def get_epg_grid():
+    """Get EPG grid data (all programs for next 24 hours).
+    
+    Query parameters:
+    - force_refresh: If true, bypass cache and fetch fresh data
+    """
+    try:
+        from scheduling_service import get_scheduling_service
+        service = get_scheduling_service()
+        force_refresh = request.args.get('force_refresh', 'false').lower() == 'true'
+        
+        programs = service.fetch_epg_grid(force_refresh=force_refresh)
+        return jsonify(programs)
+    
+    except Exception as e:
+        logger.error(f"Error fetching EPG grid: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/scheduling/epg/channel/<int:channel_id>', methods=['GET'])
+@log_function_call
+def get_channel_programs(channel_id):
+    """Get programs for a specific channel.
+    
+    Args:
+        channel_id: Channel ID
+    
+    Returns:
+        List of programs for the channel
+    """
+    try:
+        from scheduling_service import get_scheduling_service
+        service = get_scheduling_service()
+        
+        programs = service.get_programs_by_channel(channel_id)
+        return jsonify(programs)
+    
+    except Exception as e:
+        logger.error(f"Error fetching programs for channel {channel_id}: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/scheduling/events', methods=['GET'])
+@log_function_call
+def get_scheduled_events():
+    """Get all scheduled events."""
+    try:
+        from scheduling_service import get_scheduling_service
+        service = get_scheduling_service()
+        events = service.get_scheduled_events()
+        return jsonify(events)
+    except Exception as e:
+        logger.error(f"Error getting scheduled events: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/scheduling/events', methods=['POST'])
+@log_function_call
+def create_scheduled_event():
+    """Create a new scheduled event.
+    
+    Expected JSON body:
+    {
+        "channel_id": 123,
+        "program_start_time": "2024-01-01T10:00:00Z",
+        "program_end_time": "2024-01-01T11:00:00Z",
+        "program_title": "Program Name",
+        "minutes_before": 5
+    }
+    """
+    try:
+        from scheduling_service import get_scheduling_service
+        service = get_scheduling_service()
+        event_data = request.get_json()
+        
+        if not event_data:
+            return jsonify({"error": "No event data provided"}), 400
+        
+        # Validate required fields
+        required_fields = ['channel_id', 'program_start_time', 'program_end_time', 'program_title']
+        for field in required_fields:
+            if field not in event_data:
+                return jsonify({"error": f"Missing required field: {field}"}), 400
+        
+        event = service.create_scheduled_event(event_data)
+        
+        # Wake up the processor to check for new events immediately
+        global scheduled_event_processor_wake
+        if scheduled_event_processor_wake:
+            scheduled_event_processor_wake.set()
+        
+        return jsonify(event), 201
+    
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        logger.error(f"Error creating scheduled event: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/scheduling/events/<event_id>', methods=['DELETE'])
+@log_function_call
+def delete_scheduled_event(event_id):
+    """Delete a scheduled event.
+    
+    Args:
+        event_id: Event ID
+    """
+    try:
+        from scheduling_service import get_scheduling_service
+        service = get_scheduling_service()
+        
+        success = service.delete_scheduled_event(event_id)
+        
+        if success:
+            return jsonify({"message": "Event deleted"}), 200
+        else:
+            return jsonify({"error": "Event not found"}), 404
+    
+    except Exception as e:
+        logger.error(f"Error deleting scheduled event: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/scheduling/auto-create-rules', methods=['GET'])
+@log_function_call
+def get_auto_create_rules():
+    """Get all auto-create rules."""
+    try:
+        from scheduling_service import get_scheduling_service
+        service = get_scheduling_service()
+        rules = service.get_auto_create_rules()
+        return jsonify(rules)
+    except Exception as e:
+        logger.error(f"Error getting auto-create rules: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/scheduling/auto-create-rules', methods=['POST'])
+@log_function_call
+def create_auto_create_rule():
+    """Create a new auto-create rule.
+    
+    Expected JSON body:
+    {
+        "name": "Rule Name",
+        "channel_id": 123,
+        "regex_pattern": "^Breaking News",
+        "minutes_before": 5
+    }
+    """
+    try:
+        from scheduling_service import get_scheduling_service
+        service = get_scheduling_service()
+        rule_data = request.get_json()
+        
+        if not rule_data:
+            return jsonify({"error": "No rule data provided"}), 400
+        
+        # Validate required fields
+        required_fields = ['name', 'channel_id', 'regex_pattern']
+        for field in required_fields:
+            if field not in rule_data:
+                return jsonify({"error": f"Missing required field: {field}"}), 400
+        
+        rule = service.create_auto_create_rule(rule_data)
+        
+        # Immediately match programs to the new rule
+        try:
+            service.match_programs_to_rules()
+            logger.info("Triggered immediate program matching after creating auto-create rule")
+        except Exception as e:
+            logger.warning(f"Failed to immediately match programs to new rule: {e}")
+        
+        # Wake up the processor to check for new events immediately
+        global scheduled_event_processor_wake
+        if scheduled_event_processor_wake:
+            scheduled_event_processor_wake.set()
+        
+        return jsonify(rule), 201
+    
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        logger.error(f"Error creating auto-create rule: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/scheduling/auto-create-rules/<rule_id>', methods=['DELETE'])
+@log_function_call
+def delete_auto_create_rule(rule_id):
+    """Delete an auto-create rule.
+    
+    Args:
+        rule_id: Rule ID
+    """
+    try:
+        from scheduling_service import get_scheduling_service
+        service = get_scheduling_service()
+        
+        success = service.delete_auto_create_rule(rule_id)
+        
+        if success:
+            return jsonify({"message": "Rule deleted"}), 200
+        else:
+            return jsonify({"error": "Rule not found"}), 404
+    
+    except Exception as e:
+        logger.error(f"Error deleting auto-create rule: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/scheduling/auto-create-rules/test', methods=['POST'])
+@log_function_call
+def test_auto_create_rule():
+    """Test a regex pattern against EPG programs for a channel.
+    
+    Expected JSON body:
+    {
+        "channel_id": 123,
+        "regex_pattern": "^Breaking News"
+    }
+    """
+    try:
+        from scheduling_service import get_scheduling_service
+        service = get_scheduling_service()
+        test_data = request.get_json()
+        
+        if not test_data:
+            return jsonify({"error": "No test data provided"}), 400
+        
+        # Validate required fields
+        required_fields = ['channel_id', 'regex_pattern']
+        for field in required_fields:
+            if field not in test_data:
+                return jsonify({"error": f"Missing required field: {field}"}), 400
+        
+        matching_programs = service.test_regex_against_epg(
+            test_data['channel_id'],
+            test_data['regex_pattern']
+        )
+        
+        return jsonify({
+            "matches": len(matching_programs),
+            "programs": matching_programs
+        })
+    
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        logger.error(f"Error testing auto-create rule: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/scheduling/process-due-events', methods=['POST'])
+@log_function_call
+def process_due_scheduled_events():
+    """Process all scheduled events that are due for execution.
+    
+    This endpoint should be called periodically (e.g., by a cron job or scheduler)
+    to check for and execute any scheduled channel checks.
+    
+    Returns:
+        JSON with execution results
+    """
+    try:
+        from scheduling_service import get_scheduling_service
+        service = get_scheduling_service()
+        stream_checker = get_stream_checker_service()
+        
+        # Get all due events
+        due_events = service.get_due_events()
+        
+        if not due_events:
+            return jsonify({
+                "message": "No events due for execution",
+                "processed": 0
+            }), 200
+        
+        results = []
+        for event in due_events:
+            event_id = event.get('id')
+            channel_name = event.get('channel_name', 'Unknown')
+            program_title = event.get('program_title', 'Unknown')
+            
+            logger.info(f"Processing due event {event_id} for {channel_name} (program: {program_title})")
+            
+            success = service.execute_scheduled_check(event_id, stream_checker)
+            results.append({
+                'event_id': event_id,
+                'channel_name': channel_name,
+                'program_title': program_title,
+                'success': success
+            })
+        
+        successful = sum(1 for r in results if r['success'])
+        
+        return jsonify({
+            "message": f"Processed {len(results)} event(s), {successful} successful",
+            "processed": len(results),
+            "successful": successful,
+            "results": results
+        }), 200
+    
+    except Exception as e:
+        logger.error(f"Error processing due scheduled events: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/scheduling/processor/status', methods=['GET'])
+@log_function_call
+def get_scheduled_event_processor_status():
+    """Get the status of the scheduled event processor background thread.
+    
+    Returns:
+        JSON with processor status
+    """
+    try:
+        global scheduled_event_processor_thread, scheduled_event_processor_running
+        
+        thread_alive = scheduled_event_processor_thread is not None and scheduled_event_processor_thread.is_alive()
+        is_running = thread_alive and scheduled_event_processor_running
+        
+        return jsonify({
+            "running": is_running,
+            "thread_alive": thread_alive
+        }), 200
+    
+    except Exception as e:
+        logger.error(f"Error getting scheduled event processor status: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/scheduling/processor/start', methods=['POST'])
+@log_function_call
+def start_scheduled_event_processor_api():
+    """Start the scheduled event processor background thread.
+    
+    Returns:
+        JSON with result
+    """
+    try:
+        success = start_scheduled_event_processor()
+        
+        if success:
+            return jsonify({"message": "Scheduled event processor started"}), 200
+        else:
+            return jsonify({"message": "Scheduled event processor is already running"}), 200
+    
+    except Exception as e:
+        logger.error(f"Error starting scheduled event processor: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/scheduling/processor/stop', methods=['POST'])
+@log_function_call
+def stop_scheduled_event_processor_api():
+    """Stop the scheduled event processor background thread.
+    
+    Returns:
+        JSON with result
+    """
+    try:
+        success = stop_scheduled_event_processor()
+        
+        if success:
+            return jsonify({"message": "Scheduled event processor stopped"}), 200
+        else:
+            return jsonify({"message": "Scheduled event processor is not running"}), 200
+    
+    except Exception as e:
+        logger.error(f"Error stopping scheduled event processor: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/scheduling/epg-refresh/status', methods=['GET'])
+@log_function_call
+def get_epg_refresh_processor_status():
+    """Get the status of the EPG refresh processor background thread.
+    
+    Returns:
+        JSON with processor status
+    """
+    try:
+        global epg_refresh_thread, epg_refresh_running
+        
+        thread_alive = epg_refresh_thread is not None and epg_refresh_thread.is_alive()
+        is_running = thread_alive and epg_refresh_running
+        
+        return jsonify({
+            "running": is_running,
+            "thread_alive": thread_alive
+        }), 200
+    
+    except Exception as e:
+        logger.error(f"Error getting EPG refresh processor status: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/scheduling/epg-refresh/start', methods=['POST'])
+@log_function_call
+def start_epg_refresh_processor_api():
+    """Start the EPG refresh processor background thread.
+    
+    Returns:
+        JSON with result
+    """
+    try:
+        success = start_epg_refresh_processor()
+        
+        if success:
+            return jsonify({"message": "EPG refresh processor started"}), 200
+        else:
+            return jsonify({"message": "EPG refresh processor is already running"}), 200
+    
+    except Exception as e:
+        logger.error(f"Error starting EPG refresh processor: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/scheduling/epg-refresh/stop', methods=['POST'])
+@log_function_call
+def stop_epg_refresh_processor_api():
+    """Stop the EPG refresh processor background thread.
+    
+    Returns:
+        JSON with result
+    """
+    try:
+        success = stop_epg_refresh_processor()
+        
+        if success:
+            return jsonify({"message": "EPG refresh processor stopped"}), 200
+        else:
+            return jsonify({"message": "EPG refresh processor is not running"}), 200
+    
+    except Exception as e:
+        logger.error(f"Error stopping EPG refresh processor: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/scheduling/epg-refresh/trigger', methods=['POST'])
+@log_function_call
+def trigger_epg_refresh():
+    """Manually trigger an immediate EPG refresh.
+    
+    Returns:
+        JSON with result
+    """
+    try:
+        global epg_refresh_wake, epg_refresh_running, epg_refresh_thread
+        
+        # Validate that the processor is actually running
+        if epg_refresh_wake and epg_refresh_running and epg_refresh_thread and epg_refresh_thread.is_alive():
+            epg_refresh_wake.set()
+            return jsonify({"message": "EPG refresh triggered"}), 200
+        else:
+            return jsonify({"error": "EPG refresh processor is not running"}), 400
+    
+    except Exception as e:
+        logger.error(f"Error triggering EPG refresh: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 # Serve React app for all frontend routes (catch-all - must be last!)
 @app.route('/<path:path>')
 def serve_frontend(path):
@@ -1147,8 +2118,8 @@ if __name__ == '__main__':
     import argparse
     
     parser = argparse.ArgumentParser(description='StreamFlow for Dispatcharr Web API')
-    parser.add_argument('--host', default='0.0.0.0', help='Host to bind to')
-    parser.add_argument('--port', type=int, default=5000, help='Port to bind to')
+    parser.add_argument('--host', default=os.environ.get('API_HOST', '0.0.0.0'), help='Host to bind to')
+    parser.add_argument('--port', type=int, default=int(os.environ.get('API_PORT', '5000')), help='Port to bind to')
     parser.add_argument('--debug', action='store_true', help='Enable debug mode')
     
     args = parser.parse_args()
@@ -1193,5 +2164,25 @@ if __name__ == '__main__':
                 logger.info(f"Automation service auto-started (mode: {pipeline_mode})")
     except Exception as e:
         logger.error(f"Failed to auto-start automation service: {e}")
+    
+    # Auto-start scheduled event processor if wizard is complete
+    try:
+        if not check_wizard_complete():
+            logger.info("Scheduled event processor will not start - setup wizard has not been completed")
+        else:
+            start_scheduled_event_processor()
+            logger.info("Scheduled event processor auto-started")
+    except Exception as e:
+        logger.error(f"Failed to auto-start scheduled event processor: {e}")
+    
+    # Auto-start EPG refresh processor if wizard is complete
+    try:
+        if not check_wizard_complete():
+            logger.info("EPG refresh processor will not start - setup wizard has not been completed")
+        else:
+            start_epg_refresh_processor()
+            logger.info("EPG refresh processor auto-started")
+    except Exception as e:
+        logger.error(f"Failed to auto-start EPG refresh processor: {e}")
     
     app.run(host=args.host, port=args.port, debug=args.debug)

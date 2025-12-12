@@ -14,6 +14,9 @@ frontend/build/
 frontend/node_modules/
 backend/static/
 
+# Development data directory
+data/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
@@ -30,7 +33,9 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+# Python lib directories (but not frontend/src/lib)
+/lib/
+backend/lib/
 lib64/
 parts/
 sdist/
@@ -223,3 +228,8 @@ __marimo__/
 
 # UDI data files (runtime data)
 backend/data/udi/
+
+.vscode
+node_modules
+package-lock.json
+package.json

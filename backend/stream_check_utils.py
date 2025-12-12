@@ -15,6 +15,7 @@ system and provides a clean, maintainable API for stream quality analysis.
 """
 
 import json
+import logging
 import re
 import subprocess
 import time
@@ -42,6 +43,42 @@ FOURCC_TO_CODEC = {
     'vp08': 'vp8',
     'mp4a': 'aac',  # AAC audio in MP4 container
 }
+
+
+def _log_ffmpeg_errors(output: str, logger: logging.Logger, error_patterns: list) -> None:
+    """
+    Helper function to log ffmpeg errors with DEBUG_MODE awareness.
+    
+    In DEBUG_MODE, logs verbose error details.
+    In production, only logs that errors occurred with a count.
+    
+    Args:
+        output: FFmpeg stderr output to parse
+        logger: Logger instance to use
+        error_patterns: List of error patterns to search for
+    """
+    error_lines = []
+    for line in output.splitlines():
+        line_lower = line.lower()
+        if any(pattern.lower() in line_lower for pattern in error_patterns):
+            error_lines.append(line.strip())
+    
+    if error_lines:
+        # Only show verbose ffmpeg error details in debug mode
+        # In production, just log that errors occurred without the full verbose output
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"  ⚠ ffmpeg error details (DEBUG_MODE):")
+            for error_line in error_lines[:MAX_DEBUG_LINES_TO_LOG]:
+                logger.debug(f"     {error_line}")
+        else:
+            # In production mode, just note that errors were found without verbose details
+            logger.warning(f"  ⚠ ffmpeg encountered {len(error_lines)} error(s) (set DEBUG_MODE=true for details)")
+    elif logger.isEnabledFor(logging.DEBUG):
+        # Log last few lines of output for debugging - only in debug mode
+        logger.debug(f"  → Last lines of ffmpeg output (DEBUG_MODE):")
+        for line in output.splitlines()[-MAX_DEBUG_LINES_TO_LOG:]:
+            if line.strip():
+                logger.debug(f"     {line.strip()}")
 
 
 def _extract_codec_from_line(line: str, codec_type: str) -> Optional[str]:
@@ -456,7 +493,7 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
                 else:
                     logger.warning(f"  ⚠ ffmpeg completed in {elapsed:.2f}s (expected ~{duration}s)")
                 
-                # Look for and log error messages
+                # Look for and log error messages using helper function
                 error_patterns = [
                     "Connection refused", "Connection timed out", "Invalid data found",
                     "Server returned", "404 Not Found", "403 Forbidden", "401 Unauthorized",
@@ -465,16 +502,7 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
                     "HTTP error", "SSL", "TLS", "Certificate"
                 ]
                 
-                error_lines = []
-                for line in output.splitlines():
-                    line_lower = line.lower()
-                    if any(pattern.lower() in line_lower for pattern in error_patterns):
-                        error_lines.append(line.strip())
-                
-                if error_lines:
-                    logger.warning(f"  ⚠ ffmpeg error details:")
-                    for error_line in error_lines[:MAX_ERROR_LINES_TO_LOG]:
-                        logger.warning(f"     {error_line}")
+                _log_ffmpeg_errors(output, logger, error_patterns)
 
         logger.debug(f"  → Analysis completed in {elapsed:.2f}s")
         
@@ -599,7 +627,7 @@ def get_stream_bitrate(url: str, duration: int = 30, timeout: int = 30, user_age
                 else:
                     logger.warning(f"  ⚠ ffmpeg completed in {elapsed:.2f}s (expected ~{duration}s) - stream may have ended early or encountered an error")
                 
-                # Look for and log specific error messages from ffmpeg output
+                # Look for and log specific error messages from ffmpeg output using helper function
                 error_patterns = [
                     "Connection refused", "Connection timed out", "Invalid data found",
                     "Server returned", "404 Not Found", "403 Forbidden", "401 Unauthorized",
@@ -608,22 +636,7 @@ def get_stream_bitrate(url: str, duration: int = 30, timeout: int = 30, user_age
                     "HTTP error", "SSL", "TLS", "Certificate"
                 ]
                 
-                error_lines = []
-                for line in output.splitlines():
-                    line_lower = line.lower()
-                    if any(pattern.lower() in line_lower for pattern in error_patterns):
-                        error_lines.append(line.strip())
-                
-                if error_lines:
-                    logger.warning(f"  ⚠ ffmpeg error details:")
-                    for error_line in error_lines[:MAX_ERROR_LINES_TO_LOG]:
-                        logger.warning(f"     {error_line}")
-                else:
-                    # Log last few lines of output for debugging
-                    logger.debug(f"  → Last lines of ffmpeg output:")
-                    for line in output.splitlines()[-MAX_DEBUG_LINES_TO_LOG:]:
-                        if line.strip():
-                            logger.debug(f"     {line.strip()}")
+                _log_ffmpeg_errors(output, logger, error_patterns)
 
         logger.debug(f"  → Analysis completed in {elapsed:.2f}s")
 

@@ -18,8 +18,15 @@ import time
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 from collections import defaultdict
+
+# Import croniter for cron expression support
+try:
+    from croniter import croniter
+    CRONITER_AVAILABLE = True
+except ImportError:
+    CRONITER_AVAILABLE = False
 
 from api_utils import (
     refresh_m3u_playlists,
@@ -67,8 +74,15 @@ class ChangelogManager:
                 logger.warning(f"Could not load {self.changelog_file}, creating new changelog")
         return []
     
-    def add_entry(self, action: str, details: Dict, timestamp: Optional[str] = None):
-        """Add a new changelog entry."""
+    def add_entry(self, action: str, details: Dict, timestamp: Optional[str] = None, subentries: Optional[List[Dict[str, Any]]] = None):
+        """Add a new changelog entry.
+        
+        Args:
+            action: Type of action (e.g., 'playlist_update_match', 'global_check', 'single_channel_check')
+            details: Main details of the action including global stats
+            timestamp: Optional timestamp (defaults to now)
+            subentries: Optional list of subentry groups (e.g., updates, checks)
+        """
         if timestamp is None:
             timestamp = datetime.now().isoformat()
         
@@ -77,6 +91,10 @@ class ChangelogManager:
             "action": action,
             "details": details
         }
+        
+        # Add subentries if provided
+        if subentries:
+            entry["subentries"] = subentries
         
         self.changelog.append(entry)
         self._save_changelog()
@@ -109,10 +127,124 @@ class ChangelogManager:
         
         return recent
     
+    def add_playlist_update_entry(self, channels_updated: Dict[int, Dict], global_stats: Dict):
+        """Add a playlist update & match entry with subentries.
+        
+        Args:
+            channels_updated: Dict mapping channel_id to update info (streams added, stats, logo_url)
+            global_stats: Global statistics (total streams added, dead streams, avg resolution, avg bitrate)
+        """
+        # Create subentries for streams matched per channel
+        update_subentries = []
+        for channel_id, info in channels_updated.items():
+            if info.get('streams_added'):
+                update_subentries.append({
+                    'type': 'update_match',
+                    'channel_id': channel_id,
+                    'channel_name': info.get('channel_name', f'Channel {channel_id}'),
+                    'logo_url': info.get('logo_url'),
+                    'streams': info.get('streams_added', [])
+                })
+        
+        # Create subentries for channel checks
+        check_subentries = []
+        for channel_id, info in channels_updated.items():
+            if info.get('check_stats'):
+                check_subentries.append({
+                    'type': 'check',
+                    'channel_id': channel_id,
+                    'channel_name': info.get('channel_name', f'Channel {channel_id}'),
+                    'logo_url': info.get('logo_url'),
+                    'stats': info.get('check_stats', {})
+                })
+        
+        subentries = []
+        if update_subentries:
+            subentries.append({'group': 'update_match', 'items': update_subentries})
+        if check_subentries:
+            subentries.append({'group': 'check', 'items': check_subentries})
+        
+        self.add_entry(
+            action='playlist_update_match',
+            details=global_stats,
+            subentries=subentries
+        )
+    
+    def add_global_check_entry(self, channels_checked: Dict[int, Dict], global_stats: Dict):
+        """Add a global check entry with subentries.
+        
+        Args:
+            channels_checked: Dict mapping channel_id to check stats (including logo_url)
+            global_stats: Global statistics across all channels
+        """
+        check_subentries = []
+        for channel_id, stats in channels_checked.items():
+            check_subentries.append({
+                'type': 'check',
+                'channel_id': channel_id,
+                'channel_name': stats.get('channel_name', f'Channel {channel_id}'),
+                'logo_url': stats.get('logo_url'),
+                'stats': stats
+            })
+        
+        subentries = [{'group': 'check', 'items': check_subentries}] if check_subentries else []
+        
+        self.add_entry(
+            action='global_check',
+            details=global_stats,
+            subentries=subentries
+        )
+    
+    def add_single_channel_check_entry(self, channel_id: int, channel_name: str, check_stats: Dict, logo_url: Optional[str] = None, program_name: Optional[str] = None):
+        """Add a single channel check entry.
+        
+        Args:
+            channel_id: ID of the channel checked
+            channel_name: Name of the channel
+            check_stats: Statistics from the channel check
+            logo_url: Optional URL for the channel logo
+            program_name: Optional program name if this was a scheduled EPG check
+        """
+        check_subentries = [{
+            'type': 'check',
+            'channel_id': channel_id,
+            'channel_name': channel_name,
+            'logo_url': logo_url,
+            'stats': check_stats
+        }]
+        
+        subentries = [{'group': 'check', 'items': check_subentries}]
+        
+        # Build details dict
+        details = {
+            'channel_id': channel_id,
+            'channel_name': channel_name,
+            'total_streams': check_stats.get('total_streams', 0),
+            'dead_streams': check_stats.get('dead_streams', 0),
+            'avg_resolution': check_stats.get('avg_resolution', 'N/A'),
+            'avg_bitrate': check_stats.get('avg_bitrate', 'N/A')
+        }
+        
+        # Add program name if provided (for scheduled EPG checks)
+        if program_name:
+            details['program_name'] = program_name
+        
+        self.add_entry(
+            action='single_channel_check',
+            details=details,
+            subentries=subentries
+        )
+    
     def _has_channel_updates(self, entry: Dict) -> bool:
         """Check if a changelog entry contains meaningful channel/stream updates."""
         details = entry.get('details', {})
         action = entry.get('action', '')
+        
+        # For new action types, check if they have subentries
+        if action in ['playlist_update_match', 'global_check', 'single_channel_check']:
+            subentries = entry.get('subentries', [])
+            # Include if there are subentries with items
+            return any(group.get('items') for group in subentries)
         
         # For playlist_refresh, only include if there were actual changes
         if action == 'playlist_refresh':
@@ -306,6 +438,7 @@ class AutomatedStreamManager:
         # Default configuration
         default_config = {
             "playlist_update_interval_minutes": 5,
+            "playlist_update_cron": "",  # Empty means use interval. When both are set, cron takes precedence.
             "enabled_m3u_accounts": [],  # Empty list means all accounts enabled
             "autostart_automation": False,  # Don't auto-start by default
             "enabled_features": {
@@ -470,40 +603,9 @@ class AutomatedStreamManager:
                 except Exception as cleanup_error:
                     logger.error(f"Error during dead streams cleanup: {cleanup_error}")
             
-            # Mark channels for stream quality checking ONLY if streams were added or removed
-            # This prevents unnecessary marking of all channels on every refresh
-            if len(added_streams) > 0 or len(removed_streams) > 0:
-                try:
-                    # Get all channels from UDI
-                    udi = get_udi_manager()
-                    channels = udi.get_channels()
-                    
-                    if channels:
-                        # Mark all channels for checking with stream counts for 2-hour immunity
-                        channel_ids = []
-                        stream_counts = {}
-                        for ch in channels:
-                            if isinstance(ch, dict) and 'id' in ch:
-                                ch_id = ch['id']
-                                channel_ids.append(ch_id)
-                                # Get stream count if available
-                                if 'streams' in ch and isinstance(ch['streams'], list):
-                                    stream_counts[ch_id] = len(ch['streams'])
-                        
-                        # Try to get stream checker service and mark channels
-                        try:
-                            from stream_checker_service import get_stream_checker_service
-                            stream_checker = get_stream_checker_service()
-                            stream_checker.update_tracker.mark_channels_updated(channel_ids, stream_counts=stream_counts)
-                            logger.info(f"Marked {len(channel_ids)} channels for stream quality checking")
-                            # Trigger immediate check instead of waiting for scheduled interval
-                            stream_checker.trigger_check_updated_channels()
-                        except Exception as sc_error:
-                            logger.debug(f"Stream checker not available or error marking channels: {sc_error}")
-                except Exception as ch_error:
-                    logger.debug(f"Could not mark channels for stream checking: {ch_error}")
-            else:
-                logger.info("No stream changes detected, skipping channel marking")
+            # Note: Channel marking for stream quality checking is handled in discover_and_assign_streams()
+            # after streams are actually assigned to specific channels. This prevents marking all channels
+            # when we only know that *some* streams changed in the playlist, not which channels are affected.
             
             return True
             
@@ -610,6 +712,7 @@ class AutomatedStreamManager:
             # Create a map of existing channel streams
             channel_streams = {}
             channel_names = {}  # Store channel names for changelog
+            channel_logo_urls = {}  # Store channel logo URLs for changelog
             for channel in all_channels:
                 # Validate that channel is a dictionary
                 if not isinstance(channel, dict) or 'id' not in channel:
@@ -618,6 +721,17 @@ class AutomatedStreamManager:
                     
                 channel_id = str(channel['id'])
                 channel_names[channel_id] = channel.get('name', f'Channel {channel_id}')
+                
+                # Get logo URL for this channel
+                logo_id = channel.get('logo_id')
+                if logo_id:
+                    try:
+                        logo = udi.get_logo_by_id(logo_id)
+                        if logo and logo.get('cache_url'):
+                            channel_logo_urls[channel_id] = logo.get('cache_url')
+                    except Exception as e:
+                        logger.debug(f"Could not fetch logo for channel {channel_id}: {e}")
+                
                 # Get streams for this channel from UDI
                 streams = udi.get_channel_streams(int(channel_id))
                 if streams:
@@ -703,6 +817,7 @@ class AutomatedStreamManager:
                         channel_assignment = {
                             "channel_id": channel_id,
                             "channel_name": channel_names.get(channel_id, f'Channel {channel_id}'),
+                            "logo_url": channel_logo_urls.get(channel_id),
                             "stream_count": added_count,
                             "streams": assignment_details[channel_id][:20]  # Limit to first 20 for changelog
                         }
@@ -779,6 +894,18 @@ class AutomatedStreamManager:
         if not self.last_playlist_update:
             return True
         
+        # Check if cron expression is configured
+        cron_expr = self.config.get("playlist_update_cron", "")
+        if cron_expr and CRONITER_AVAILABLE:
+            try:
+                # Use croniter to check if it's time to run
+                cron = croniter(cron_expr, self.last_playlist_update)
+                next_run = cron.get_next(datetime)
+                return datetime.now() >= next_run
+            except Exception as e:
+                logger.warning(f"Invalid cron expression '{cron_expr}', falling back to interval: {e}")
+        
+        # Fall back to interval-based scheduling
         interval = timedelta(minutes=self.config.get("playlist_update_interval_minutes", 5))
         return datetime.now() - self.last_playlist_update >= interval
     
@@ -871,12 +998,24 @@ class AutomatedStreamManager:
         # Calculate next update time properly
         next_update = None
         if self.running:
-            if self.last_playlist_update:
-                # Calculate when the next update should occur based on last update + interval
-                next_update = self.last_playlist_update + timedelta(minutes=self.config.get("playlist_update_interval_minutes", 5))
-            elif self.automation_start_time:
-                # If automation is running but no last update, calculate from start time
-                next_update = self.automation_start_time + timedelta(minutes=self.config.get("playlist_update_interval_minutes", 5))
+            cron_expr = self.config.get("playlist_update_cron", "")
+            if cron_expr and CRONITER_AVAILABLE:
+                try:
+                    # Use croniter to calculate next run time
+                    base_time = self.last_playlist_update or self.automation_start_time or datetime.now()
+                    cron = croniter(cron_expr, base_time)
+                    next_update = cron.get_next(datetime)
+                except Exception as e:
+                    logger.warning(f"Invalid cron expression '{cron_expr}': {e}")
+            
+            if not next_update:
+                # Fall back to interval-based calculation
+                if self.last_playlist_update:
+                    # Calculate when the next update should occur based on last update + interval
+                    next_update = self.last_playlist_update + timedelta(minutes=self.config.get("playlist_update_interval_minutes", 5))
+                elif self.automation_start_time:
+                    # If automation is running but no last update, calculate from start time
+                    next_update = self.automation_start_time + timedelta(minutes=self.config.get("playlist_update_interval_minutes", 5))
         
         return {
             "running": self.running,

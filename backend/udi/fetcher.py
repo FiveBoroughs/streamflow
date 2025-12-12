@@ -394,7 +394,7 @@ class UDIFetcher:
         
         url = f"{self.base_url}/api/channels/logos/"
         logos = self._fetch_paginated(url)
-        logger.info(f"Fetched {len(logos)} logos")
+        logger.debug(f"Fetched {len(logos)} logos")
         return logos
     
     def fetch_logo_by_id(self, logo_id: int) -> Optional[Dict[str, Any]]:
