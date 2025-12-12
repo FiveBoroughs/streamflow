@@ -365,7 +365,6 @@ export default function Scheduling() {
     }
     
     setRuleSelectedChannels(selectedChannels)
-    }
     
     // Clear previous test results
     setRegexMatches([])
