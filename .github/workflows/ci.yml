@@ -115,7 +115,7 @@ jobs:
       with:
         images: ghcr.io/${{ github.repository_owner }}/streamflow
         tags: |
-          ${{ steps.set_tag.outputs.tag }}
+          type=raw,value=${{ steps.set_tag.outputs.tag }}
           type=semver,pattern={{version}}
           type=semver,pattern={{major}}.{{minor}}
           type=semver,pattern={{major}}
@@ -194,7 +194,7 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository_owner }}/streamflow
           tags: |
-            ${{ steps.set_tag.outputs.tag }}
+            type=raw,value=${{ steps.set_tag.outputs.tag }}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
@@ -213,13 +213,7 @@ jobs:
           tags="-t ghcr.io/${{ github.repository_owner }}/streamflow:${{ steps.set_tag.outputs.tag }}"
           # For releases, also add the semver tags from metadata and a :latest tag
           if [ "${{ github.event_name }}" = "release" ]; then
-            tags="$tags -t ghcr.io/${{ github.repository_owner }}/streamflow:latest"
-            # Add semver tags produced by docker/metadata-action (steps.meta.outputs.tags is a newline-separated list)
-            while IFS= read -r t; do
-              if [ -n "$t" ]; then
-                tags="$tags -t ghcr.io/${{ github.repository_owner }}/streamflow:${t}"
-              fi
-            done <<< "${{ steps.meta.outputs.tags }}"
+            tags="$tags -t ghcr.io/${{ github.repository_owner }}/streamflow:latest $(jq -cr '.tags | map(\"-t \" + .) | join(\" \")' <<< '${{ steps.meta.outputs.json }}')"
           fi
 
           # Buildx imagetools expects a list of tag args followed by the list of digests
