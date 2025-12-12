@@ -19,9 +19,9 @@ import os
 # Add backend to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import web_api
 from web_api import (
     app, get_automation_manager, get_stream_checker_service,
-    epg_refresh_thread, scheduled_event_processor_thread,
     stop_epg_refresh_processor, stop_scheduled_event_processor
 )
 
@@ -45,24 +45,24 @@ class TestWizardAutostartAPI(unittest.TestCase):
             manager = get_automation_manager()
             if manager.running:
                 manager.stop_automation()
-        except:
+        except Exception:
             pass
         
         try:
             service = get_stream_checker_service()
             if service.running:
                 service.stop()
-        except:
+        except Exception:
             pass
         
         try:
             stop_epg_refresh_processor()
-        except:
+        except Exception:
             pass
         
         try:
             stop_scheduled_event_processor()
-        except:
+        except Exception:
             pass
     
     def _create_complete_wizard_config(self):
