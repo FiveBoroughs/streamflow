@@ -173,10 +173,20 @@ Automatically create scheduled events based on program name patterns:
   - Case-insensitive matching for flexibility
 
 - **Automatic Event Creation**:
-  - Rules scan EPG on every refresh
-  - Creates events for matching programs
+  - **Automatic EPG Refresh**: Background processor fetches EPG data periodically
+  - Configurable refresh interval (default: 60 minutes, minimum: 5 minutes)
+  - Rules scan EPG automatically on every refresh
+  - Creates events for matching programs without manual intervention
   - Duplicate prevention (same channel/date/time within 5 minutes)
   - Smart updates: adjusts event title and time if program changes
+
+- **Background Processor**:
+  - Auto-starts with the application
+  - Runs continuously in the background
+  - First refresh occurs 5 seconds after startup
+  - Subsequent refreshes based on configured interval
+  - Manual trigger available via API
+  - Graceful error handling and retry logic
 
 - **Rule Management**:
   - View all active rules
@@ -191,10 +201,11 @@ Automatically create scheduled events based on program name patterns:
 
 **Example Workflow**:
 1. Create rule: "Breaking News" on CNN with pattern `^Breaking`
-2. EPG refreshes every hour
+2. EPG refresh processor automatically fetches data every 60 minutes
 3. Any program starting with "Breaking" automatically gets a scheduled check
 4. If program name or time changes, event updates automatically
 5. Check happens X minutes before program starts
+6. No manual intervention required - fully automatic!
 
 ### Channel Configuration
 - **Horizontal Channel Cards**: Modern card-based layout with expandable sections
@@ -343,13 +354,17 @@ Automatically create scheduled events based on program name patterns:
 ### Scheduled Channel Checks Before Events
 Schedule channel checks to run before EPG program events for optimal stream quality:
 - **EPG Integration**: Fetches program data from Dispatcharr's EPG grid endpoint
-- **Configurable Caching**: EPG data cached with configurable refresh interval (default: 60 minutes)
+- **Automatic Refresh**: Background processor automatically fetches EPG data periodically
+  - Configurable refresh interval (default: 60 minutes, minimum: 5 minutes)
+  - Auto-starts with the application
+  - First refresh occurs 5 seconds after startup
+  - Continues running in the background
 - **Program Search**: Browse upcoming programs by channel
 - **Flexible Timing**: Configure minutes before program start to run the check
 - **Playlist Updates**: Playlist refresh triggered before scheduled checks
 - **Event Management**: Create, view, and delete scheduled events
 
-### User Workflow
+### User Workflow - Manual Event Creation
 1. Navigate to Scheduling section in the UI
 2. Click "Add Event Check" button
 3. Select a channel from searchable dropdown
@@ -357,6 +372,16 @@ Schedule channel checks to run before EPG program events for optimal stream qual
 5. Specify minutes before program start for the check
 6. Save the scheduled event
 7. Monitor scheduled events in table with channel logos and program details
+
+### User Workflow - Auto-Create Rules
+1. Navigate to Scheduling section in the UI
+2. Click "Create Auto-Create Rule" button
+3. Configure rule name, channel, and regex pattern
+4. Test pattern against live EPG data (optional)
+5. Set minutes before program start
+6. Save the rule
+7. Events are automatically created as EPG refreshes
+8. No further action required!
 
 ## API Integration
 

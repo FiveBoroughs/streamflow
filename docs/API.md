@@ -511,3 +511,79 @@ Manually trigger processing of all scheduled events that are due. This is handle
 - Survives Flask reloads in development mode (daemon thread)
 - Automatically starts with Flask app (when wizard is complete)
 - Check interval reduced from 60s to 30s for better responsiveness
+
+### Get EPG Refresh Processor Status
+```
+GET /api/scheduling/epg-refresh/status
+```
+Get the status of the background thread that periodically refreshes EPG data and creates scheduled events from auto-create rules.
+
+**Response:**
+```json
+{
+  "running": true,
+  "thread_alive": true
+}
+```
+
+### Start EPG Refresh Processor
+```
+POST /api/scheduling/epg-refresh/start
+```
+Start the background thread for periodic EPG refresh. The processor fetches EPG data based on the configured refresh interval (default: 60 minutes, minimum: 5 minutes) and automatically matches programs to auto-create rules.
+
+**Response:**
+```json
+{
+  "message": "EPG refresh processor started"
+}
+```
+
+**Note:** The processor is automatically started when the Flask app starts (if wizard is complete).
+
+### Stop EPG Refresh Processor
+```
+POST /api/scheduling/epg-refresh/stop
+```
+Stop the background thread for EPG refresh.
+
+**Response:**
+```json
+{
+  "message": "EPG refresh processor stopped"
+}
+```
+
+### Trigger EPG Refresh Manually
+```
+POST /api/scheduling/epg-refresh/trigger
+```
+Manually trigger an immediate EPG refresh, bypassing the configured interval. The processor will wake up and fetch EPG data immediately.
+
+**Response:**
+```json
+{
+  "message": "EPG refresh triggered"
+}
+```
+
+**How It Works:**
+1. The background thread starts 5 seconds after application startup
+2. It fetches EPG data from Dispatcharr's `/api/epg/grid/` endpoint
+3. The `match_programs_to_rules()` function is called automatically
+4. Scheduled events are created for programs matching auto-create rules
+5. The processor waits for the configured interval before the next refresh
+6. On error, it waits 5 minutes before retrying
+
+**Configuration:**
+- Refresh interval configured via `epg_refresh_interval_minutes` in scheduling config
+- Default: 60 minutes
+- Minimum: 5 minutes
+- Can be adjusted dynamically via configuration update
+
+**Architecture:**
+- Runs as a daemon thread in the Flask application
+- Uses threading.Event for responsive wake-up
+- Constants defined for timeouts and delays
+- Critical error handling with graceful shutdown
+- Automatically starts with Flask app (when wizard is complete)
