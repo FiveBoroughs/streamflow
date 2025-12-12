@@ -79,7 +79,7 @@ class TestSingleChannelForceCheck(unittest.TestCase):
             "Channel should be marked for force check"
         
         # Verify _check_channel was called (this is where the force check takes effect)
-        service._check_channel.assert_called_once_with(16)
+        service._check_channel.assert_called_once_with(16, skip_batch_changelog=True)
     
     @patch('stream_checker_service.StreamCheckConfig')
     @patch('stream_checker_service.get_udi_manager')
