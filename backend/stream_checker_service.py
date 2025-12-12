@@ -1339,20 +1339,29 @@ class StreamCheckerService:
                 self.batch_start_time = None
                 self.batch_changelog_entries = []
     
-    def _check_channel(self, channel_id: int):
+    def _check_channel(self, channel_id: int, skip_batch_changelog: bool = False):
         """Check and reorder streams for a specific channel.
         
         Routes to either concurrent or sequential checking based on configuration.
+        
+        Args:
+            channel_id: ID of the channel to check
+            skip_batch_changelog: If True, don't add this check to the batch changelog
         """
         concurrent_enabled = self.config.get('concurrent_streams.enabled', True)
         
         if concurrent_enabled:
-            return self._check_channel_concurrent(channel_id)
+            return self._check_channel_concurrent(channel_id, skip_batch_changelog=skip_batch_changelog)
         else:
-            return self._check_channel_sequential(channel_id)
+            return self._check_channel_sequential(channel_id, skip_batch_changelog=skip_batch_changelog)
     
-    def _check_channel_concurrent(self, channel_id: int):
-        """Check and reorder streams for a specific channel using parallel thread pool."""
+    def _check_channel_concurrent(self, channel_id: int, skip_batch_changelog: bool = False):
+        """Check and reorder streams for a specific channel using parallel thread pool.
+        
+        Args:
+            channel_id: ID of the channel to check
+            skip_batch_changelog: If True, don't add this check to the batch changelog
+        """
         import time as time_module
         from stream_check_utils import analyze_stream
         from concurrent_stream_limiter import get_smart_scheduler, get_account_limiter, initialize_account_limits
@@ -1715,20 +1724,22 @@ class StreamCheckerService:
                         stream_stats.append({k: v for k, v in stream_stat.items() if v not in [None, "N/A"]})
                     
                     # Add to batch instead of creating individual changelog entry
-                    self._add_to_batch_changelog({
-                        'channel_id': channel_id,
-                        'channel_name': channel_name,
-                        'logo_url': logo_url,
-                        'total_streams': len(streams),
-                        'streams_analyzed': len(analyzed_streams),
-                        'dead_streams_detected': len(dead_stream_ids),
-                        'streams_revived': len(revived_stream_ids),
-                        'avg_resolution': averages['avg_resolution'],
-                        'avg_bitrate': averages['avg_bitrate'],
-                        'avg_fps': averages['avg_fps'],
-                        'success': True,
-                        'stream_stats': stream_stats
-                    })
+                    # Only add to batch if not explicitly skipped (e.g., when called from check_single_channel)
+                    if not skip_batch_changelog:
+                        self._add_to_batch_changelog({
+                            'channel_id': channel_id,
+                            'channel_name': channel_name,
+                            'logo_url': logo_url,
+                            'total_streams': len(streams),
+                            'streams_analyzed': len(analyzed_streams),
+                            'dead_streams_detected': len(dead_stream_ids),
+                            'streams_revived': len(revived_stream_ids),
+                            'avg_resolution': averages['avg_resolution'],
+                            'avg_bitrate': averages['avg_bitrate'],
+                            'avg_fps': averages['avg_fps'],
+                            'success': True,
+                            'stream_stats': stream_stats
+                        })
                 except Exception as e:
                     logger.warning(f"Failed to add to batch changelog: {e}")
             
@@ -1755,7 +1766,8 @@ class StreamCheckerService:
             logger.error(f"Error checking channel {channel_id}: {e}", exc_info=True)
             self.check_queue.mark_failed(channel_id, str(e))
             
-            if self.changelog:
+            # Only add to batch changelog if not explicitly skipped
+            if self.changelog and not skip_batch_changelog:
                 try:
                     try:
                         channel_name = channel_data.get('name', f'Channel {channel_id}')
@@ -1789,8 +1801,13 @@ class StreamCheckerService:
             log_function_return(logger, "_check_channel_concurrent")
 
     
-    def _check_channel_sequential(self, channel_id: int):
-        """Check and reorder streams for a specific channel using sequential checking."""
+    def _check_channel_sequential(self, channel_id: int, skip_batch_changelog: bool = False):
+        """Check and reorder streams for a specific channel using sequential checking.
+        
+        Args:
+            channel_id: ID of the channel to check
+            skip_batch_changelog: If True, don't add this check to the batch changelog
+        """
         import time as time_module
         start_time = time_module.time()
         log_function_call(logger, "_check_channel_sequential", channel_id=channel_id)
@@ -2162,21 +2179,23 @@ class StreamCheckerService:
                             logo_url = logo.get('cache_url') or logo.get('url')
                     
                     # Add to batch changelog instead of creating individual entry
-                    self._add_to_batch_changelog({
-                        'channel_id': channel_id,
-                        'channel_name': channel_name,
-                        'logo_url': logo_url,
-                        'total_streams': len(streams),
-                        'streams_analyzed': len(analyzed_streams),
-                        'dead_streams_detected': len(dead_stream_ids),
-                        'streams_revived': len(revived_stream_ids),
-                        'avg_resolution': averages['avg_resolution'],
-                        'avg_bitrate': averages['avg_bitrate'],
-                        'avg_fps': averages['avg_fps'],
-                        'success': True,
-                        'stream_stats': stream_stats[:10]  # Limit to top 10 for brevity
-                    })
-                    logger.info(f"Added channel {channel_name} to batch changelog")
+                    # Only add to batch if not explicitly skipped (e.g., when called from check_single_channel)
+                    if not skip_batch_changelog:
+                        self._add_to_batch_changelog({
+                            'channel_id': channel_id,
+                            'channel_name': channel_name,
+                            'logo_url': logo_url,
+                            'total_streams': len(streams),
+                            'streams_analyzed': len(analyzed_streams),
+                            'dead_streams_detected': len(dead_stream_ids),
+                            'streams_revived': len(revived_stream_ids),
+                            'avg_resolution': averages['avg_resolution'],
+                            'avg_bitrate': averages['avg_bitrate'],
+                            'avg_fps': averages['avg_fps'],
+                            'success': True,
+                            'stream_stats': stream_stats[:10]  # Limit to top 10 for brevity
+                        })
+                        logger.info(f"Added channel {channel_name} to batch changelog")
                 except Exception as e:
                     logger.warning(f"Failed to add to batch changelog: {e}")
             
@@ -2204,7 +2223,8 @@ class StreamCheckerService:
             self.check_queue.mark_failed(channel_id, str(e))
             
             # Add failed check to batch changelog
-            if self.changelog:
+            # Only add to batch if not explicitly skipped
+            if self.changelog and not skip_batch_changelog:
                 try:
                     # Try to get channel name if available
                     try:
@@ -2447,7 +2467,8 @@ class StreamCheckerService:
             
             # Perform the check (this will now bypass immunity and check all streams)
             # Returns dict with dead_streams_count and revived_streams_count
-            check_result = self._check_channel(channel_id)
+            # Skip batch changelog since this is a single channel check
+            check_result = self._check_channel(channel_id, skip_batch_changelog=True)
             if not check_result or not isinstance(check_result, dict):
                 # This should not happen with updated methods, but provide safe fallback
                 logger.warning(f"_check_channel did not return expected result dict, using defaults")

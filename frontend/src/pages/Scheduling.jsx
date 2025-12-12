@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card.jsx'
 import { Button } from '@/components/ui/button.jsx'
 import { Badge } from '@/components/ui/badge.jsx'
@@ -8,6 +8,8 @@ import { Input } from '@/components/ui/input.jsx'
 import { Label } from '@/components/ui/label.jsx'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover.jsx'
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command.jsx'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select.jsx'
+import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious, PaginationEllipsis } from '@/components/ui/pagination.jsx'
 import { useToast } from '@/hooks/use-toast.js'
 import { schedulingAPI, channelsAPI } from '@/services/api.js'
 import { Plus, Trash2, Clock, Calendar, RefreshCw, Loader2, Settings, ChevronsUpDown, Check } from 'lucide-react'
@@ -28,6 +30,10 @@ export default function Scheduling() {
   const [minutesBefore, setMinutesBefore] = useState(5)
   const [refreshInterval, setRefreshInterval] = useState(60)
   
+  // Pagination state for scheduled events
+  const [currentPage, setCurrentPage] = useState(1)
+  const [eventsPerPage, setEventsPerPage] = useState(25)
+  
   // Auto-create rules state
   const [autoCreateRules, setAutoCreateRules] = useState([])
   const [ruleDialogOpen, setRuleDialogOpen] = useState(false)
@@ -42,6 +48,23 @@ export default function Scheduling() {
   const [ruleToDelete, setRuleToDelete] = useState(null)
   
   const { toast } = useToast()
+
+  // Calculate paginated events with useMemo for performance
+  const paginationData = useMemo(() => {
+    const totalPages = Math.ceil(events.length / eventsPerPage)
+    const startIndex = (currentPage - 1) * eventsPerPage
+    const endIndex = startIndex + eventsPerPage
+    const paginatedEvents = events.slice(startIndex, endIndex)
+    
+    return {
+      totalPages,
+      startIndex,
+      endIndex,
+      paginatedEvents,
+      showingStart: startIndex + 1,
+      showingEnd: Math.min(endIndex, events.length)
+    }
+  }, [events, currentPage, eventsPerPage])
 
   useEffect(() => {
     loadData()
@@ -563,10 +586,38 @@ export default function Scheduling() {
       {/* Scheduled Events Table */}
       <Card>
         <CardHeader>
-          <CardTitle>Scheduled Events</CardTitle>
-          <CardDescription>
-            Channel checks scheduled before EPG program events
-          </CardDescription>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle>Scheduled Events</CardTitle>
+              <CardDescription>
+                Channel checks scheduled before EPG program events
+              </CardDescription>
+            </div>
+            {events.length > 0 && (
+              <div className="flex items-center gap-2">
+                <Label htmlFor="events-per-page" className="text-sm whitespace-nowrap">
+                  Events per page:
+                </Label>
+                <Select
+                  value={eventsPerPage.toString()}
+                  onValueChange={(value) => {
+                    setEventsPerPage(parseInt(value))
+                    setCurrentPage(1) // Reset to first page when changing page size
+                  }}
+                >
+                  <SelectTrigger id="events-per-page" className="w-[100px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="10">10</SelectItem>
+                    <SelectItem value="25">25</SelectItem>
+                    <SelectItem value="50">50</SelectItem>
+                    <SelectItem value="100">100</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+          </div>
         </CardHeader>
         <CardContent>
           {events.length === 0 ? (
@@ -576,66 +627,180 @@ export default function Scheduling() {
               <p>Click "Add Event Check" to schedule a channel check before a program</p>
             </div>
           ) : (
-            <div className="rounded-md border">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Channel</TableHead>
-                    <TableHead>Program</TableHead>
-                    <TableHead>Program Time</TableHead>
-                    <TableHead>Check Time</TableHead>
-                    <TableHead>Minutes Before</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {events.map((event) => (
-                    <TableRow key={event.id}>
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          {event.channel_logo_url && (
-                            <img
-                              src={event.channel_logo_url}
-                              alt={event.channel_name}
-                              className="h-8 w-8 object-contain rounded"
-                              onError={(e) => { e.target.style.display = 'none' }}
-                            />
-                          )}
-                          <span className="font-medium">{event.channel_name}</span>
-                        </div>
-                      </TableCell>
-                      <TableCell>{event.program_title}</TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-1 text-sm">
-                          <Clock className="h-3 w-3" />
-                          {formatTime(event.program_start_time)}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline">
-                          {formatDateTime(event.check_time)}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        {event.minutes_before} min
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            setEventToDelete(event.id)
-                            setDeleteDialogOpen(true)
-                          }}
-                        >
-                          <Trash2 className="h-4 w-4 text-destructive" />
-                        </Button>
-                      </TableCell>
+            <>
+              <div className="rounded-md border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Channel</TableHead>
+                      <TableHead>Program</TableHead>
+                      <TableHead>Program Time</TableHead>
+                      <TableHead>Check Time</TableHead>
+                      <TableHead>Minutes Before</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
+                  </TableHeader>
+                  <TableBody>
+                    {paginationData.paginatedEvents.map((event) => (
+                        <TableRow key={event.id}>
+                          <TableCell>
+                            <div className="flex items-center gap-2">
+                              {event.channel_logo_url && (
+                                <img
+                                  src={event.channel_logo_url}
+                                  alt={event.channel_name}
+                                  className="h-8 w-8 object-contain rounded"
+                                  onError={(e) => { e.target.style.display = 'none' }}
+                                />
+                              )}
+                              <span className="font-medium">{event.channel_name}</span>
+                            </div>
+                          </TableCell>
+                          <TableCell>{event.program_title}</TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-1 text-sm">
+                              <Clock className="h-3 w-3" />
+                              {formatTime(event.program_start_time)}
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant="outline">
+                              {formatDateTime(event.check_time)}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            {event.minutes_before} min
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                setEventToDelete(event.id)
+                                setDeleteDialogOpen(true)
+                              }}
+                            >
+                              <Trash2 className="h-4 w-4 text-destructive" />
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                  </TableBody>
+                </Table>
+              </div>
+              
+              {/* Pagination Controls */}
+              {paginationData.totalPages > 1 && (
+                <div className="flex items-center justify-between mt-4">
+                  <div className="text-sm text-muted-foreground">
+                    Showing {paginationData.showingStart} to {paginationData.showingEnd} of {events.length} events
+                  </div>
+                  <Pagination>
+                    <PaginationContent>
+                      <PaginationItem>
+                        <PaginationPrevious 
+                          onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                          className={currentPage === 1 ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
+                        />
+                      </PaginationItem>
+                      
+                      {(() => {
+                        const { totalPages } = paginationData
+                        const pages = []
+                        
+                        // For 2 or fewer pages, show all pages
+                        if (totalPages <= 2) {
+                          for (let i = 1; i <= totalPages; i++) {
+                            pages.push(
+                              <PaginationItem key={i}>
+                                <PaginationLink
+                                  onClick={() => setCurrentPage(i)}
+                                  isActive={currentPage === i}
+                                  className="cursor-pointer"
+                                >
+                                  {i}
+                                </PaginationLink>
+                              </PaginationItem>
+                            )
+                          }
+                        } else {
+                          // Always show first page
+                          pages.push(
+                            <PaginationItem key={1}>
+                              <PaginationLink
+                                onClick={() => setCurrentPage(1)}
+                                isActive={currentPage === 1}
+                                className="cursor-pointer"
+                              >
+                                1
+                              </PaginationLink>
+                            </PaginationItem>
+                          )
+                          
+                          // Show ellipsis if needed
+                          if (currentPage > 3) {
+                            pages.push(
+                              <PaginationItem key="ellipsis-1">
+                                <PaginationEllipsis />
+                              </PaginationItem>
+                            )
+                          }
+                          
+                          // Show pages around current page
+                          const startPage = Math.max(2, currentPage - 1)
+                          const endPage = Math.min(totalPages - 1, currentPage + 1)
+                          
+                          for (let i = startPage; i <= endPage; i++) {
+                            pages.push(
+                              <PaginationItem key={i}>
+                                <PaginationLink
+                                  onClick={() => setCurrentPage(i)}
+                                  isActive={currentPage === i}
+                                  className="cursor-pointer"
+                                >
+                                  {i}
+                                </PaginationLink>
+                              </PaginationItem>
+                            )
+                          }
+                          
+                          // Show ellipsis if needed
+                          if (currentPage < totalPages - 2) {
+                            pages.push(
+                              <PaginationItem key="ellipsis-2">
+                                <PaginationEllipsis />
+                              </PaginationItem>
+                            )
+                          }
+                          
+                          // Always show last page
+                          pages.push(
+                            <PaginationItem key={totalPages}>
+                              <PaginationLink
+                                onClick={() => setCurrentPage(totalPages)}
+                                isActive={currentPage === totalPages}
+                                className="cursor-pointer"
+                              >
+                                {totalPages}
+                              </PaginationLink>
+                            </PaginationItem>
+                          )
+                        }
+                        
+                        return pages
+                      })()}
+                      
+                      <PaginationItem>
+                        <PaginationNext 
+                          onClick={() => setCurrentPage(prev => Math.min(paginationData.totalPages, prev + 1))}
+                          className={currentPage === paginationData.totalPages ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
+                        />
+                      </PaginationItem>
+                    </PaginationContent>
+                  </Pagination>
+                </div>
+              )}
+            </>
           )}
         </CardContent>
       </Card>
@@ -935,7 +1100,7 @@ export default function Scheduling() {
           <DialogHeader>
             <DialogTitle>Delete Auto-Create Rule</DialogTitle>
             <DialogDescription>
-              Are you sure you want to delete this rule? Future programs won't be automatically scheduled, but existing scheduled events will remain.
+              Are you sure you want to delete this rule? This will also delete all scheduled events that were automatically created by this rule.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

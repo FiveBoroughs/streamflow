@@ -564,7 +564,7 @@ class SchedulingService:
             return rule
     
     def delete_auto_create_rule(self, rule_id: str) -> bool:
-        """Delete an auto-create rule.
+        """Delete an auto-create rule and all events created by it.
         
         Args:
             rule_id: Rule ID
@@ -578,7 +578,21 @@ class SchedulingService:
             
             if len(self._auto_create_rules) < initial_count:
                 self._save_auto_create_rules()
-                logger.info(f"Deleted auto-create rule {rule_id}")
+                
+                # Delete all events that were auto-created by this rule
+                initial_events_count = len(self._scheduled_events)
+                self._scheduled_events = [
+                    e for e in self._scheduled_events 
+                    if e.get('auto_create_rule_id') != rule_id
+                ]
+                deleted_events_count = initial_events_count - len(self._scheduled_events)
+                
+                if deleted_events_count > 0:
+                    self._save_scheduled_events()
+                    logger.info(f"Deleted auto-create rule {rule_id} and {deleted_events_count} associated event(s)")
+                else:
+                    logger.info(f"Deleted auto-create rule {rule_id} (no associated events)")
+                
                 return True
             
             logger.warning(f"Auto-create rule {rule_id} not found")
