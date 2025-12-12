@@ -32,6 +32,8 @@ See [Deployment Guide](docs/DEPLOYMENT.md) for detailed instructions.
 - **Automatic Stream Reordering**: Best quality streams moved to the top
 - **Stream Discovery**: Regex patterns for automatic stream-to-channel assignment
 - **Global Action**: Manual or scheduled complete update cycles (Update → Match → Check all channels)
+- **Channel-Specific Settings**: Exclude individual channels from matching and/or checking operations
+- **EPG-Based Scheduling**: Schedule channel checks based on EPG program data
 - **JSON-backed Storage**: Fast, file-based data access with UDI (Universal Data Index)
 - **Web Interface**: React-based UI with unified configuration page and real-time monitoring
 - **REST API**: Full API access for all operations
