@@ -65,7 +65,6 @@ function SetupWizard({ onComplete, setupStatus: initialSetupStatus }) {
   const [config, setConfig] = useState({
     playlist_update_interval_minutes: 5,
     global_check_interval_hours: 24,
-    concurrent_stream_checks: 2,
     enabled_m3u_accounts: [],
     autostart_automation: false,
     enabled_features: {
@@ -76,7 +75,7 @@ function SetupWizard({ onComplete, setupStatus: initialSetupStatus }) {
     }
   });
   
-  // Stream checker config for global check schedule
+  // Stream checker config for global check schedule and concurrent streams
   const [streamCheckerConfig, setStreamCheckerConfig] = useState({
     pipeline_mode: 'pipeline_1_5',
     global_check_schedule: {
@@ -89,6 +88,11 @@ function SetupWizard({ onComplete, setupStatus: initialSetupStatus }) {
     },
     queue: {
       check_on_update: true
+    },
+    concurrent_streams: {
+      enabled: true,
+      global_limit: 10,
+      stagger_delay: 1.0
     }
   });
 
@@ -303,6 +307,19 @@ function SetupWizard({ onComplete, setupStatus: initialSetupStatus }) {
           [parent]: {
             ...prev[parent],
             [child]: value
+          }
+        }));
+      } else if (parts.length === 3) {
+        // Handle three-level paths like concurrent_streams.global_limit
+        const [parent, subparent, child] = parts;
+        setStreamCheckerConfig(prev => ({
+          ...prev,
+          [parent]: {
+            ...prev[parent],
+            [subparent]: {
+              ...(prev[parent]?.[subparent] || {}),
+              [child]: value
+            }
           }
         }));
       }
@@ -788,10 +805,11 @@ function SetupWizard({ onComplete, setupStatus: initialSetupStatus }) {
                       <TextField
                         label="Concurrent Stream Checks"
                         type="number"
-                        value={config.concurrent_stream_checks}
-                        onChange={(e) => handleConfigChange('concurrent_stream_checks', parseInt(e.target.value))}
+                        value={streamCheckerConfig.concurrent_streams?.global_limit ?? 10}
+                        onChange={(e) => handleStreamCheckerConfigChange('concurrent_streams.global_limit', parseInt(e.target.value))}
                         fullWidth
                         margin="normal"
+                        helperText="Maximum number of concurrent stream checks (default: 10). Lower values reduce load on streaming providers."
                       />
                       
                       <Typography variant="h6" sx={{ mt: 3, mb: 2 }}>

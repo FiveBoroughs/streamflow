@@ -19,15 +19,22 @@ See [PIPELINE_SYSTEM.md](PIPELINE_SYSTEM.md) for detailed pipeline documentation
 - Tracks update history in changelog
 
 ### Intelligent Stream Quality Checking
-Multi-factor analysis of stream quality:
+Multi-factor analysis of stream quality using a single optimized ffmpeg call:
 - **Bitrate**: Average kbps measurement
 - **Resolution**: Width × height detection
 - **Frame Rate**: FPS analysis
-- **Video Codec**: H.265/H.264 identification
+- **Video Codec**: H.265/H.264 identification with automatic sanitization
+  - Filters out invalid codec names (e.g., "wrapped_avframe", "unknown")
+  - Extracts actual codec from hardware-accelerated streams
 - **Audio Codec**: Detection and validation
+  - Parses **input stream codecs** only (e.g., "aac", "ac3", "mp3", "eac3")
+  - Avoids decoded output formats (e.g., "pcm_s16le")
+  - Supports multiple audio streams and language tracks
 - **Error Detection**: Decode errors, discontinuities, timeouts
-- **Interlacing**: Detection and penalty
-- **Dropped Frames**: Tracking and penalty
+- **Optimized Performance**: Single ffmpeg call instead of separate ffprobe+ffmpeg (reduced overhead)
+- **Parallel Checking**: Thread-based concurrent analysis with configurable worker pool
+  - Proper pipeline: gather stats in parallel → when ALL checks finish → push info to Dispatcharr
+  - Prevents race conditions during concurrent operations
 
 ### Automatic Stream Reordering
 - Best quality streams automatically moved to top
@@ -64,22 +71,67 @@ Multi-factor analysis of stream quality:
 - Interlaced penalty: Lower score for interlaced content
 - Dropped frames penalty: Lower score for streams with frame drops
 
-### Sequential Checking
-- One channel at a time to avoid overload
-- Protects streaming providers from concurrent requests
+### Sequential and Parallel Checking
+- **Parallel Mode** (default): Concurrent stream checking with configurable worker pool (default: 10)
+  - Thread-based parallel execution
+  - Configurable global concurrency limit
+  - **Per-Account Stream Limits**: Respects maximum concurrent streams for each M3U account
+    - Smart scheduler ensures account limits are never exceeded
+    - Multiple accounts can check streams in parallel
+    - Example: Account A (limit: 1), Account B (limit: 2) with streams A1, A2, B1, B2, B3
+      - Concurrently checks: A1, B1, B2 (3 total, respecting limits)
+      - When A1 completes, A2 starts; when B1/B2 completes, B3 starts
+  - Stagger delay to prevent simultaneous starts
+  - Robust pipeline: all stats gathered in parallel, then pushed to Dispatcharr after ALL checks complete
+  - Prevents race conditions with dead stream removal
+- **Sequential Mode**: One stream at a time for minimal provider load
 - Queue-based processing
 - Real-time progress tracking
 
 ### Dead Stream Detection and Management
 Automatically identifies and manages non-functional streams:
 - **Detection**: Streams with resolution=0 or bitrate=0 are marked as dead
-- **Tagging**: Dead streams are prefixed with `[DEAD]` in Dispatcharr
+- **Changelog Tracking**: Dead streams show status "dead" in changelog (not score:0)
+- **Revival Tracking**: Revived streams show status "revived" in changelog
 - **Removal**: Dead streams are removed from channels during regular checks
-- **Revival Check**: During global actions, dead streams are re-checked for revival
 - **Matching Exclusion**: Dead streams are not assigned to channels during stream matching
 - **Pipeline-Aware**: Only operates in pipelines with stream checking enabled (1, 1.5, 2.5, 3)
 
+#### Dead Stream Revival: Global Action vs Single Channel Check
+There is an important difference in how dead streams are handled:
+
+**Global Action** (gives ALL dead streams a second chance):
+1. **Step 1**: Refresh UDI cache
+2. **Step 2**: Clear ALL dead streams from tracker (giving them a second chance)
+3. **Step 3**: Update all M3U playlists
+4. **Step 4**: Match and assign streams (including previously dead ones since tracker was cleared)
+5. **Step 5**: Check all channels (force check bypasses immunity)
+6. **Result**: ALL previously dead streams can be re-added and re-checked
+
+**Single Channel Check** (does NOT give dead streams a second chance):
+1. **Step 1**: Identify M3U accounts used by the channel
+2. **Step 2**: Refresh playlists for those M3U accounts
+3. **Step 3**: Re-match and assign NEW streams (dead streams remain in tracker and are excluded)
+4. **Step 4**: Force check all streams (bypasses 2-hour immunity)
+5. **Result**: Dead streams remain in tracker and are NOT re-added during matching
+
+**Why the difference?**
+- Global Action is the comprehensive system-wide operation that clears the slate and gives every stream a fresh chance
+- Single Channel Check is designed for quick targeted checks of a specific channel and respects the dead stream tracker to avoid repeatedly checking known-bad streams
+- This ensures that dead streams are periodically re-evaluated (during Global Actions) without causing excessive load during individual channel checks
+
+**When dead streams get a second chance:**
+- During scheduled Global Actions (pipelines 1.5, 2.5, and 3)
+- During manually triggered Global Actions
+- When streams are manually re-added to channels outside of the automated system
+
 ## User Interface
+
+### Theme Customization
+- **Dark/Light Mode Toggle**: Switch between light, dark, and auto (system) themes
+- **Deep Black Dark Mode**: True black background (#000) with white text and dark green accents
+- **System Preference Detection**: Automatically follows system theme in auto mode
+- **Persistent Settings**: Theme preference saved to local storage
 
 ### Dashboard
 - System status overview
@@ -95,18 +147,139 @@ Automatically identifies and manages non-functional streams:
 - Global Action trigger button
 - Queue management (clear queue)
 
+### EPG-Based Scheduling
+The Scheduling page provides powerful tools for managing channel checks before important programs:
+
+#### Manual Scheduled Events
+- **Schedule channel checks before specific EPG programs**
+  - Browse programs from Dispatcharr EPG data
+  - Select channel and program
+  - Set check timing (minutes before program starts)
+- **Playlist refresh included**: Each scheduled check also refreshes playlists
+- **Event management**: View all scheduled events with delete capability
+
+#### Auto-Create Rules (Regex-Based)
+Automatically create scheduled events based on program name patterns:
+
+- **Rule Configuration**:
+  - Rule name for easy identification
+  - Channel selection with search
+  - Regex pattern to match program names
+  - Minutes before setting (when to run check)
+
+- **Live Regex Testing**:
+  - Test patterns against real EPG data
+  - See matching programs before creating rule
+  - Case-insensitive matching for flexibility
+
+- **Automatic Event Creation**:
+  - **Automatic EPG Refresh**: Background processor fetches EPG data periodically
+  - Configurable refresh interval (default: 60 minutes, minimum: 5 minutes)
+  - Rules scan EPG automatically on every refresh
+  - Creates events for matching programs without manual intervention
+  - **Smart Filtering**:
+    - Skips programs that have already started or are in the past
+    - Prevents re-creation of events that have already been checked
+    - Tracks executed events for 7 days to avoid duplicates
+  - **Duplicate Prevention**: Same channel/date/time within 5 minutes treated as duplicate
+  - **Smart Updates**: Adjusts event title and time if program changes (within duplicate window)
+
+- **Background Processor**:
+  - Auto-starts with the application
+  - Runs continuously in the background
+  - First refresh occurs 5 seconds after startup
+  - Subsequent refreshes based on configured interval
+  - Manual trigger available via API
+  - Graceful error handling and retry logic
+
+- **Rule Management**:
+  - View all active rules
+  - Delete rules when no longer needed
+  - Rules table shows channel, pattern, and timing
+
+**Use Cases**:
+- Breaking news alerts: `^Breaking News|^Special Report`
+- Live sports: `^Live:|Championship|Finals`
+- Show-specific: `^Game of Thrones|^The Mandalorian`
+- Time-specific: `Monday Night Football` on specific channels
+
+**Example Workflow**:
+1. Create rule: "Breaking News" on CNN with pattern `^Breaking`
+2. EPG refresh processor automatically fetches data every 60 minutes
+3. Any program starting with "Breaking" automatically gets a scheduled check
+4. If program name or time changes, event updates automatically
+5. Check happens X minutes before program starts
+6. No manual intervention required - fully automatic!
+
 ### Channel Configuration
-- Visual regex pattern editor
-- Pattern testing interface
-- Live stream matching preview
-- Enable/disable patterns
+- **Horizontal Channel Cards**: Modern card-based layout with expandable sections
+  - Channel logo display (wider than taller for better visibility)
+  - Channel name and metadata
+  - Real-time statistics:
+    - Total stream count
+    - Dead stream count
+    - Most common resolution
+    - Average bitrate (Kbps)
+  - Quick actions: Edit Regex, **Check Channel**
+- **Single Channel Check**: Immediately check a specific channel's streams
+  - Synchronous checking with detailed feedback
+  - Shows results: total streams, dead streams, avg resolution, avg bitrate
+  - Updates channel stats after completion
+  - Creates changelog entry for tracking
+- **Expandable Regex Editor**: Toggle pattern list within each card
+  - View all configured patterns for the channel
+  - Add new patterns inline
+  - Delete patterns individually
+- **Individual Channel Checking**: Queue single channels for immediate quality checking
+- **Live Statistics**: Auto-loading channel stats from backend API
+- **Search and Filtering**: Find channels by name, number, or ID
+- **Pagination**: Efficient browsing of large channel lists
+  - Configurable items per page (10, 20, 50, 100)
+  - First/Previous/Next/Last navigation buttons
+  - Visual page number selection (shows 5 pages at a time)
+  - Current range indicator (e.g., "Showing 1-20 of 150 channels")
+  - Automatic reset to first page when search query changes
+- **Export/Import**: Backup and restore regex patterns as JSON
+
+### Changelog Page
+- **Activity History**: View all system events and stream operations
+- **Structured Entries**: Multiple action types:
+  - **Playlist Update & Match**: Shows streams added and channels checked
+  - **Global Check**: Displays all channels checked during scheduled global actions
+  - **Single Channel Check**: Individual channel check results
+  - **Batch Stream Check**: Consolidated entries for checking batches
+- **Global Statistics**: Summary stats for each action (total channels, successful/failed checks, streams analyzed, dead streams, etc.)
+- **Collapsible Subentries**: Expandable dropdown blocks for detailed information
+  - **Update & Match** group: Lists streams added to each channel
+  - **Check** group: Shows per-channel statistics and scores
+- **Time Filtering**: View entries from last 24 hours, 7 days, 30 days, or 90 days
+- **Color-Coded Badges**: Visual indicators for different action types
+- **Stream Details**: Top streams with resolution, bitrate, codec, and FPS information
+
+### Scheduling Page
+- **EPG-Based Event Scheduling**: Schedule channel checks before program events
+- **Channel Selection**: Searchable dropdown with all available channels
+- **Program Browser**: Scrollable list of upcoming programs for selected channel
+  - Displays program title, start/end times, and descriptions
+  - Programs loaded from Dispatcharr's EPG grid endpoint
+- **Flexible Timing**: Input field for minutes before program start
+- **Event Management Table**: View all scheduled events
+  - Channel logo and name
+  - Program title and time
+  - Scheduled check time
+  - Delete action button
+- **Configuration Options**: Adjust EPG data refresh interval
 
 ### Configuration Page (unified)
-- **Pipeline Selection**: Choose from 5 automation modes with visual cards
+- **Pipeline Selection**: Choose from 5 automation modes with visual cards and hints
+  - Descriptive hints for each pipeline mode
 - **Schedule Configuration**: Set timing for global actions (pipelines 1.5, 2.5, 3)
   - Daily or monthly frequency
   - Precise time selection (hour and minute)
   - Day of month for monthly schedules
+- **Concurrent Stream Checking**: Configure maximum parallel workers (default: 10)
+  - Controls load on streaming providers
+  - Adjustable stagger delay between task dispatches
 - **Context-Aware Settings**: Only relevant options shown based on selected pipeline
 - **Update Intervals**: Configure M3U refresh frequency (for applicable pipelines)
 - **Stream Analysis Parameters**: FFmpeg duration, timeouts, retries
@@ -121,6 +294,10 @@ Automatically identifies and manages non-functional streams:
 ### Setup Wizard
 - Guided initial configuration
 - Dispatcharr connection testing
+- **JSON Pattern Import**: Import channel regex patterns from JSON file
+- **Pipeline Hints**: Inline descriptions for each pipeline mode
+- **Smart Navigation**: Save settings automatically when advancing
+- **Autostart Default**: Automation enabled by default
 - Configuration validation
 - Quick start assistance
 
@@ -158,6 +335,11 @@ Automatically identifies and manages non-functional streams:
 - Timestamps and details
 - Persistent storage
 - Filterable history
+- **Batch Consolidation**: Stream checks batched into consolidated entries
+  - Single entry per checking batch instead of per-channel entries
+  - Aggregate statistics at batch level (total channels, streams analyzed, dead streams, etc.)
+  - Individual channel results shown as expandable subentries
+  - Cleaner, more organized changelog view
 
 ### Configuration Persistence
 - All settings in JSON files
@@ -170,6 +352,40 @@ Automatically identifies and manages non-functional streams:
 - Connection validation
 - Default settings
 - Quick deployment
+
+## EPG-Based Scheduling
+
+### Scheduled Channel Checks Before Events
+Schedule channel checks to run before EPG program events for optimal stream quality:
+- **EPG Integration**: Fetches program data from Dispatcharr's EPG grid endpoint
+- **Automatic Refresh**: Background processor automatically fetches EPG data periodically
+  - Configurable refresh interval (default: 60 minutes, minimum: 5 minutes)
+  - Auto-starts with the application
+  - First refresh occurs 5 seconds after startup
+  - Continues running in the background
+- **Program Search**: Browse upcoming programs by channel
+- **Flexible Timing**: Configure minutes before program start to run the check
+- **Playlist Updates**: Playlist refresh triggered before scheduled checks
+- **Event Management**: Create, view, and delete scheduled events
+
+### User Workflow - Manual Event Creation
+1. Navigate to Scheduling section in the UI
+2. Click "Add Event Check" button
+3. Select a channel from searchable dropdown
+4. View and select from channel's upcoming programs
+5. Specify minutes before program start for the check
+6. Save the scheduled event
+7. Monitor scheduled events in table with channel logos and program details
+
+### User Workflow - Auto-Create Rules
+1. Navigate to Scheduling section in the UI
+2. Click "Create Auto-Create Rule" button
+3. Configure rule name, channel, and regex pattern
+4. Test pattern against live EPG data (optional)
+5. Set minutes before program start
+6. Save the rule
+7. Events are automatically created as EPG refreshes
+8. No further action required!
 
 ## API Integration
 
@@ -206,7 +422,8 @@ Automatically identifies and manages non-functional streams:
 - User notifications
 
 ### Performance
-- Sequential stream checking
+- Parallel stream checking with configurable worker pool
+- Optimized single ffmpeg call (instead of ffprobe + ffmpeg)
 - Efficient queue processing
 - Minimal API calls
 - Resource optimization

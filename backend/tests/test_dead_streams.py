@@ -298,6 +298,85 @@ class TestDeadStreamCleanup(unittest.TestCase):
         self.assertEqual(len(tracker.get_dead_streams()), 2)
 
 
+class TestRemoveDeadStreamsForChannel(unittest.TestCase):
+    """Test removal of dead streams for a specific channel."""
+    
+    @patch('dead_streams_tracker.CONFIG_DIR', Path(tempfile.mkdtemp()))
+    def test_remove_dead_streams_for_channel(self):
+        """Test that dead streams for a specific channel are removed."""
+        from dead_streams_tracker import DeadStreamsTracker
+        tracker = DeadStreamsTracker()
+        
+        # Mark streams from multiple channels as dead
+        # Channel 16 streams
+        tracker.mark_as_dead('http://example.com/ch16/stream1.m3u8', 1, 'CH16 Stream 1')
+        tracker.mark_as_dead('http://example.com/ch16/stream2.m3u8', 2, 'CH16 Stream 2')
+        
+        # Channel 99 streams
+        tracker.mark_as_dead('http://example.com/ch99/stream1.m3u8', 99, 'CH99 Stream 1')
+        
+        # Verify all are marked as dead
+        self.assertEqual(len(tracker.get_dead_streams()), 3)
+        
+        # Simulate removing dead streams for channel 16 only
+        ch16_stream_urls = {
+            'http://example.com/ch16/stream1.m3u8',
+            'http://example.com/ch16/stream2.m3u8',
+            'http://example.com/ch16/stream3.m3u8'  # A live stream (not dead)
+        }
+        removed_count = tracker.remove_dead_streams_for_channel(ch16_stream_urls)
+        
+        # Verify that only channel 16's dead streams were removed
+        self.assertEqual(removed_count, 2)
+        self.assertEqual(len(tracker.get_dead_streams()), 1)
+        
+        # Channel 16's dead streams should be gone
+        self.assertFalse(tracker.is_dead('http://example.com/ch16/stream1.m3u8'))
+        self.assertFalse(tracker.is_dead('http://example.com/ch16/stream2.m3u8'))
+        
+        # Channel 99's dead stream should remain
+        self.assertTrue(tracker.is_dead('http://example.com/ch99/stream1.m3u8'))
+    
+    @patch('dead_streams_tracker.CONFIG_DIR', Path(tempfile.mkdtemp()))
+    def test_remove_dead_streams_for_channel_no_dead_streams(self):
+        """Test removal when channel has no dead streams."""
+        from dead_streams_tracker import DeadStreamsTracker
+        tracker = DeadStreamsTracker()
+        
+        # Mark some dead streams from other channels
+        tracker.mark_as_dead('http://example.com/ch99/stream1.m3u8', 99, 'CH99 Stream 1')
+        
+        # Try to remove dead streams for a channel with no dead streams
+        ch16_stream_urls = {
+            'http://example.com/ch16/stream1.m3u8',
+            'http://example.com/ch16/stream2.m3u8'
+        }
+        removed_count = tracker.remove_dead_streams_for_channel(ch16_stream_urls)
+        
+        # No streams should be removed
+        self.assertEqual(removed_count, 0)
+        self.assertEqual(len(tracker.get_dead_streams()), 1)
+        
+        # Other channel's dead stream should remain
+        self.assertTrue(tracker.is_dead('http://example.com/ch99/stream1.m3u8'))
+    
+    @patch('dead_streams_tracker.CONFIG_DIR', Path(tempfile.mkdtemp()))
+    def test_remove_dead_streams_for_empty_channel(self):
+        """Test removal for a channel with no streams."""
+        from dead_streams_tracker import DeadStreamsTracker
+        tracker = DeadStreamsTracker()
+        
+        # Mark some dead streams
+        tracker.mark_as_dead('http://example.com/stream1.m3u8', 1, 'Stream 1')
+        
+        # Try to remove for an empty channel
+        removed_count = tracker.remove_dead_streams_for_channel(set())
+        
+        # No streams should be removed
+        self.assertEqual(removed_count, 0)
+        self.assertEqual(len(tracker.get_dead_streams()), 1)
+
+
 if __name__ == '__main__':
     # Run tests with verbose output
     unittest.main(verbosity=2)

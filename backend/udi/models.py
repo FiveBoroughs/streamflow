@@ -333,3 +333,49 @@ class UDIMetadata:
             'm3u_accounts_last_updated': self.m3u_accounts_last_updated,
             'version': self.version
         }
+
+
+@dataclass
+class ScheduledEvent:
+    """Represents a scheduled channel check based on EPG program."""
+    id: str
+    channel_id: int
+    channel_name: str
+    program_title: str
+    program_start_time: str
+    program_end_time: str
+    minutes_before: int
+    check_time: str
+    tvg_id: Optional[str] = None
+    created_at: Optional[str] = None
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'ScheduledEvent':
+        """Create a ScheduledEvent from a dictionary."""
+        return cls(
+            id=data.get('id', ''),
+            channel_id=data.get('channel_id', 0),
+            channel_name=data.get('channel_name', ''),
+            program_title=data.get('program_title', ''),
+            program_start_time=data.get('program_start_time', ''),
+            program_end_time=data.get('program_end_time', ''),
+            minutes_before=data.get('minutes_before', 0),
+            check_time=data.get('check_time', ''),
+            tvg_id=data.get('tvg_id'),
+            created_at=data.get('created_at')
+        )
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            'id': self.id,
+            'channel_id': self.channel_id,
+            'channel_name': self.channel_name,
+            'program_title': self.program_title,
+            'program_start_time': self.program_start_time,
+            'program_end_time': self.program_end_time,
+            'minutes_before': self.minutes_before,
+            'check_time': self.check_time,
+            'tvg_id': self.tvg_id,
+            'created_at': self.created_at
+        }

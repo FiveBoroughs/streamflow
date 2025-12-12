@@ -45,6 +45,9 @@ export const automationAPI = {
 export const channelsAPI = {
   getChannels: () => api.get('/channels'),
   getGroups: () => api.get('/channels/groups'),
+  getChannelStats: (channelId) => api.get(`/channels/${channelId}/stats`),
+  getLogo: (logoId) => api.get(`/channels/logos/${logoId}`),
+  getLogoCached: (logoId) => `/api/channels/logos/${logoId}/cache`,
 };
 
 export const regexAPI = {
@@ -76,6 +79,7 @@ export const streamCheckerAPI = {
   updateConfig: (config) => api.put('/stream-checker/config', config),
   getProgress: () => api.get('/stream-checker/progress'),
   checkChannel: (channelId) => api.post('/stream-checker/check-channel', { channel_id: channelId }),
+  checkSingleChannel: (channelId) => api.post('/stream-checker/check-single-channel', { channel_id: channelId }),
   markUpdated: (data) => api.post('/stream-checker/mark-updated', data),
   queueAllChannels: () => api.post('/stream-checker/queue-all'),
   triggerGlobalAction: () => api.post('/stream-checker/global-action'),
@@ -97,4 +101,18 @@ export const dispatcharrAPI = {
   getConfig: () => api.get('/dispatcharr/config'),
   updateConfig: (config) => api.put('/dispatcharr/config', config),
   testConnection: (config) => api.post('/dispatcharr/test-connection', config),
+};
+
+export const schedulingAPI = {
+  getConfig: () => api.get('/scheduling/config'),
+  updateConfig: (config) => api.put('/scheduling/config', config),
+  getEPGGrid: (forceRefresh = false) => api.get('/scheduling/epg/grid', { params: { force_refresh: forceRefresh } }),
+  getChannelPrograms: (channelId) => api.get(`/scheduling/epg/channel/${channelId}`),
+  getEvents: () => api.get('/scheduling/events'),
+  createEvent: (eventData) => api.post('/scheduling/events', eventData),
+  deleteEvent: (eventId) => api.delete(`/scheduling/events/${eventId}`),
+  getAutoCreateRules: () => api.get('/scheduling/auto-create-rules'),
+  createAutoCreateRule: (ruleData) => api.post('/scheduling/auto-create-rules', ruleData),
+  deleteAutoCreateRule: (ruleId) => api.delete(`/scheduling/auto-create-rules/${ruleId}`),
+  testAutoCreateRule: (testData) => api.post('/scheduling/auto-create-rules/test', testData),
 };

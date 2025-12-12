@@ -19,7 +19,11 @@ import os
 # Add backend to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from web_api import app, get_automation_manager, get_stream_checker_service
+import web_api
+from web_api import (
+    app, get_automation_manager, get_stream_checker_service,
+    stop_epg_refresh_processor, stop_scheduled_event_processor
+)
 
 
 class TestWizardAutostartAPI(unittest.TestCase):
@@ -41,14 +45,24 @@ class TestWizardAutostartAPI(unittest.TestCase):
             manager = get_automation_manager()
             if manager.running:
                 manager.stop_automation()
-        except:
+        except Exception:
             pass
         
         try:
             service = get_stream_checker_service()
             if service.running:
                 service.stop()
-        except:
+        except Exception:
+            pass
+        
+        try:
+            stop_epg_refresh_processor()
+        except Exception:
+            pass
+        
+        try:
+            stop_scheduled_event_processor()
+        except Exception:
             pass
     
     def _create_complete_wizard_config(self):
@@ -106,9 +120,18 @@ class TestWizardAutostartAPI(unittest.TestCase):
                     self.assertTrue(service.running, "Stream checker service should be running")
                     self.assertTrue(manager.running, "Automation service should be running")
                     
+                    # Verify background processors are running
+                    import web_api
+                    self.assertIsNotNone(web_api.epg_refresh_thread, "EPG refresh thread should exist")
+                    self.assertTrue(web_api.epg_refresh_thread.is_alive(), "EPG refresh processor should be running")
+                    self.assertIsNotNone(web_api.scheduled_event_processor_thread, "Scheduled event processor thread should exist")
+                    self.assertTrue(web_api.scheduled_event_processor_thread.is_alive(), "Scheduled event processor should be running")
+                    
                     # Cleanup
                     service.stop()
                     manager.stop_automation()
+                    stop_epg_refresh_processor()
+                    stop_scheduled_event_processor()
     
     def test_endpoint_doesnt_start_when_wizard_incomplete(self):
         """Test that API endpoint doesn't auto-start when wizard is incomplete."""
@@ -202,6 +225,14 @@ class TestWizardAutostartAPI(unittest.TestCase):
                     # Verify services have been stopped
                     self.assertFalse(service.running, "Stream checker service should be stopped")
                     self.assertFalse(manager.running, "Automation service should be stopped")
+                    
+                    # Verify background processors have been stopped
+                    import web_api
+                    # Thread might still be alive briefly during shutdown, so check if they're not running or dead
+                    if web_api.epg_refresh_thread:
+                        self.assertFalse(web_api.epg_refresh_running, "EPG refresh processor should not be marked as running")
+                    if web_api.scheduled_event_processor_thread:
+                        self.assertFalse(web_api.scheduled_event_processor_running, "Scheduled event processor should not be marked as running")
 
 
 if __name__ == '__main__':

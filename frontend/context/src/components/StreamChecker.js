@@ -112,6 +112,7 @@ function StreamChecker() {
   const queue = status?.queue || {};
   const progress = status?.progress || null;
   const config = status?.config || {};
+  const concurrency = status?.concurrency || {};
 
   return (
     <Box sx={{ flexGrow: 1, p: 3 }}>
@@ -184,6 +185,16 @@ function StreamChecker() {
                   <Chip label="Stopped" color="default" size="small" />
                 )}
               </Box>
+              {concurrency.enabled && (
+                <Box mt={1}>
+                  <Chip 
+                    label={`${concurrency.mode} mode`}
+                    color="info"
+                    size="small"
+                    sx={{ textTransform: 'capitalize' }}
+                  />
+                </Box>
+              )}
             </CardContent>
           </Card>
         </Grid>
@@ -236,13 +247,80 @@ function StreamChecker() {
           </Card>
         </Grid>
 
+        {/* Concurrency Status Card */}
+        {concurrency.enabled && (
+          <Grid item xs={12} md={6}>
+            <Card>
+              <CardContent>
+                <Typography variant="h6" gutterBottom>
+                  Concurrent Checking Status
+                </Typography>
+                <Divider sx={{ mb: 2 }} />
+                <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
+                  <Box flex={1}>
+                    <Typography variant="body2" color="textSecondary">
+                      Global Concurrent Streams
+                    </Typography>
+                    <Typography variant="h5">
+                      {concurrency.current_concurrent || 0} / {concurrency.global_limit === 0 ? 'unlimited' : concurrency.global_limit}
+                    </Typography>
+                  </Box>
+                  <Box flex={1}>
+                    <CircularProgress
+                      variant="determinate"
+                      value={
+                        concurrency.global_limit > 0 
+                          ? Math.min(((concurrency.current_concurrent || 0) / concurrency.global_limit) * 100, 100) 
+                          : 0
+                      }
+                      size={60}
+                      thickness={5}
+                      sx={{
+                        color: (concurrency.global_limit > 0 && concurrency.current_concurrent >= concurrency.global_limit) ? 'error.main' : 'primary.main'
+                      }}
+                    />
+                  </Box>
+                </Box>
+                <Typography variant="caption" color="textSecondary">
+                  {concurrency.current_concurrent > 0 
+                    ? `${concurrency.current_concurrent} streams currently being analyzed concurrently`
+                    : 'No streams currently being analyzed'}
+                </Typography>
+                {concurrency.accounts && Object.keys(concurrency.accounts).length > 0 && (
+                  <Box mt={2}>
+                    <Typography variant="body2" fontWeight="bold" gutterBottom>
+                      Per-Account Activity:
+                    </Typography>
+                    {Object.entries(concurrency.accounts).map(([accountId, count]) => 
+                      count > 0 ? (
+                        <Typography key={accountId} variant="caption" display="block">
+                          Account {accountId}: {count} concurrent streams
+                        </Typography>
+                      ) : null
+                    )}
+                  </Box>
+                )}
+              </CardContent>
+            </Card>
+          </Grid>
+        )}
+
         {progress && status?.checking && (
           <Grid item xs={12}>
             <Card>
               <CardContent>
-                <Typography variant="h6" gutterBottom>
-                  Current Check
-                </Typography>
+                <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
+                  <Typography variant="h6">
+                    Current Check Progress
+                  </Typography>
+                  {concurrency.enabled && concurrency.current_concurrent > 0 && (
+                    <Chip 
+                      label={`${concurrency.current_concurrent} concurrent streams analyzing`}
+                      color="primary"
+                      size="small"
+                    />
+                  )}
+                </Box>
                 <Typography variant="body2" gutterBottom>
                   Channel: <strong>{progress.channel_name}</strong> (ID: {progress.channel_id})
                 </Typography>
@@ -284,6 +362,11 @@ function StreamChecker() {
                     {progress.step_detail && (
                       <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 0.5 }}>
                         {progress.step_detail}
+                      </Typography>
+                    )}
+                    {concurrency.enabled && (
+                      <Typography variant="caption" color="info.main" display="block" sx={{ mb: 0.5 }}>
+                        Using concurrent mode with up to {concurrency.global_limit} parallel stream checks
                       </Typography>
                     )}
                     <LinearProgress
@@ -422,6 +505,13 @@ function StreamChecker() {
               and checks their streams for quality based on your pipeline mode. Streams are analyzed for bitrate, 
               resolution, codec quality, and errors, then automatically reordered with the best streams at the top.
             </Typography>
+            {concurrency.enabled && (
+              <Typography variant="body2" sx={{ mt: 1 }}>
+                <strong>Concurrent Mode:</strong> Stream checking runs in concurrent mode using Celery workers,
+                allowing up to {concurrency.global_limit} streams to be analyzed in parallel for faster processing.
+                This significantly reduces the time needed to check channels with many streams.
+              </Typography>
+            )}
             <Typography variant="body2" sx={{ mt: 1 }}>
               <strong>Global Action:</strong> Performs a complete update cycle (Update M3U → Match streams → 
               Check all channels) bypassing the 2-hour immunity. Use this for manual full updates or schedule it
