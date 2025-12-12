@@ -431,6 +431,105 @@ Returns service health status.
 
 ## Scheduling & EPG-Based Checks
 
+### Auto-Create Rules
+
+Auto-create rules automatically create scheduled events when EPG programs match regex patterns.
+
+#### Get All Auto-Create Rules
+```
+GET /api/scheduling/auto-create-rules
+```
+Get all auto-create rules.
+
+**Response:**
+```json
+[
+  {
+    "id": "rule-uuid",
+    "name": "Breaking News",
+    "channel_id": 123,
+    "channel_name": "CNN HD",
+    "channel_logo_url": "http://...",
+    "tvg_id": "cnn.us",
+    "regex_pattern": "^Breaking News",
+    "minutes_before": 5,
+    "created_at": "2024-01-01T12:00:00+00:00"
+  }
+]
+```
+
+#### Create Auto-Create Rule
+```
+POST /api/scheduling/auto-create-rules
+Content-Type: application/json
+
+{
+  "name": "Breaking News Alert",
+  "channel_id": 123,
+  "regex_pattern": "^Breaking News",
+  "minutes_before": 5
+}
+```
+Create a new auto-create rule. The system will immediately match existing EPG programs to the new rule.
+
+**Response:** Returns the created rule object (201 Created)
+
+#### Update Auto-Create Rule
+```
+PUT /api/scheduling/auto-create-rules/{rule_id}
+Content-Type: application/json
+
+{
+  "name": "Updated Rule Name",
+  "channel_id": 123,
+  "regex_pattern": "^Updated Pattern",
+  "minutes_before": 10
+}
+```
+Update an existing auto-create rule. All fields are optional - only provided fields will be updated. Existing scheduled events created by this rule will be deleted and new ones will be created based on the updated rule.
+
+**Response:** Returns the updated rule object (200 OK)
+
+#### Delete Auto-Create Rule
+```
+DELETE /api/scheduling/auto-create-rules/{rule_id}
+```
+Delete an auto-create rule and all scheduled events created by it.
+
+**Response:**
+```json
+{
+  "message": "Rule deleted"
+}
+```
+
+#### Test Auto-Create Rule
+```
+POST /api/scheduling/auto-create-rules/test
+Content-Type: application/json
+
+{
+  "channel_id": 123,
+  "regex_pattern": "^Breaking News"
+}
+```
+Test a regex pattern against current EPG programs for a channel without creating a rule.
+
+**Response:**
+```json
+{
+  "matches": [
+    {
+      "title": "Breaking News: Market Update",
+      "start_time": "2024-01-01T14:00:00+00:00",
+      "end_time": "2024-01-01T14:30:00+00:00"
+    }
+  ]
+}
+```
+
+### Scheduled Events Processor
+
 ### Get Scheduled Event Processor Status
 ```
 GET /api/scheduling/processor/status
