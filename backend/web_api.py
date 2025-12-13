@@ -26,6 +26,7 @@ from stream_checker_service import get_stream_checker_service
 from scheduling_service import get_scheduling_service
 from channel_settings_manager import get_channel_settings_manager
 from dispatcharr_config import get_dispatcharr_config
+from channel_order_manager import get_channel_order_manager
 
 # Import UDI for direct data access
 from udi import get_udi_manager
@@ -442,13 +443,17 @@ def update_automation_config():
 
 @app.route('/api/channels', methods=['GET'])
 def get_channels():
-    """Get all channels from UDI."""
+    """Get all channels from UDI with custom ordering applied."""
     try:
         udi = get_udi_manager()
         channels = udi.get_channels()
         
         if channels is None:
             return jsonify({"error": "Failed to fetch channels"}), 500
+        
+        # Apply custom channel order if configured
+        order_manager = get_channel_order_manager()
+        channels = order_manager.apply_order(channels)
         
         return jsonify(channels)
     except Exception as e:
@@ -1046,6 +1051,58 @@ def update_channel_settings_endpoint(channel_id):
             return jsonify({"error": "Failed to update channel settings"}), 500
     except Exception as e:
         logger.error(f"Error updating channel settings: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/channel-order', methods=['GET'])
+def get_channel_order():
+    """Get current channel order configuration."""
+    try:
+        order_manager = get_channel_order_manager()
+        order = order_manager.get_order()
+        return jsonify({"order": order})
+    except Exception as e:
+        logger.error(f"Error getting channel order: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/channel-order', methods=['PUT'])
+def set_channel_order():
+    """Set channel order configuration."""
+    try:
+        data = request.get_json()
+        if not data or 'order' not in data:
+            return jsonify({"error": "Missing 'order' field in request"}), 400
+        
+        order = data['order']
+        if not isinstance(order, list):
+            return jsonify({"error": "'order' must be a list of channel IDs"}), 400
+        
+        order_manager = get_channel_order_manager()
+        success = order_manager.set_order(order)
+        
+        if success:
+            return jsonify({
+                "message": "Channel order updated successfully",
+                "order": order
+            })
+        else:
+            return jsonify({"error": "Failed to update channel order"}), 500
+    except Exception as e:
+        logger.error(f"Error updating channel order: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/channel-order', methods=['DELETE'])
+def clear_channel_order():
+    """Clear custom channel order (revert to default)."""
+    try:
+        order_manager = get_channel_order_manager()
+        success = order_manager.clear_order()
+        
+        if success:
+            return jsonify({"message": "Channel order cleared successfully"})
+        else:
+            return jsonify({"error": "Failed to clear channel order"}), 500
+    except Exception as e:
+        logger.error(f"Error clearing channel order: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/discover-streams', methods=['POST'])
