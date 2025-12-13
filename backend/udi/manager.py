@@ -34,6 +34,9 @@ from udi.cache import UDICache
 
 from logging_config import setup_logging
 
+# Import at module level for better performance
+from dispatcharr_config import get_dispatcharr_config
+
 logger = setup_logging(__name__)
 
 
@@ -106,6 +109,14 @@ class UDIManager:
                 self._initialized = True
                 logger.info("UDI Manager initialized from storage")
                 return True
+            
+            # Check if Dispatcharr is configured before fetching from API
+            config = get_dispatcharr_config()
+            if not config.is_configured():
+                logger.warning("Cannot fetch data from API: Dispatcharr credentials not configured")
+                # Mark as initialized with empty data to prevent repeated attempts
+                self._initialized = True
+                return False
             
             # Fetch fresh data from API
             logger.info("Fetching fresh data from API...")
@@ -358,6 +369,12 @@ class UDIManager:
         """
         logger.info("Refreshing all UDI data...")
         
+        # Check if Dispatcharr is configured before attempting API calls
+        config = get_dispatcharr_config()
+        if not config.is_configured():
+            logger.warning("Cannot refresh data: Dispatcharr credentials not configured")
+            return False
+        
         try:
             data = self.fetcher.refresh_all()
             
@@ -408,6 +425,12 @@ class UDIManager:
         Returns:
             True if refresh successful
         """
+        # Check if Dispatcharr is configured
+        config = get_dispatcharr_config()
+        if not config.is_configured():
+            logger.warning("Cannot refresh channels: Dispatcharr credentials not configured")
+            return False
+        
         logger.info("Refreshing channels...")
         try:
             channels = self.fetcher.fetch_channels()
@@ -660,9 +683,17 @@ class UDIManager:
     def _ensure_initialized(self) -> None:
         """Ensure UDI Manager is initialized before data access.
         
-        This will auto-initialize if not already done.
+        This will auto-initialize if not already done, but only if
+        Dispatcharr credentials are configured.
         """
         if not self._initialized:
+            # Check if Dispatcharr is configured before auto-initializing
+            config = get_dispatcharr_config()
+            
+            if not config.is_configured():
+                logger.warning("UDI Manager not initialized and Dispatcharr credentials not configured. Skipping auto-initialization.")
+                return
+            
             logger.info("UDI Manager not initialized, auto-initializing...")
             self.initialize()
 

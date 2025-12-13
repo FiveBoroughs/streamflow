@@ -82,6 +82,8 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
   })
   const [connectionTestResult, setConnectionTestResult] = useState(null)
   const [testingConnection, setTestingConnection] = useState(false)
+  const [udiInitialized, setUdiInitialized] = useState(false)
+  const [initializingUdi, setInitializingUdi] = useState(false)
 
   // Channel configuration state
   const [channels, setChannels] = useState([])
@@ -156,6 +158,15 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
     }))
   }, [streamCheckerConfig.pipeline_mode])
 
+  // Load channels and patterns when entering step 1
+  // Only depends on activeStep to avoid unnecessary reloads
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (activeStep === 1 && channels.length === 0) {
+      loadChannelsAndPatterns()
+    }
+  }, [activeStep])
+
   const determineActiveStep = (status) => {
     if (status.setup_complete) {
       setActiveStep(3)
@@ -208,11 +219,9 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
       
       toast({
         title: "Success",
-        description: "Successfully connected to Dispatcharr"
+        description: "Successfully connected to Dispatcharr. Click 'Save Configuration' to complete setup."
       })
       
-      // Refresh setup status
-      await refreshSetupStatus()
     } catch (err) {
       const errorMsg = err.response?.data?.error || 'Failed to connect to Dispatcharr'
       setConnectionTestResult({
@@ -232,12 +241,48 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
   const handleSaveDispatcharrConfig = async () => {
     try {
       setLoading(true)
+      setInitializingUdi(true)
+      setUdiInitialized(false)
+      
+      // Save configuration (backend will initialize UDI automatically)
       await dispatcharrAPI.updateConfig(dispatcharrConfig)
+      
       toast({
         title: "Success",
-        description: "Dispatcharr configuration saved"
+        description: "Dispatcharr configuration saved. Loading channel data..."
       })
-      await refreshSetupStatus()
+      
+      // Poll status until channels are loaded (max 10 seconds)
+      let attempts = 0
+      const maxAttempts = 10
+      let dataLoaded = false
+      
+      while (attempts < maxAttempts && !dataLoaded) {
+        await new Promise(resolve => setTimeout(resolve, 1000))
+        const response = await setupAPI.getStatus()
+        setSetupStatus(response.data)
+        determineActiveStep(response.data)
+        
+        if (response.data.has_channels && response.data.dispatcharr_connection) {
+          dataLoaded = true
+          setUdiInitialized(true)
+          toast({
+            title: "Data Loaded",
+            description: "Channel data loaded successfully from Dispatcharr"
+          })
+        }
+        
+        attempts++
+      }
+      
+      if (!dataLoaded) {
+        toast({
+          title: "Warning",
+          description: "Configuration saved but channel data may still be loading. Please refresh if needed.",
+          variant: "default"
+        })
+      }
+      
     } catch (err) {
       toast({
         title: "Error",
@@ -245,6 +290,7 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
         variant: "destructive"
       })
     } finally {
+      setInitializingUdi(false)
       setLoading(false)
     }
   }
@@ -262,7 +308,9 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
       ])
       
       setChannels(channelsResponse.data)
-      setPatterns(patternsResponse.data)
+      // Extract just the patterns object, not the whole config structure
+      const patternsData = patternsResponse.data?.patterns || {}
+      setPatterns(patternsData)
       setM3uAccounts(m3uResponse.data || [])
     } catch (err) {
       console.error('Failed to load channels and patterns:', err)
@@ -498,20 +546,29 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
               </Alert>
             )}
 
+            {initializingUdi && (
+              <Alert>
+                <div className="flex items-center gap-2">
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
+                  <AlertDescription>Loading channel data from Dispatcharr...</AlertDescription>
+                </div>
+              </Alert>
+            )}
+
             <div className="flex gap-2">
-              <Button onClick={handleTestConnection} disabled={testingConnection}>
+              <Button onClick={handleTestConnection} disabled={testingConnection || initializingUdi || loading}>
                 {testingConnection ? 'Testing...' : 'Test Connection'}
               </Button>
-              <Button onClick={handleSaveDispatcharrConfig} variant="outline" disabled={loading}>
-                Save Configuration
+              <Button onClick={handleSaveDispatcharrConfig} variant="default" disabled={loading || testingConnection || initializingUdi}>
+                {initializingUdi ? 'Saving & Loading Data...' : 'Save & Load Data'}
               </Button>
             </div>
 
-            {setupStatus?.dispatcharr_connection && (
+            {udiInitialized && (
               <Alert>
                 <CheckCircle2 className="h-4 w-4" />
                 <AlertDescription>
-                  Connection verified! Ready to proceed to next step.
+                  Connection verified and channel data loaded! Ready to proceed to next step.
                 </AlertDescription>
               </Alert>
             )}
@@ -875,14 +932,27 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
             {activeStep < 3 && (
               <Button
                 onClick={async () => {
-                  if (activeStep === 2) {
+                  if (activeStep === 0) {
+                    // On step 0, check if UDI is initialized before proceeding
+                    if (!udiInitialized) {
+                      toast({
+                        title: "Not Ready",
+                        description: "Please test the connection and wait for channel data to load before proceeding.",
+                        variant: "destructive"
+                      })
+                      return
+                    }
+                    // Load channels and patterns before moving to step 1
+                    await loadChannelsAndPatterns()
+                    setActiveStep(prev => Math.min(3, prev + 1))
+                  } else if (activeStep === 2) {
                     // Save automation config before moving to next step
                     await handleSaveAutomationConfig()
                   } else {
                     setActiveStep(prev => Math.min(3, prev + 1))
                   }
                 }}
-                disabled={loading}
+                disabled={loading || (activeStep === 0 && !udiInitialized)}
               >
                 {activeStep === 2 ? (loading ? 'Saving...' : 'Save & Continue') : 'Next'}
               </Button>

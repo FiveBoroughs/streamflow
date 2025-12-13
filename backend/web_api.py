@@ -638,7 +638,7 @@ def get_channel_logo_cached(logo_id):
             return jsonify({"error": "Invalid logo URL scheme"}), 400
         
         # Download the logo with SSL verification enabled
-        logger.info(f"Downloading logo {logo_id_int} from {logo_url}")
+        logger.debug(f"Downloading logo {logo_id_int} from {logo_url}")
         response = requests.get(logo_url, timeout=10, verify=True)
         response.raise_for_status()
         
@@ -673,7 +673,7 @@ def get_channel_logo_cached(logo_id):
         with open(cached_path, 'wb') as f:
             f.write(response.content)
         
-        logger.info(f"Cached logo {logo_id} to {cached_path}")
+        logger.debug(f"Cached logo {logo_id} to {cached_path}")
         
         # Serve the cached logo
         mimetype = f'image/{ext[1:]}'
@@ -1269,13 +1269,17 @@ def get_setup_wizard_status():
             status["dispatcharr_connection"] = True
             status["has_channels"] = True
         else:
-            try:
-                udi = get_udi_manager()
-                channels = udi.get_channels()
-                status["dispatcharr_connection"] = channels is not None
-                status["has_channels"] = bool(channels)
-            except:
-                pass
+            # Only check for channels if Dispatcharr is configured
+            # This prevents unnecessary initialization attempts and error logs
+            dispatcharr_config = get_dispatcharr_config()
+            if dispatcharr_config.is_configured():
+                try:
+                    udi = get_udi_manager()
+                    channels = udi.get_channels()
+                    status["dispatcharr_connection"] = channels is not None
+                    status["has_channels"] = bool(channels)
+                except:
+                    pass
         
         status["setup_complete"] = all([
             status["automation_config_exists"],
@@ -1372,6 +1376,22 @@ def update_dispatcharr_config_endpoint():
         # Clear token when credentials change so we re-authenticate
         os.environ["DISPATCHARR_TOKEN"] = ""
         
+        # Initialize UDI with the new configuration if all credentials are provided
+        # This ensures data is fetched immediately after saving credentials
+        if config_manager.is_configured():
+            try:
+                logger.info("Dispatcharr credentials updated, initializing UDI Manager...")
+                udi = get_udi_manager()
+                udi.initialize(force_refresh=True)
+                logger.info("UDI Manager initialized successfully with new credentials")
+            except Exception as e:
+                logger.warning(
+                    f"Failed to initialize UDI Manager after config update: {e}. "
+                    f"Data may not be available until manual refresh or application restart."
+                )
+                # Don't fail the config update if UDI initialization fails
+                # The UI will poll and detect if data is not loaded
+        
         return jsonify({"message": "Dispatcharr configuration updated successfully"})
     except Exception as e:
         logger.error(f"Error updating Dispatcharr config: {e}")
@@ -1467,6 +1487,62 @@ def test_dispatcharr_connection():
     except Exception as e:
         logger.error(f"Error testing Dispatcharr connection: {e}")
         return jsonify({"error": str(e)}), 500
+
+@app.route('/api/dispatcharr/initialize-udi', methods=['POST'])
+def initialize_udi():
+    """Initialize UDI Manager with current Dispatcharr credentials.
+    
+    This endpoint should be called after successfully testing the Dispatcharr
+    connection to ensure the UDI Manager is initialized with fresh data from
+    the Dispatcharr API.
+    """
+    try:
+        config_manager = get_dispatcharr_config()
+        
+        # Check if Dispatcharr is configured
+        if not config_manager.is_configured():
+            return jsonify({
+                "success": False,
+                "error": "Dispatcharr is not fully configured. Please provide base_url, username, and password."
+            }), 400
+        
+        logger.info("Initializing UDI Manager with fresh data from Dispatcharr...")
+        
+        udi = get_udi_manager()
+        
+        # Force refresh to fetch fresh data from API
+        success = udi.initialize(force_refresh=True)
+        
+        if success:
+            # Get counts to report back
+            channels = udi.get_channels()
+            streams = udi.get_streams()
+            m3u_accounts = udi.get_m3u_accounts()
+            
+            logger.info(f"UDI Manager initialized successfully: {len(channels)} channels, {len(streams)} streams, {len(m3u_accounts)} M3U accounts")
+            
+            return jsonify({
+                "success": True,
+                "message": "UDI Manager initialized successfully",
+                "data": {
+                    "channels_count": len(channels),
+                    "streams_count": len(streams),
+                    "m3u_accounts_count": len(m3u_accounts)
+                }
+            })
+        else:
+            logger.error("Failed to initialize UDI Manager")
+            return jsonify({
+                "success": False,
+                "error": "Failed to initialize UDI Manager. Please check the logs for details."
+            }), 500
+            
+    except Exception as e:
+        logger.error(f"Error initializing UDI Manager: {e}", exc_info=True)
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
 
 # ===== Stream Checker Endpoints =====
 
