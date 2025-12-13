@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label.jsx'
 import { Input } from '@/components/ui/input.jsx'
 import { Switch } from '@/components/ui/switch.jsx'
 import { Separator } from '@/components/ui/separator.jsx'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs.jsx'
 import { useToast } from '@/hooks/use-toast.js'
 import { streamCheckerAPI } from '@/services/api.js'
 import { 
@@ -366,229 +367,229 @@ export default function StreamChecker() {
                 </div>
               </div>
 
-              {/* Stream Analysis Settings */}
-              <div className="space-y-4">
-                <h3 className="text-lg font-semibold">Stream Analysis</h3>
-                
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="ffmpeg_duration">FFmpeg Duration (seconds)</Label>
-                    <Input
-                      id="ffmpeg_duration"
-                      type="number"
-                      value={editedConfig?.stream_analysis?.ffmpeg_duration || 30}
-                      onChange={(e) => updateConfigValue('stream_analysis.ffmpeg_duration', parseInt(e.target.value))}
+              {/* Tabs for Configuration Sections */}
+              <Tabs defaultValue="analysis" className="w-full">
+                <TabsList className="grid w-full grid-cols-3">
+                  <TabsTrigger value="analysis">Stream Analysis</TabsTrigger>
+                  <TabsTrigger value="concurrent">Concurrent Checking</TabsTrigger>
+                  <TabsTrigger value="scoring">Stream Scoring Weights</TabsTrigger>
+                </TabsList>
+
+                {/* Stream Analysis Tab */}
+                <TabsContent value="analysis" className="space-y-4">
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="ffmpeg_duration">FFmpeg Duration (seconds)</Label>
+                      <Input
+                        id="ffmpeg_duration"
+                        type="number"
+                        value={editedConfig?.stream_analysis?.ffmpeg_duration || 30}
+                        onChange={(e) => updateConfigValue('stream_analysis.ffmpeg_duration', parseInt(e.target.value))}
+                        disabled={!configEditing}
+                        min={5}
+                        max={120}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Duration to analyze each stream (5-120 seconds)
+                      </p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="timeout">Timeout (seconds)</Label>
+                      <Input
+                        id="timeout"
+                        type="number"
+                        value={editedConfig?.stream_analysis?.timeout || 30}
+                        onChange={(e) => updateConfigValue('stream_analysis.timeout', parseInt(e.target.value))}
+                        disabled={!configEditing}
+                        min={10}
+                        max={300}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Timeout for stream operations
+                      </p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="retries">Retry Attempts</Label>
+                      <Input
+                        id="retries"
+                        type="number"
+                        value={editedConfig?.stream_analysis?.retries || 1}
+                        onChange={(e) => updateConfigValue('stream_analysis.retries', parseInt(e.target.value))}
+                        disabled={!configEditing}
+                        min={0}
+                        max={5}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Number of retry attempts for failed streams
+                      </p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="retry_delay">Retry Delay (seconds)</Label>
+                      <Input
+                        id="retry_delay"
+                        type="number"
+                        value={editedConfig?.stream_analysis?.retry_delay || 10}
+                        onChange={(e) => updateConfigValue('stream_analysis.retry_delay', parseInt(e.target.value))}
+                        disabled={!configEditing}
+                        min={1}
+                        max={60}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Delay between retry attempts
+                      </p>
+                    </div>
+
+                    <div className="space-y-2 md:col-span-2">
+                      <Label htmlFor="user_agent">FFmpeg/FFprobe User Agent</Label>
+                      <Input
+                        id="user_agent"
+                        type="text"
+                        value={editedConfig?.stream_analysis?.user_agent || 'VLC/3.0.14'}
+                        onChange={(e) => updateConfigValue('stream_analysis.user_agent', e.target.value)}
+                        disabled={!configEditing}
+                        maxLength={200}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        User agent string for ffmpeg/ffprobe (for strict stream providers)
+                      </p>
+                    </div>
+                  </div>
+                </TabsContent>
+
+                {/* Concurrent Checking Tab */}
+                <TabsContent value="concurrent" className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label htmlFor="concurrent_enabled">Enable Concurrent Checking</Label>
+                      <p className="text-xs text-muted-foreground">
+                        Check multiple streams in parallel for faster processing
+                      </p>
+                    </div>
+                    <Switch
+                      id="concurrent_enabled"
+                      checked={editedConfig?.concurrent_streams?.enabled !== false}
+                      onCheckedChange={(checked) => updateConfigValue('concurrent_streams.enabled', checked)}
                       disabled={!configEditing}
-                      min={5}
-                      max={120}
                     />
-                    <p className="text-xs text-muted-foreground">
-                      Duration to analyze each stream (5-120 seconds)
-                    </p>
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="timeout">Timeout (seconds)</Label>
+                    <Label htmlFor="global_limit">Global Concurrent Limit</Label>
                     <Input
-                      id="timeout"
+                      id="global_limit"
                       type="number"
-                      value={editedConfig?.stream_analysis?.timeout || 30}
-                      onChange={(e) => updateConfigValue('stream_analysis.timeout', parseInt(e.target.value))}
-                      disabled={!configEditing}
-                      min={10}
-                      max={300}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Timeout for stream operations
-                    </p>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="retries">Retry Attempts</Label>
-                    <Input
-                      id="retries"
-                      type="number"
-                      value={editedConfig?.stream_analysis?.retries || 1}
-                      onChange={(e) => updateConfigValue('stream_analysis.retries', parseInt(e.target.value))}
-                      disabled={!configEditing}
-                      min={0}
-                      max={5}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Number of retry attempts for failed streams
-                    </p>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="retry_delay">Retry Delay (seconds)</Label>
-                    <Input
-                      id="retry_delay"
-                      type="number"
-                      value={editedConfig?.stream_analysis?.retry_delay || 10}
-                      onChange={(e) => updateConfigValue('stream_analysis.retry_delay', parseInt(e.target.value))}
-                      disabled={!configEditing}
+                      value={editedConfig?.concurrent_streams?.global_limit || 10}
+                      onChange={(e) => updateConfigValue('concurrent_streams.global_limit', parseInt(e.target.value))}
+                      disabled={!configEditing || !editedConfig?.concurrent_streams?.enabled}
                       min={1}
-                      max={60}
+                      max={50}
                     />
                     <p className="text-xs text-muted-foreground">
-                      Delay between retry attempts
+                      Maximum number of streams to check simultaneously (1-50)
                     </p>
                   </div>
 
-                  <div className="space-y-2 md:col-span-2">
-                    <Label htmlFor="user_agent">FFmpeg/FFprobe User Agent</Label>
+                  <div className="space-y-2">
+                    <Label htmlFor="stagger_delay">Stagger Delay (seconds)</Label>
                     <Input
-                      id="user_agent"
-                      type="text"
-                      value={editedConfig?.stream_analysis?.user_agent || 'VLC/3.0.14'}
-                      onChange={(e) => updateConfigValue('stream_analysis.user_agent', e.target.value)}
-                      disabled={!configEditing}
-                      maxLength={200}
+                      id="stagger_delay"
+                      type="number"
+                      step="0.1"
+                      value={editedConfig?.concurrent_streams?.stagger_delay || 1.0}
+                      onChange={(e) => updateConfigValue('concurrent_streams.stagger_delay', parseFloat(e.target.value))}
+                      disabled={!configEditing || !editedConfig?.concurrent_streams?.enabled}
+                      min={0}
+                      max={10}
                     />
                     <p className="text-xs text-muted-foreground">
-                      User agent string for ffmpeg/ffprobe (for strict stream providers)
+                      Delay between starting each concurrent check to prevent overload
                     </p>
                   </div>
-                </div>
-              </div>
+                </TabsContent>
 
-              <Separator />
-
-              {/* Concurrent Checking Settings */}
-              <div className="space-y-4">
-                <h3 className="text-lg font-semibold">Concurrent Checking</h3>
-                
-                <div className="flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <Label htmlFor="concurrent_enabled">Enable Concurrent Checking</Label>
-                    <p className="text-xs text-muted-foreground">
-                      Check multiple streams in parallel for faster processing
-                    </p>
-                  </div>
-                  <Switch
-                    id="concurrent_enabled"
-                    checked={editedConfig?.concurrent_streams?.enabled !== false}
-                    onCheckedChange={(checked) => updateConfigValue('concurrent_streams.enabled', checked)}
-                    disabled={!configEditing}
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="global_limit">Global Concurrent Limit</Label>
-                  <Input
-                    id="global_limit"
-                    type="number"
-                    value={editedConfig?.concurrent_streams?.global_limit || 10}
-                    onChange={(e) => updateConfigValue('concurrent_streams.global_limit', parseInt(e.target.value))}
-                    disabled={!configEditing || !editedConfig?.concurrent_streams?.enabled}
-                    min={1}
-                    max={50}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Maximum number of streams to check simultaneously (1-50)
+                {/* Stream Scoring Weights Tab */}
+                <TabsContent value="scoring" className="space-y-4">
+                  <p className="text-sm text-muted-foreground">
+                    Adjust how different quality metrics are weighted when scoring streams
                   </p>
-                </div>
+                  
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="weight_bitrate">Bitrate Weight</Label>
+                      <Input
+                        id="weight_bitrate"
+                        type="number"
+                        step="0.05"
+                        value={editedConfig?.scoring?.weights?.bitrate || 0.40}
+                        onChange={(e) => updateConfigValue('scoring.weights.bitrate', parseFloat(e.target.value))}
+                        disabled={!configEditing}
+                        min={0}
+                        max={1}
+                      />
+                    </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="stagger_delay">Stagger Delay (seconds)</Label>
-                  <Input
-                    id="stagger_delay"
-                    type="number"
-                    step="0.1"
-                    value={editedConfig?.concurrent_streams?.stagger_delay || 1.0}
-                    onChange={(e) => updateConfigValue('concurrent_streams.stagger_delay', parseFloat(e.target.value))}
-                    disabled={!configEditing || !editedConfig?.concurrent_streams?.enabled}
-                    min={0}
-                    max={10}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Delay between starting each concurrent check to prevent overload
-                  </p>
-                </div>
-              </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="weight_resolution">Resolution Weight</Label>
+                      <Input
+                        id="weight_resolution"
+                        type="number"
+                        step="0.05"
+                        value={editedConfig?.scoring?.weights?.resolution || 0.35}
+                        onChange={(e) => updateConfigValue('scoring.weights.resolution', parseFloat(e.target.value))}
+                        disabled={!configEditing}
+                        min={0}
+                        max={1}
+                      />
+                    </div>
 
-              <Separator />
+                    <div className="space-y-2">
+                      <Label htmlFor="weight_fps">FPS Weight</Label>
+                      <Input
+                        id="weight_fps"
+                        type="number"
+                        step="0.05"
+                        value={editedConfig?.scoring?.weights?.fps || 0.15}
+                        onChange={(e) => updateConfigValue('scoring.weights.fps', parseFloat(e.target.value))}
+                        disabled={!configEditing}
+                        min={0}
+                        max={1}
+                      />
+                    </div>
 
-              {/* Scoring Configuration */}
-              <div className="space-y-4">
-                <h3 className="text-lg font-semibold">Stream Scoring Weights</h3>
-                <p className="text-sm text-muted-foreground">
-                  Adjust how different quality metrics are weighted when scoring streams
-                </p>
-                
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="weight_bitrate">Bitrate Weight</Label>
-                    <Input
-                      id="weight_bitrate"
-                      type="number"
-                      step="0.05"
-                      value={editedConfig?.scoring?.weights?.bitrate || 0.40}
-                      onChange={(e) => updateConfigValue('scoring.weights.bitrate', parseFloat(e.target.value))}
+                    <div className="space-y-2">
+                      <Label htmlFor="weight_codec">Codec Weight</Label>
+                      <Input
+                        id="weight_codec"
+                        type="number"
+                        step="0.05"
+                        value={editedConfig?.scoring?.weights?.codec || 0.10}
+                        onChange={(e) => updateConfigValue('scoring.weights.codec', parseFloat(e.target.value))}
+                        disabled={!configEditing}
+                        min={0}
+                        max={1}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label htmlFor="prefer_h265">Prefer H.265/HEVC</Label>
+                      <p className="text-xs text-muted-foreground">
+                        Give preference to H.265 codec over H.264
+                      </p>
+                    </div>
+                    <Switch
+                      id="prefer_h265"
+                      checked={editedConfig?.scoring?.prefer_h265 !== false}
+                      onCheckedChange={(checked) => updateConfigValue('scoring.prefer_h265', checked)}
                       disabled={!configEditing}
-                      min={0}
-                      max={1}
                     />
                   </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="weight_resolution">Resolution Weight</Label>
-                    <Input
-                      id="weight_resolution"
-                      type="number"
-                      step="0.05"
-                      value={editedConfig?.scoring?.weights?.resolution || 0.35}
-                      onChange={(e) => updateConfigValue('scoring.weights.resolution', parseFloat(e.target.value))}
-                      disabled={!configEditing}
-                      min={0}
-                      max={1}
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="weight_fps">FPS Weight</Label>
-                    <Input
-                      id="weight_fps"
-                      type="number"
-                      step="0.05"
-                      value={editedConfig?.scoring?.weights?.fps || 0.15}
-                      onChange={(e) => updateConfigValue('scoring.weights.fps', parseFloat(e.target.value))}
-                      disabled={!configEditing}
-                      min={0}
-                      max={1}
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="weight_codec">Codec Weight</Label>
-                    <Input
-                      id="weight_codec"
-                      type="number"
-                      step="0.05"
-                      value={editedConfig?.scoring?.weights?.codec || 0.10}
-                      onChange={(e) => updateConfigValue('scoring.weights.codec', parseFloat(e.target.value))}
-                      disabled={!configEditing}
-                      min={0}
-                      max={1}
-                    />
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <Label htmlFor="prefer_h265">Prefer H.265/HEVC</Label>
-                    <p className="text-xs text-muted-foreground">
-                      Give preference to H.265 codec over H.264
-                    </p>
-                  </div>
-                  <Switch
-                    id="prefer_h265"
-                    checked={editedConfig?.scoring?.prefer_h265 !== false}
-                    onCheckedChange={(checked) => updateConfigValue('scoring.prefer_h265', checked)}
-                    disabled={!configEditing}
-                  />
-                </div>
-              </div>
+                </TabsContent>
+              </Tabs>
 
               {configEditing && (
                 <div className="flex justify-end gap-2 pt-4">

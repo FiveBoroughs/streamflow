@@ -316,6 +316,9 @@ function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheckC
 }
 
 function SortableChannelItem({ channel }) {
+  const [logoUrl, setLogoUrl] = useState(null)
+  const [logoError, setLogoError] = useState(false)
+  
   const {
     attributes,
     listeners,
@@ -324,6 +327,25 @@ function SortableChannelItem({ channel }) {
     transition,
     isDragging,
   } = useSortable({ id: channel.id })
+
+  useEffect(() => {
+    const loadLogo = () => {
+      // Try cached logo first from localStorage
+      const cachedLogo = localStorage.getItem(`${CHANNEL_LOGO_PREFIX}${channel.id}`)
+      if (cachedLogo) {
+        setLogoUrl(cachedLogo)
+        return // Use cached version, don't fetch again
+      }
+      
+      // Only fetch from API if not cached and logo_id is available
+      if (channel.logo_id) {
+        const logoUrl = channelsAPI.getLogoCached(channel.logo_id)
+        setLogoUrl(logoUrl)
+        localStorage.setItem(`${CHANNEL_LOGO_PREFIX}${channel.id}`, logoUrl)
+      }
+    }
+    loadLogo()
+  }, [channel.id, channel.logo_id])
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -347,14 +369,28 @@ function SortableChannelItem({ channel }) {
         <GripVertical className="h-5 w-5 text-muted-foreground" />
       </div>
       
-      <div className="flex-1 grid grid-cols-3 gap-4 items-center">
-        <div>
-          <Badge variant="outline" className="font-mono">
-            #{channel.channel_number || 'N/A'}
-          </Badge>
-        </div>
-        <div className="col-span-2">
-          <div className="font-medium">{channel.name}</div>
+      {/* Channel Logo */}
+      <div className="w-20 h-10 flex-shrink-0 bg-muted rounded-md flex items-center justify-center overflow-hidden">
+        {logoUrl && !logoError ? (
+          <img 
+            src={logoUrl} 
+            alt={channel.name} 
+            className="w-full h-full object-contain"
+            onError={() => setLogoError(true)}
+          />
+        ) : (
+          <span className="text-xl font-bold text-muted-foreground">
+            {channel.name?.charAt(0) || '?'}
+          </span>
+        )}
+      </div>
+      
+      <div className="flex-1 flex items-center gap-4">
+        <Badge variant="outline" className="font-mono">
+          #{channel.channel_number || 'N/A'}
+        </Badge>
+        <div className="flex-1 min-w-0">
+          <div className="font-medium truncate">{channel.name}</div>
           <div className="text-xs text-muted-foreground">ID: {channel.id}</div>
         </div>
       </div>
@@ -481,9 +517,18 @@ export default function ChannelConfiguration() {
   const testRequestIdRef = useRef(0)
   const { toast } = useToast()
   
-  // Pagination state
+  // Pagination state for Regex Configuration
   const [currentPage, setCurrentPage] = useState(1)
   const [itemsPerPage, setItemsPerPage] = useState(20)
+  
+  // Pagination state for Channel Order
+  const [orderCurrentPage, setOrderCurrentPage] = useState(1)
+  const [orderItemsPerPage, setOrderItemsPerPage] = useState(20)
+  
+  // Pagination state for Group Management
+  const [groupCurrentPage, setGroupCurrentPage] = useState(1)
+  const [groupItemsPerPage, setGroupItemsPerPage] = useState(20)
+  const [groupSearchQuery, setGroupSearchQuery] = useState('')
   
   // Channel ordering state
   const [orderedChannels, setOrderedChannels] = useState([])
@@ -512,12 +557,13 @@ export default function ChannelConfiguration() {
   const loadData = async () => {
     try {
       setLoading(true)
-      const [channelsResponse, patternsResponse, settingsResponse, groupsResponse, groupSettingsResponse] = await Promise.all([
+      const [channelsResponse, patternsResponse, settingsResponse, groupsResponse, groupSettingsResponse, orderResponse] = await Promise.all([
         channelsAPI.getChannels(),
         regexAPI.getPatterns(),
         channelSettingsAPI.getAllSettings(),
         channelsAPI.getGroups(),
-        groupSettingsAPI.getAllSettings()
+        groupSettingsAPI.getAllSettings(),
+        channelOrderAPI.getOrder().catch(() => ({ data: { order: [] } })) // Handle case where no order is saved
       ])
       
       setChannels(channelsResponse.data)
@@ -528,13 +574,42 @@ export default function ChannelConfiguration() {
       
       // Initialize ordered channels
       const channelData = channelsResponse.data || []
-      const sorted = [...channelData].sort((a, b) => {
-        const numA = parseFloat(a.channel_number) || 999999
-        const numB = parseFloat(b.channel_number) || 999999
-        return numA - numB
-      })
-      setOrderedChannels(sorted)
-      setOriginalChannelOrder(sorted)
+      const savedOrder = orderResponse.data?.order || []
+      
+      let orderedList = []
+      
+      if (savedOrder.length > 0) {
+        // Apply saved custom order
+        // Create a map for quick lookup
+        const channelMap = new Map(channelData.map(ch => [ch.id, ch]))
+        
+        // First, add channels in the saved order
+        orderedList = savedOrder
+          .map(id => channelMap.get(id))
+          .filter(ch => ch !== undefined) // Filter out any channels that no longer exist
+        
+        // Then add any new channels that weren't in the saved order (sorted by channel number)
+        const orderedIds = new Set(orderedList.map(ch => ch.id))
+        const newChannels = channelData
+          .filter(ch => !orderedIds.has(ch.id))
+          .sort((a, b) => {
+            const numA = parseFloat(a.channel_number) || 999999
+            const numB = parseFloat(b.channel_number) || 999999
+            return numA - numB
+          })
+        
+        orderedList = [...orderedList, ...newChannels]
+      } else {
+        // No saved order, sort by channel_number
+        orderedList = [...channelData].sort((a, b) => {
+          const numA = parseFloat(a.channel_number) || 999999
+          const numB = parseFloat(b.channel_number) || 999999
+          return numA - numB
+        })
+      }
+      
+      setOrderedChannels(orderedList)
+      setOriginalChannelOrder(orderedList)
       setHasOrderChanges(false)
     } catch (err) {
       console.error('Failed to load data:', err)
@@ -839,16 +914,44 @@ export default function ChannelConfiguration() {
   // Filter ordered channels based on group settings
   const visibleOrderedChannels = orderedChannels.filter(isChannelVisibleByGroup)
 
-  // Calculate pagination
+  // Calculate pagination for Regex Configuration
   const totalPages = Math.ceil(filteredChannels.length / itemsPerPage)
   const startIndex = (currentPage - 1) * itemsPerPage
   const endIndex = startIndex + itemsPerPage
   const paginatedChannels = filteredChannels.slice(startIndex, endIndex)
+  
+  // Calculate pagination for Channel Order
+  const orderTotalPages = Math.ceil(visibleOrderedChannels.length / orderItemsPerPage)
+  const orderStartIndex = (orderCurrentPage - 1) * orderItemsPerPage
+  const orderEndIndex = orderStartIndex + orderItemsPerPage
+  const paginatedOrderedChannels = visibleOrderedChannels.slice(orderStartIndex, orderEndIndex)
+  
+  // Filter groups for Group Management search
+  const filteredGroups = groups.filter(group => {
+    if (!groupSearchQuery.trim()) return true
+    
+    const query = groupSearchQuery.toLowerCase()
+    const groupName = (group.name || '').toLowerCase()
+    const groupId = String(group.id)
+    
+    return groupName.includes(query) || groupId.includes(query)
+  })
+  
+  // Calculate pagination for Group Management
+  const groupTotalPages = Math.ceil(filteredGroups.length / groupItemsPerPage)
+  const groupStartIndex = (groupCurrentPage - 1) * groupItemsPerPage
+  const groupEndIndex = groupStartIndex + groupItemsPerPage
+  const paginatedGroups = filteredGroups.slice(groupStartIndex, groupEndIndex)
 
   // Reset to first page when search changes
   useEffect(() => {
     setCurrentPage(1)
   }, [searchQuery])
+
+  // Reset to first page when group search changes
+  useEffect(() => {
+    setGroupCurrentPage(1)
+  }, [groupSearchQuery])
 
   const clearSearch = () => {
     setSearchQuery('')
@@ -1226,6 +1329,35 @@ export default function ChannelConfiguration() {
         </TabsContent>
         
         <TabsContent value="groups" className="space-y-6">
+          {/* Search Bar for Groups */}
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1 max-w-md">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                type="text"
+                placeholder="Search groups by name or ID..."
+                value={groupSearchQuery}
+                onChange={(e) => setGroupSearchQuery(e.target.value)}
+                className="pl-10 pr-10"
+              />
+              {groupSearchQuery && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="absolute right-1 top-1/2 transform -translate-y-1/2 h-7 w-7 p-0"
+                  onClick={() => setGroupSearchQuery('')}
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              )}
+            </div>
+            {groupSearchQuery && (
+              <Badge variant="secondary">
+                {filteredGroups.length} of {groups.length} groups
+              </Badge>
+            )}
+          </div>
+
           <Card>
             <CardHeader>
               <CardTitle>Channel Group Settings</CardTitle>
@@ -1234,23 +1366,128 @@ export default function ChannelConfiguration() {
                 When both settings are disabled for a group, its channels will not appear in Regex Configuration or Channel Ordering.
               </CardDescription>
             </CardHeader>
-            <CardContent>
-              {groups.length === 0 ? (
+            <CardContent className="space-y-4">
+              {/* Pagination info and controls at top */}
+              {filteredGroups.length > 0 && (
+                <div className="flex items-center justify-between">
+                  <div className="text-sm text-muted-foreground">
+                    Showing {groupStartIndex + 1}-{Math.min(groupEndIndex, filteredGroups.length)} of {filteredGroups.length} groups
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Label htmlFor="group-items-per-page" className="text-sm whitespace-nowrap">Items per page:</Label>
+                    <Select
+                      value={groupItemsPerPage.toString()}
+                      onValueChange={(value) => {
+                        setGroupItemsPerPage(Number(value))
+                        setGroupCurrentPage(1)
+                      }}
+                    >
+                      <SelectTrigger className="h-9 w-[100px]" id="group-items-per-page">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="10">10</SelectItem>
+                        <SelectItem value="20">20</SelectItem>
+                        <SelectItem value="50">50</SelectItem>
+                        <SelectItem value="100">100</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              )}
+
+              {filteredGroups.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">
-                  No channel groups available
+                  {groupSearchQuery ? `No groups found matching "${groupSearchQuery}"` : 'No channel groups available'}
+                  {groupSearchQuery && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="mt-4"
+                      onClick={() => setGroupSearchQuery('')}
+                    >
+                      Clear search
+                    </Button>
+                  )}
                 </div>
               ) : (
-                <div className="space-y-4">
-                  {groups.map(group => (
-                    <GroupCard
-                      key={group.id}
-                      group={group}
-                      channels={channels}
-                      groupSettings={groupSettings[group.id]}
-                      onUpdateSettings={handleUpdateGroupSettings}
-                    />
-                  ))}
-                </div>
+                <>
+                  <div className="space-y-4">
+                    {paginatedGroups.map(group => (
+                      <GroupCard
+                        key={group.id}
+                        group={group}
+                        channels={channels}
+                        groupSettings={groupSettings[group.id]}
+                        onUpdateSettings={handleUpdateGroupSettings}
+                      />
+                    ))}
+                  </div>
+
+                  {/* Pagination controls at bottom */}
+                  {groupTotalPages > 1 && (
+                    <div className="flex items-center justify-center gap-2 pt-4">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setGroupCurrentPage(1)}
+                        disabled={groupCurrentPage === 1}
+                      >
+                        First
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setGroupCurrentPage(groupCurrentPage - 1)}
+                        disabled={groupCurrentPage === 1}
+                      >
+                        Previous
+                      </Button>
+                      <div className="flex items-center gap-1">
+                        {Array.from({ length: Math.min(5, groupTotalPages) }, (_, i) => {
+                          let pageNum
+                          if (groupTotalPages <= 5) {
+                            pageNum = i + 1
+                          } else if (groupCurrentPage <= 3) {
+                            pageNum = i + 1
+                          } else if (groupCurrentPage >= groupTotalPages - 2) {
+                            pageNum = groupTotalPages - 4 + i
+                          } else {
+                            pageNum = groupCurrentPage - 2 + i
+                          }
+                          
+                          return (
+                            <Button
+                              key={pageNum}
+                              variant={groupCurrentPage === pageNum ? "default" : "outline"}
+                              size="sm"
+                              onClick={() => setGroupCurrentPage(pageNum)}
+                              className="w-9"
+                            >
+                              {pageNum}
+                            </Button>
+                          )
+                        })}
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setGroupCurrentPage(groupCurrentPage + 1)}
+                        disabled={groupCurrentPage === groupTotalPages}
+                      >
+                        Next
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setGroupCurrentPage(groupTotalPages)}
+                        disabled={groupCurrentPage === groupTotalPages}
+                      >
+                        Last
+                      </Button>
+                    </div>
+                  )}
+                </>
               )}
             </CardContent>
           </Card>
@@ -1282,7 +1519,7 @@ export default function ChannelConfiguration() {
                 <div>
                   <CardTitle>Channel List</CardTitle>
                   <CardDescription>
-                    {visibleOrderedChannels.length} visible channels ({orderedChannels.length} total) - Drag and drop to reorder
+                    {visibleOrderedChannels.length} visible channels ({orderedChannels.length} total) - Drag and drop within the current page to reorder
                   </CardDescription>
                 </div>
                 <div className="flex items-center gap-2">
@@ -1301,28 +1538,123 @@ export default function ChannelConfiguration() {
                 </div>
               </div>
             </CardHeader>
-            <CardContent>
+            <CardContent className="space-y-4">
+              {/* Pagination info and controls at top */}
+              {visibleOrderedChannels.length > 0 && (
+                <div className="flex items-center justify-between">
+                  <div className="text-sm text-muted-foreground">
+                    Showing {orderStartIndex + 1}-{Math.min(orderEndIndex, visibleOrderedChannels.length)} of {visibleOrderedChannels.length} channels
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Label htmlFor="order-items-per-page" className="text-sm whitespace-nowrap">Items per page:</Label>
+                    <Select
+                      value={orderItemsPerPage.toString()}
+                      onValueChange={(value) => {
+                        setOrderItemsPerPage(Number(value))
+                        setOrderCurrentPage(1)
+                      }}
+                    >
+                      <SelectTrigger className="h-9 w-[100px]" id="order-items-per-page">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="10">10</SelectItem>
+                        <SelectItem value="20">20</SelectItem>
+                        <SelectItem value="50">50</SelectItem>
+                        <SelectItem value="100">100</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              )}
+
               {visibleOrderedChannels.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">
                   No channels available
                 </div>
               ) : (
-                <DndContext
-                  sensors={sensors}
-                  collisionDetection={closestCenter}
-                  onDragEnd={handleDragEnd}
-                >
-                  <SortableContext
-                    items={visibleOrderedChannels.map(ch => ch.id)}
-                    strategy={verticalListSortingStrategy}
+                <>
+                  <DndContext
+                    sensors={sensors}
+                    collisionDetection={closestCenter}
+                    onDragEnd={handleDragEnd}
                   >
-                    <div className="space-y-2">
-                      {visibleOrderedChannels.map((channel) => (
-                        <SortableChannelItem key={channel.id} channel={channel} />
-                      ))}
+                    <SortableContext
+                      items={paginatedOrderedChannels.map(ch => ch.id)}
+                      strategy={verticalListSortingStrategy}
+                    >
+                      <div className="space-y-2">
+                        {paginatedOrderedChannels.map((channel) => (
+                          <SortableChannelItem key={channel.id} channel={channel} />
+                        ))}
+                      </div>
+                    </SortableContext>
+                  </DndContext>
+
+                  {/* Pagination controls at bottom */}
+                  {orderTotalPages > 1 && (
+                    <div className="flex items-center justify-center gap-2 pt-4">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setOrderCurrentPage(1)}
+                        disabled={orderCurrentPage === 1}
+                      >
+                        First
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setOrderCurrentPage(orderCurrentPage - 1)}
+                        disabled={orderCurrentPage === 1}
+                      >
+                        Previous
+                      </Button>
+                      <div className="flex items-center gap-1">
+                        {Array.from({ length: Math.min(5, orderTotalPages) }, (_, i) => {
+                          let pageNum
+                          if (orderTotalPages <= 5) {
+                            pageNum = i + 1
+                          } else if (orderCurrentPage <= 3) {
+                            pageNum = i + 1
+                          } else if (orderCurrentPage >= orderTotalPages - 2) {
+                            pageNum = orderTotalPages - 4 + i
+                          } else {
+                            pageNum = orderCurrentPage - 2 + i
+                          }
+                          
+                          return (
+                            <Button
+                              key={pageNum}
+                              variant={orderCurrentPage === pageNum ? "default" : "outline"}
+                              size="sm"
+                              onClick={() => setOrderCurrentPage(pageNum)}
+                              className="w-9"
+                            >
+                              {pageNum}
+                            </Button>
+                          )
+                        })}
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setOrderCurrentPage(orderCurrentPage + 1)}
+                        disabled={orderCurrentPage === orderTotalPages}
+                      >
+                        Next
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setOrderCurrentPage(orderTotalPages)}
+                        disabled={orderCurrentPage === orderTotalPages}
+                      >
+                        Last
+                      </Button>
                     </div>
-                  </SortableContext>
-                </DndContext>
+                  )}
+                </>
               )}
             </CardContent>
           </Card>
