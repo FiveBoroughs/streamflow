@@ -1118,7 +1118,11 @@ class SchedulingService:
         """Export auto-create rules for backup/transfer.
         
         Returns:
-            List of rules with only essential fields for import
+            List of rules with only essential fields for import.
+            
+        Note:
+            For backward compatibility with single-channel rules, both 'channel_id' 
+            (single) and 'channel_ids' (array) are included when there's only one channel.
         """
         exported_rules = []
         for rule in self._auto_create_rules:

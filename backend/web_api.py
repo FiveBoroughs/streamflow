@@ -2073,7 +2073,8 @@ def import_auto_create_rules():
         if scheduled_event_processor_wake:
             scheduled_event_processor_wake.set()
         
-        return jsonify(result), 200 if result['imported'] > 0 else 400
+        # Return 200 even if some rules failed - the response contains details
+        return jsonify(result), 200
     
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
