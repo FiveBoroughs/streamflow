@@ -122,7 +122,8 @@ export default function ChannelOrdering() {
   const handleDragEnd = (event) => {
     const { active, over } = event
 
-    if (active.id !== over.id) {
+    // Check if over is valid and not null (can be null when dragging outside drop zones)
+    if (over && active.id !== over.id) {
       setChannels((items) => {
         const oldIndex = items.findIndex((item) => item.id === active.id)
         const newIndex = items.findIndex((item) => item.id === over.id)
