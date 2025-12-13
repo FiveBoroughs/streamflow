@@ -56,6 +56,12 @@ export const channelSettingsAPI = {
   updateSettings: (channelId, settings) => api.put(`/channel-settings/${channelId}`, settings),
 };
 
+export const channelOrderAPI = {
+  getOrder: () => api.get('/channel-order'),
+  setOrder: (order) => api.put('/channel-order', { order }),
+  clearOrder: () => api.delete('/channel-order'),
+};
+
 export const regexAPI = {
   getPatterns: () => api.get('/regex-patterns'),
   addPattern: (pattern) => api.post('/regex-patterns', pattern),
