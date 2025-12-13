@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs.jsx'
 import { Alert, AlertDescription } from '@/components/ui/alert.jsx'
 import { useToast } from '@/hooks/use-toast.js'
-import { channelsAPI, regexAPI, streamCheckerAPI, channelSettingsAPI, channelOrderAPI } from '@/services/api.js'
+import { channelsAPI, regexAPI, streamCheckerAPI, channelSettingsAPI, channelOrderAPI, groupSettingsAPI } from '@/services/api.js'
 import { CheckCircle, Edit, Plus, Trash2, Loader2, Search, X, Download, Upload, GripVertical, Save, RotateCcw, ArrowUpDown } from 'lucide-react'
 import {
   DndContext,
@@ -362,6 +362,109 @@ function SortableChannelItem({ channel }) {
   )
 }
 
+function GroupCard({ group, channels, groupSettings, onUpdateSettings }) {
+  const { toast } = useToast()
+  const matchingMode = groupSettings?.matching_mode || 'enabled'
+  const checkingMode = groupSettings?.checking_mode || 'enabled'
+  
+  // Count channels in this group
+  const channelCount = channels.filter(ch => ch.channel_group_id === group.id).length
+
+  const handleMatchingModeChange = async (value) => {
+    try {
+      await onUpdateSettings(group.id, { matching_mode: value })
+      toast({
+        title: "Success",
+        description: "Group matching mode updated successfully"
+      })
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: "Failed to update matching mode",
+        variant: "destructive"
+      })
+    }
+  }
+
+  const handleCheckingModeChange = async (value) => {
+    try {
+      await onUpdateSettings(group.id, { checking_mode: value })
+      toast({
+        title: "Success",
+        description: "Group checking mode updated successfully"
+      })
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: "Failed to update checking mode",
+        variant: "destructive"
+      })
+    }
+  }
+
+  const bothDisabled = matchingMode === 'disabled' && checkingMode === 'disabled'
+
+  return (
+    <Card className="w-full">
+      <CardContent className="p-4">
+        <div className="flex items-center gap-4">
+          {/* Group Info */}
+          <div className="flex-1 min-w-0">
+            <h3 className="font-semibold text-base truncate">{group.name}</h3>
+            <div className="flex flex-wrap gap-3 mt-1 text-sm text-muted-foreground">
+              <div className="flex items-center gap-1">
+                <span>Channels:</span>
+                <span className="font-medium">{channelCount}</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <span>Group ID:</span>
+                <span className="font-medium">{group.id}</span>
+              </div>
+            </div>
+            {bothDisabled && (
+              <p className="text-xs text-amber-600 mt-1">
+                ⚠️ Channels from this group will not appear in Regex Configuration or Channel Ordering
+              </p>
+            )}
+          </div>
+
+          {/* Settings Controls */}
+          <div className="grid grid-cols-2 gap-4 flex-shrink-0">
+            <div className="space-y-2 min-w-[180px]">
+              <Label htmlFor={`group-matching-${group.id}`} className="text-sm font-medium">
+                Stream Matching
+              </Label>
+              <Select value={matchingMode} onValueChange={handleMatchingModeChange}>
+                <SelectTrigger id={`group-matching-${group.id}`}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="enabled">Enabled</SelectItem>
+                  <SelectItem value="disabled">Disabled</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2 min-w-[180px]">
+              <Label htmlFor={`group-checking-${group.id}`} className="text-sm font-medium">
+                Stream Checking
+              </Label>
+              <Select value={checkingMode} onValueChange={handleCheckingModeChange}>
+                <SelectTrigger id={`group-checking-${group.id}`}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="enabled">Enabled</SelectItem>
+                  <SelectItem value="disabled">Disabled</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
 export default function ChannelConfiguration() {
   const [channels, setChannels] = useState([])
   const [patterns, setPatterns] = useState({})
@@ -389,6 +492,12 @@ export default function ChannelConfiguration() {
   const [savingOrder, setSavingOrder] = useState(false)
   const [sortBy, setSortBy] = useState('custom')
   
+  // Group management state
+  const [groups, setGroups] = useState([])
+  const [groupSettings, setGroupSettings] = useState({})
+  const [pendingChanges, setPendingChanges] = useState({})
+  const [activeTab, setActiveTab] = useState('regex')
+  
   const sensors = useSensors(
     useSensor(PointerSensor),
     useSensor(KeyboardSensor, {
@@ -403,15 +512,19 @@ export default function ChannelConfiguration() {
   const loadData = async () => {
     try {
       setLoading(true)
-      const [channelsResponse, patternsResponse, settingsResponse] = await Promise.all([
+      const [channelsResponse, patternsResponse, settingsResponse, groupsResponse, groupSettingsResponse] = await Promise.all([
         channelsAPI.getChannels(),
         regexAPI.getPatterns(),
-        channelSettingsAPI.getAllSettings()
+        channelSettingsAPI.getAllSettings(),
+        channelsAPI.getGroups(),
+        groupSettingsAPI.getAllSettings()
       ])
       
       setChannels(channelsResponse.data)
       setPatterns(patternsResponse.data.patterns || {})
       setChannelSettings(settingsResponse.data || {})
+      setGroups(groupsResponse.data || [])
+      setGroupSettings(groupSettingsResponse.data || {})
       
       // Initialize ordered channels
       const channelData = channelsResponse.data || []
@@ -441,6 +554,17 @@ export default function ChannelConfiguration() {
       // Reload settings to get updated values
       const settingsResponse = await channelSettingsAPI.getAllSettings()
       setChannelSettings(settingsResponse.data || {})
+    } catch (err) {
+      throw err
+    }
+  }
+
+  const handleUpdateGroupSettings = async (groupId, settings) => {
+    try {
+      await groupSettingsAPI.updateSettings(groupId, settings)
+      // Reload settings to get updated values
+      const groupSettingsResponse = await groupSettingsAPI.getAllSettings()
+      setGroupSettings(groupSettingsResponse.data || {})
     } catch (err) {
       throw err
     }
@@ -678,8 +802,28 @@ export default function ChannelConfiguration() {
     }
   }
 
-  // Filter channels based on search query
+  // Helper function to check if channel should be visible based on group settings
+  const isChannelVisibleByGroup = (channel) => {
+    // If channel has no group, it's visible
+    if (!channel.channel_group_id) return true
+    
+    // Get group settings
+    const groupSetting = groupSettings[channel.channel_group_id]
+    if (!groupSetting) return true // No settings means visible
+    
+    // Channel is hidden if both matching and checking are disabled for its group
+    const matchingDisabled = groupSetting.matching_mode === 'disabled'
+    const checkingDisabled = groupSetting.checking_mode === 'disabled'
+    
+    return !(matchingDisabled && checkingDisabled)
+  }
+
+  // Filter channels based on search query and group settings
   const filteredChannels = channels.filter(channel => {
+    // First check group visibility
+    if (!isChannelVisibleByGroup(channel)) return false
+    
+    // Then apply search filter
     if (!searchQuery.trim()) return true
     
     const query = searchQuery.toLowerCase()
@@ -691,6 +835,9 @@ export default function ChannelConfiguration() {
            channelNumber.includes(query) || 
            channelId.includes(query)
   })
+
+  // Filter ordered channels based on group settings
+  const visibleOrderedChannels = orderedChannels.filter(isChannelVisibleByGroup)
 
   // Calculate pagination
   const totalPages = Math.ceil(filteredChannels.length / itemsPerPage)
@@ -883,9 +1030,10 @@ export default function ChannelConfiguration() {
         </p>
       </div>
 
-      <Tabs defaultValue="regex" className="w-full">
-        <TabsList className="grid w-full grid-cols-2">
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+        <TabsList className="grid w-full grid-cols-3">
           <TabsTrigger value="regex">Regex Configuration</TabsTrigger>
+          <TabsTrigger value="groups">Group Management</TabsTrigger>
           <TabsTrigger value="ordering">Channel Order</TabsTrigger>
         </TabsList>
         
@@ -1077,6 +1225,37 @@ export default function ChannelConfiguration() {
           </div>
         </TabsContent>
         
+        <TabsContent value="groups" className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Channel Group Settings</CardTitle>
+              <CardDescription>
+                Manage stream matching and checking settings for entire channel groups. 
+                When both settings are disabled for a group, its channels will not appear in Regex Configuration or Channel Ordering.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {groups.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  No channel groups available
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {groups.map(group => (
+                    <GroupCard
+                      key={group.id}
+                      group={group}
+                      channels={channels}
+                      groupSettings={groupSettings[group.id]}
+                      onUpdateSettings={handleUpdateGroupSettings}
+                    />
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+        
         <TabsContent value="ordering" className="space-y-6">
           {hasOrderChanges && (
             <Alert>
@@ -1103,7 +1282,7 @@ export default function ChannelConfiguration() {
                 <div>
                   <CardTitle>Channel List</CardTitle>
                   <CardDescription>
-                    {orderedChannels.length} channels total - Drag and drop to reorder
+                    {visibleOrderedChannels.length} visible channels ({orderedChannels.length} total) - Drag and drop to reorder
                   </CardDescription>
                 </div>
                 <div className="flex items-center gap-2">
@@ -1123,7 +1302,7 @@ export default function ChannelConfiguration() {
               </div>
             </CardHeader>
             <CardContent>
-              {orderedChannels.length === 0 ? (
+              {visibleOrderedChannels.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">
                   No channels available
                 </div>
@@ -1134,11 +1313,11 @@ export default function ChannelConfiguration() {
                   onDragEnd={handleDragEnd}
                 >
                   <SortableContext
-                    items={orderedChannels.map(ch => ch.id)}
+                    items={visibleOrderedChannels.map(ch => ch.id)}
                     strategy={verticalListSortingStrategy}
                   >
                     <div className="space-y-2">
-                      {orderedChannels.map((channel) => (
+                      {visibleOrderedChannels.map((channel) => (
                         <SortableChannelItem key={channel.id} channel={channel} />
                       ))}
                     </div>

@@ -56,6 +56,12 @@ export const channelSettingsAPI = {
   updateSettings: (channelId, settings) => api.put(`/channel-settings/${channelId}`, settings),
 };
 
+export const groupSettingsAPI = {
+  getAllSettings: () => api.get('/group-settings'),
+  getSettings: (groupId) => api.get(`/group-settings/${groupId}`),
+  updateSettings: (groupId, settings) => api.put(`/group-settings/${groupId}`, settings),
+};
+
 export const channelOrderAPI = {
   getOrder: () => api.get('/channel-order'),
   setOrder: (order) => api.put('/channel-order', { order }),
