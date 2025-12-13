@@ -131,7 +131,14 @@ function ChannelItem({ item, groupType, groupIndex, itemIndex }) {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {item.stats.stream_details.map((streamDetail, idx) => (
+                  {[...item.stats.stream_details]
+                    .sort((a, b) => {
+                      // Sort by score in descending order (highest score first)
+                      const scoreA = a.score !== undefined && a.score !== null ? a.score : -Infinity
+                      const scoreB = b.score !== undefined && b.score !== null ? b.score : -Infinity
+                      return scoreB - scoreA
+                    })
+                    .map((streamDetail, idx) => (
                     <TableRow key={streamDetail.stream_id || `detail-${idx}`}>
                       <TableCell className="font-medium">{streamDetail.stream_name || 'Unknown'}</TableCell>
                       <TableCell>{streamDetail.resolution || 'N/A'}</TableCell>
