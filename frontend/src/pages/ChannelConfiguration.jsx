@@ -334,9 +334,10 @@ function SortableChannelItem({ channel }) {
       const cachedLogo = localStorage.getItem(`${CHANNEL_LOGO_PREFIX}${channel.id}`)
       if (cachedLogo) {
         setLogoUrl(cachedLogo)
+        return // Use cached version, don't fetch again
       }
       
-      // Set logo URL if logo_id is available using the cached endpoint
+      // Only fetch from API if not cached and logo_id is available
       if (channel.logo_id) {
         const logoUrl = channelsAPI.getLogoCached(channel.logo_id)
         setLogoUrl(logoUrl)
@@ -1488,7 +1489,7 @@ export default function ChannelConfiguration() {
                 <div>
                   <CardTitle>Channel List</CardTitle>
                   <CardDescription>
-                    {visibleOrderedChannels.length} visible channels ({orderedChannels.length} total) - Drag and drop to reorder
+                    {visibleOrderedChannels.length} visible channels ({orderedChannels.length} total) - Drag and drop within the current page to reorder
                   </CardDescription>
                 </div>
                 <div className="flex items-center gap-2">
