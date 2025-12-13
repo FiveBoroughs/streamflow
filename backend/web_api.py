@@ -1269,13 +1269,17 @@ def get_setup_wizard_status():
             status["dispatcharr_connection"] = True
             status["has_channels"] = True
         else:
-            try:
-                udi = get_udi_manager()
-                channels = udi.get_channels()
-                status["dispatcharr_connection"] = channels is not None
-                status["has_channels"] = bool(channels)
-            except:
-                pass
+            # Only check for channels if Dispatcharr is configured
+            # This prevents unnecessary initialization attempts and error logs
+            dispatcharr_config = get_dispatcharr_config()
+            if dispatcharr_config.is_configured():
+                try:
+                    udi = get_udi_manager()
+                    channels = udi.get_channels()
+                    status["dispatcharr_connection"] = channels is not None
+                    status["has_channels"] = bool(channels)
+                except:
+                    pass
         
         status["setup_complete"] = all([
             status["automation_config_exists"],
@@ -1371,6 +1375,18 @@ def update_dispatcharr_config_endpoint():
         
         # Clear token when credentials change so we re-authenticate
         os.environ["DISPATCHARR_TOKEN"] = ""
+        
+        # Initialize UDI with the new configuration if all credentials are provided
+        # This ensures data is fetched immediately after saving credentials
+        if config_manager.is_configured():
+            try:
+                logger.info("Dispatcharr credentials updated, initializing UDI Manager...")
+                udi = get_udi_manager()
+                udi.initialize(force_refresh=True)
+                logger.info("UDI Manager initialized successfully with new credentials")
+            except Exception as e:
+                logger.warning(f"Failed to initialize UDI Manager after config update: {e}")
+                # Don't fail the config update if UDI initialization fails
         
         return jsonify({"message": "Dispatcharr configuration updated successfully"})
     except Exception as e:
