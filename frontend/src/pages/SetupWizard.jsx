@@ -82,6 +82,8 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
   })
   const [connectionTestResult, setConnectionTestResult] = useState(null)
   const [testingConnection, setTestingConnection] = useState(false)
+  const [udiInitialized, setUdiInitialized] = useState(false)
+  const [initializingUdi, setInitializingUdi] = useState(false)
 
   // Channel configuration state
   const [channels, setChannels] = useState([])
@@ -156,6 +158,13 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
     }))
   }, [streamCheckerConfig.pipeline_mode])
 
+  // Load channels and patterns when entering step 1
+  useEffect(() => {
+    if (activeStep === 1 && channels.length === 0) {
+      loadChannelsAndPatterns()
+    }
+  }, [activeStep])
+
   const determineActiveStep = (status) => {
     if (status.setup_complete) {
       setActiveStep(3)
@@ -198,6 +207,7 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
       setTestingConnection(true)
       setConnectionTestResult(null)
       setError('')
+      setUdiInitialized(false)
       
       const response = await dispatcharrAPI.testConnection(dispatcharrConfig)
       setConnectionTestResult({
@@ -210,6 +220,28 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
         title: "Success",
         description: "Successfully connected to Dispatcharr"
       })
+      
+      // Initialize UDI Manager after successful connection
+      setInitializingUdi(true)
+      try {
+        const udiResponse = await dispatcharrAPI.initializeUDI()
+        if (udiResponse.data.success) {
+          setUdiInitialized(true)
+          toast({
+            title: "Data Loaded",
+            description: `Loaded ${udiResponse.data.data.channels_count} channels from Dispatcharr`
+          })
+        }
+      } catch (udiErr) {
+        console.error('Failed to initialize UDI:', udiErr)
+        toast({
+          title: "Warning",
+          description: "Connection successful but failed to load channel data. Please try again.",
+          variant: "destructive"
+        })
+      } finally {
+        setInitializingUdi(false)
+      }
       
       // Refresh setup status
       await refreshSetupStatus()
@@ -498,20 +530,29 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
               </Alert>
             )}
 
+            {initializingUdi && (
+              <Alert>
+                <div className="flex items-center gap-2">
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
+                  <AlertDescription>Loading channel data from Dispatcharr...</AlertDescription>
+                </div>
+              </Alert>
+            )}
+
             <div className="flex gap-2">
-              <Button onClick={handleTestConnection} disabled={testingConnection}>
-                {testingConnection ? 'Testing...' : 'Test Connection'}
+              <Button onClick={handleTestConnection} disabled={testingConnection || initializingUdi}>
+                {testingConnection ? 'Testing...' : initializingUdi ? 'Loading Data...' : 'Test Connection'}
               </Button>
               <Button onClick={handleSaveDispatcharrConfig} variant="outline" disabled={loading}>
                 Save Configuration
               </Button>
             </div>
 
-            {setupStatus?.dispatcharr_connection && (
+            {udiInitialized && (
               <Alert>
                 <CheckCircle2 className="h-4 w-4" />
                 <AlertDescription>
-                  Connection verified! Ready to proceed to next step.
+                  Connection verified and channel data loaded! Ready to proceed to next step.
                 </AlertDescription>
               </Alert>
             )}
@@ -875,14 +916,27 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
             {activeStep < 3 && (
               <Button
                 onClick={async () => {
-                  if (activeStep === 2) {
+                  if (activeStep === 0) {
+                    // On step 0, check if UDI is initialized before proceeding
+                    if (!udiInitialized) {
+                      toast({
+                        title: "Not Ready",
+                        description: "Please test the connection and wait for channel data to load before proceeding.",
+                        variant: "destructive"
+                      })
+                      return
+                    }
+                    // Load channels and patterns before moving to step 1
+                    await loadChannelsAndPatterns()
+                    setActiveStep(prev => Math.min(3, prev + 1))
+                  } else if (activeStep === 2) {
                     // Save automation config before moving to next step
                     await handleSaveAutomationConfig()
                   } else {
                     setActiveStep(prev => Math.min(3, prev + 1))
                   }
                 }}
-                disabled={loading}
+                disabled={loading || (activeStep === 0 && !udiInitialized)}
               >
                 {activeStep === 2 ? (loading ? 'Saving...' : 'Save & Continue') : 'Next'}
               </Button>

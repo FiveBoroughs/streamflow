@@ -1468,6 +1468,62 @@ def test_dispatcharr_connection():
         logger.error(f"Error testing Dispatcharr connection: {e}")
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/dispatcharr/initialize-udi', methods=['POST'])
+def initialize_udi():
+    """Initialize UDI Manager with current Dispatcharr credentials.
+    
+    This endpoint should be called after successfully testing the Dispatcharr
+    connection to ensure the UDI Manager is initialized with fresh data from
+    the Dispatcharr API.
+    """
+    try:
+        config_manager = get_dispatcharr_config()
+        
+        # Check if Dispatcharr is configured
+        if not config_manager.is_configured():
+            return jsonify({
+                "success": False,
+                "error": "Dispatcharr is not fully configured. Please provide base_url, username, and password."
+            }), 400
+        
+        logger.info("Initializing UDI Manager with fresh data from Dispatcharr...")
+        
+        udi = get_udi_manager()
+        
+        # Force refresh to fetch fresh data from API
+        success = udi.initialize(force_refresh=True)
+        
+        if success:
+            # Get counts to report back
+            channels = udi.get_channels()
+            streams = udi.get_streams()
+            m3u_accounts = udi.get_m3u_accounts()
+            
+            logger.info(f"UDI Manager initialized successfully: {len(channels)} channels, {len(streams)} streams, {len(m3u_accounts)} M3U accounts")
+            
+            return jsonify({
+                "success": True,
+                "message": "UDI Manager initialized successfully",
+                "data": {
+                    "channels_count": len(channels),
+                    "streams_count": len(streams),
+                    "m3u_accounts_count": len(m3u_accounts)
+                }
+            })
+        else:
+            logger.error("Failed to initialize UDI Manager")
+            return jsonify({
+                "success": False,
+                "error": "Failed to initialize UDI Manager. Please check the logs for details."
+            }), 500
+            
+    except Exception as e:
+        logger.error(f"Error initializing UDI Manager: {e}", exc_info=True)
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
 # ===== Stream Checker Endpoints =====
 
 @app.route('/api/stream-checker/status', methods=['GET'])

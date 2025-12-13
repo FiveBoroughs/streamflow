@@ -120,6 +120,7 @@ export const dispatcharrAPI = {
   getConfig: () => api.get('/dispatcharr/config'),
   updateConfig: (config) => api.put('/dispatcharr/config', config),
   testConnection: (config) => api.post('/dispatcharr/test-connection', config),
+  initializeUDI: () => api.post('/dispatcharr/initialize-udi'),
 };
 
 export const schedulingAPI = {
