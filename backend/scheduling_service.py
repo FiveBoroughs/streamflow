@@ -288,12 +288,25 @@ class SchedulingService:
         return channel_programs
     
     def get_scheduled_events(self) -> List[Dict[str, Any]]:
-        """Get all scheduled events.
+        """Get all scheduled events sorted by check_time.
         
         Returns:
-            List of scheduled event dictionaries
+            List of scheduled event dictionaries ordered by check_time (earliest first)
         """
-        return self._scheduled_events.copy()
+        events = self._scheduled_events.copy()
+        
+        # Sort by check_time
+        def get_check_time(event):
+            check_time = event.get('check_time', '')
+            try:
+                # Parse ISO format datetime
+                return datetime.fromisoformat(check_time.replace('Z', '+00:00'))
+            except (ValueError, AttributeError):
+                # If parsing fails, return a very far future date to push invalid entries to end
+                return datetime.max.replace(tzinfo=timezone.utc)
+        
+        events.sort(key=get_check_time)
+        return events
     
     def create_scheduled_event(self, event_data: Dict[str, Any]) -> Dict[str, Any]:
         """Create a new scheduled event.
@@ -1149,6 +1162,10 @@ class SchedulingService:
     def import_auto_create_rules(self, rules_data: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Import auto-create rules from JSON data.
         
+        Deduplication logic:
+        - If exact same regex and channels exist, replace with imported rule
+        - If same regex but different channels exist, merge channels into existing rule
+        
         Args:
             rules_data: List of rule dictionaries to import
             
@@ -1159,6 +1176,8 @@ class SchedulingService:
             raise ValueError("Rules data must be a list")
         
         imported_count = 0
+        merged_count = 0
+        replaced_count = 0
         failed_count = 0
         errors = []
         
@@ -1174,9 +1193,97 @@ class SchedulingService:
                 if 'channel_id' not in rule_data and 'channel_ids' not in rule_data:
                     raise ValueError("Missing required field: channel_id or channel_ids")
                 
-                # Create the rule (this will validate channels and pattern)
-                self.create_auto_create_rule(rule_data)
-                imported_count += 1
+                # Normalize to channel_ids list
+                if 'channel_id' in rule_data and 'channel_ids' not in rule_data:
+                    import_channel_ids = [rule_data['channel_id']]
+                elif 'channel_ids' in rule_data:
+                    import_channel_ids = rule_data['channel_ids']
+                else:
+                    import_channel_ids = [rule_data['channel_id']]
+                
+                import_regex = rule_data['regex_pattern']
+                import_name = rule_data['name']
+                
+                # Check for existing rules with same regex
+                with self._lock:
+                    matching_rule = None
+                    for existing_rule in self._auto_create_rules:
+                        if existing_rule['regex_pattern'] == import_regex:
+                            matching_rule = existing_rule
+                            break
+                    
+                    if matching_rule:
+                        existing_channel_ids = set(matching_rule['channel_ids'])
+                        import_channel_ids_set = set(import_channel_ids)
+                        
+                        # Check if it's an exact match (same regex and same channels)
+                        if existing_channel_ids == import_channel_ids_set:
+                            # Replace: Update the name and other properties from imported rule
+                            matching_rule['name'] = import_name
+                            matching_rule['minutes_before'] = rule_data.get('minutes_before', 5)
+                            
+                            # Update channel info
+                            udi = get_udi_manager()
+                            channels_info = []
+                            for channel_id in import_channel_ids:
+                                channel = udi.get_channel_by_id(channel_id)
+                                if channel:
+                                    logo_id = channel.get('logo_id')
+                                    logo_url = None
+                                    if logo_id:
+                                        logo = udi.get_logo_by_id(logo_id)
+                                        if logo:
+                                            logo_url = logo.get('cache_url') or logo.get('url')
+                                    
+                                    channels_info.append({
+                                        'id': channel_id,
+                                        'name': channel.get('name', ''),
+                                        'logo_url': logo_url,
+                                        'tvg_id': channel.get('tvg_id')
+                                    })
+                            
+                            matching_rule['channels_info'] = channels_info
+                            self._save_auto_create_rules()
+                            
+                            replaced_count += 1
+                            logger.info(f"Replaced existing rule '{matching_rule['name']}' with imported rule '{import_name}'")
+                        else:
+                            # Merge: Combine channel lists, use imported rule's name
+                            merged_channel_ids = list(existing_channel_ids.union(import_channel_ids_set))
+                            matching_rule['channel_ids'] = merged_channel_ids
+                            matching_rule['name'] = import_name  # Use imported name
+                            matching_rule['minutes_before'] = rule_data.get('minutes_before', matching_rule.get('minutes_before', 5))
+                            
+                            # Update channel info for all channels
+                            udi = get_udi_manager()
+                            channels_info = []
+                            for channel_id in merged_channel_ids:
+                                channel = udi.get_channel_by_id(channel_id)
+                                if channel:
+                                    logo_id = channel.get('logo_id')
+                                    logo_url = None
+                                    if logo_id:
+                                        logo = udi.get_logo_by_id(logo_id)
+                                        if logo:
+                                            logo_url = logo.get('cache_url') or logo.get('url')
+                                    
+                                    channels_info.append({
+                                        'id': channel_id,
+                                        'name': channel.get('name', ''),
+                                        'logo_url': logo_url,
+                                        'tvg_id': channel.get('tvg_id')
+                                    })
+                            
+                            matching_rule['channels_info'] = channels_info
+                            self._save_auto_create_rules()
+                            
+                            merged_count += 1
+                            channel_names = ', '.join([ch['name'] for ch in channels_info])
+                            logger.info(f"Merged channels into existing rule (now '{import_name}'): {channel_names}")
+                    else:
+                        # No existing rule with same regex, create new one
+                        self.create_auto_create_rule(rule_data)
+                        imported_count += 1
                 
             except Exception as e:
                 failed_count += 1
@@ -1186,12 +1293,14 @@ class SchedulingService:
         
         result = {
             'imported': imported_count,
+            'merged': merged_count,
+            'replaced': replaced_count,
             'failed': failed_count,
             'total': len(rules_data),
             'errors': errors
         }
         
-        logger.info(f"Import complete: {imported_count} imported, {failed_count} failed out of {len(rules_data)} rules")
+        logger.info(f"Import complete: {imported_count} new, {merged_count} merged, {replaced_count} replaced, {failed_count} failed out of {len(rules_data)} rules")
         return result
 
 
