@@ -1,6 +1,31 @@
 # Features
 
+## Configuration Management
+
+### Dispatcharr Connection Settings
+- **Centralized Configuration**: Configure Dispatcharr connection in the Automation Settings page
+- **Connection Testing**: Test connection to Dispatcharr with instant feedback
+- **Secure Credentials**: Password storage with masking
+- **Wizard Integration**: Configuration available in both Setup Wizard and Settings
+
+### M3U Account Auto-Discovery
+- **Automatic Detection**: New M3U accounts added in Dispatcharr are automatically discovered during playlist updates
+- **Seamless Integration**: No manual configuration needed for new accounts
+- **Real-time Updates**: Account list refreshed after every playlist refresh
+- **UDI Integration**: Uses Universal Data Index (UDI) for efficient caching
+
 ## Stream Management
+
+### Channel Ordering Interface
+- **Drag-and-Drop Reordering**: Intuitive drag-and-drop interface for channel organization
+- **Multiple Sorting Options**:
+  - Sort by channel number (ascending)
+  - Sort by name (alphabetical)
+  - Sort by ID
+  - Custom manual order
+- **Visual Feedback**: Real-time updates with unsaved changes indicator
+- **Bulk Operations**: Save all changes at once
+- **Reset Option**: Discard changes and revert to last saved order
 
 ### Pipeline-Based Automation
 StreamFlow offers 5 pipeline modes to match different usage scenarios:

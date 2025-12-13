@@ -1,3 +1,128 @@
+# New Features: Dispatcharr Configuration, Channel Ordering, and M3U Account Discovery
+
+## Summary
+
+This PR implements three major features for StreamFlow as requested:
+1. Dispatcharr configuration in the wizard and settings
+2. Channel drag-and-drop reordering interface with sorting options
+3. Automatic detection of new M3U accounts during playlist updates
+
+## Features Implemented
+
+### 1. Dispatcharr Configuration in Settings
+
+**Frontend Implementation:**
+- Added dedicated Dispatcharr Connection section to Automation Settings page
+- Configuration fields:
+  - Base URL (e.g., http://localhost:9191)
+  - Username
+  - Password (masked input, preserves existing password if left blank)
+- **Test Connection** button with visual feedback:
+  - Success: Green checkmark with success message
+  - Failure: Red X with error details
+- Integrated with existing `dispatcharrAPI` endpoints
+
+**Backend Integration:**
+- Uses existing `/api/dispatcharr/config` endpoints (GET/PUT)
+- Uses existing `/api/dispatcharr/test-connection` endpoint
+- Configuration managed by `dispatcharr_config.py`
+
+### 2. Channel Drag-and-Drop Reordering Interface
+
+**New Page Created:** `frontend/src/pages/ChannelOrdering.jsx`
+
+**Features:**
+- **Drag-and-Drop Interface**: 
+  - Uses @dnd-kit library for smooth, accessible drag-and-drop
+  - Visual feedback during drag (opacity change, shadow)
+  - Touch-friendly for mobile devices
+- **Multiple Sorting Options**:
+  - Custom Order (manual drag-and-drop)
+  - Sort by Channel Number (ascending)
+  - Sort by Name (A-Z)
+  - Sort by ID
+- **Change Management**:
+  - Visual indicator for unsaved changes (alert banner)
+  - Reset button to discard changes
+  - Save button to persist order
+- **UI Features**:
+  - Shows channel number, name, and ID for each channel
+  - Displays total channel count
+  - Accessible via new "Channel Ordering" menu item in sidebar
+
+**Navigation:**
+- Added to App.jsx routing: `/channel-ordering`
+- Added to Sidebar.jsx with ArrowUpDown icon
+
+**API Integration:**
+- Uses `channelOrderAPI.setOrder()` to persist changes
+- Backend endpoint: `PUT /api/channel-order`
+
+### 3. Automatic M3U Account Detection
+
+**Implementation:**
+
+Modified playlist update logic to refresh M3U accounts list after each update:
+
+**Backend Changes:**
+
+1. **automated_stream_manager.py** (line ~563):
+   ```python
+   # Refresh UDI cache to get updated streams and channels after playlist update
+   # Also refresh M3U accounts to detect any new accounts added in Dispatcharr
+   logger.info("Refreshing UDI cache after playlist update...")
+   udi = get_udi_manager()
+   udi.refresh_m3u_accounts()  # Check for new M3U accounts
+   udi.refresh_streams()
+   udi.refresh_channels()
+   ```
+
+2. **stream_checker_service.py** (line ~2461):
+   ```python
+   # Refresh UDI cache to get updated streams
+   # Also refresh M3U accounts to detect any new accounts
+   udi.refresh_m3u_accounts()  # Check for new M3U accounts
+   udi.refresh_streams()
+   udi.refresh_channels()
+   ```
+
+**How It Works:**
+- After every M3U playlist refresh operation, the UDI (Universal Data Index) manager refreshes its M3U accounts cache
+- This ensures that any new accounts added in Dispatcharr are immediately available in StreamFlow
+- No manual configuration needed - accounts are discovered automatically
+- Works with both automated playlist updates and manual refresh operations
+
+## Technical Details
+
+### Dependencies Added
+- `@dnd-kit/core`: ^6.3.1 - Core drag-and-drop functionality
+- `@dnd-kit/sortable`: ^8.0.0 - Sortable lists
+- `@dnd-kit/utilities`: ^3.2.2 - Utility functions
+
+All dependencies checked for security vulnerabilities - none found.
+
+### Code Quality
+- **Security Scan**: Passed CodeQL analysis (0 alerts)
+- **Code Review**: All issues addressed
+- **Build**: Frontend builds successfully
+- **Null Safety**: Added null check for drag-over parameter to prevent runtime errors
+
+## User Experience Improvements
+
+1. **Centralized Configuration**: Dispatcharr settings now accessible from Settings page (in addition to wizard)
+2. **Intuitive Channel Management**: Drag-and-drop makes channel reordering much easier than manual number assignment
+3. **Automatic Discovery**: New M3U accounts work immediately without requiring restart or manual refresh
+
+## Documentation Updates
+
+Updated `docs/FEATURES.md` to include:
+- Configuration Management section
+- Dispatcharr Connection Settings
+- M3U Account Auto-Discovery
+- Channel Ordering Interface
+
+---
+
 # Channel Settings and Scheduling Improvements
 
 ## Summary
