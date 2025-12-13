@@ -638,7 +638,7 @@ def get_channel_logo_cached(logo_id):
             return jsonify({"error": "Invalid logo URL scheme"}), 400
         
         # Download the logo with SSL verification enabled
-        logger.info(f"Downloading logo {logo_id_int} from {logo_url}")
+        logger.debug(f"Downloading logo {logo_id_int} from {logo_url}")
         response = requests.get(logo_url, timeout=10, verify=True)
         response.raise_for_status()
         
@@ -673,7 +673,7 @@ def get_channel_logo_cached(logo_id):
         with open(cached_path, 'wb') as f:
             f.write(response.content)
         
-        logger.info(f"Cached logo {logo_id} to {cached_path}")
+        logger.debug(f"Cached logo {logo_id} to {cached_path}")
         
         # Serve the cached logo
         mimetype = f'image/{ext[1:]}'

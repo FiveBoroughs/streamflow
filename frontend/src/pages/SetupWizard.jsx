@@ -308,7 +308,9 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
       ])
       
       setChannels(channelsResponse.data)
-      setPatterns(patternsResponse.data)
+      // Extract just the patterns object, not the whole config structure
+      const patternsData = patternsResponse.data?.patterns || {}
+      setPatterns(patternsData)
       setM3uAccounts(m3uResponse.data || [])
     } catch (err) {
       console.error('Failed to load channels and patterns:', err)
