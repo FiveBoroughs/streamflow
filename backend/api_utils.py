@@ -26,6 +26,9 @@ from logging_config import (
 # Import UDI Manager for data access
 from udi import get_udi_manager
 
+# Import Dispatcharr configuration manager
+from dispatcharr_config import get_dispatcharr_config
+
 # Setup logging for this module
 logger = setup_logging(__name__)
 
@@ -47,12 +50,15 @@ TOKEN_VALIDATION_TTL = int(os.getenv("TOKEN_VALIDATION_TTL", "60"))
 
 def _get_base_url() -> Optional[str]:
     """
-    Get the base URL from environment variables.
+    Get the base URL from configuration.
+    
+    Priority: Environment variable > Config file
     
     Returns:
         Optional[str]: The Dispatcharr base URL or None if not set.
     """
-    return os.getenv("DISPATCHARR_BASE_URL")
+    config = get_dispatcharr_config()
+    return config.get_base_url()
 
 def _validate_token(token: str) -> bool:
     """
@@ -138,22 +144,23 @@ def login() -> bool:
     """
     Log into Dispatcharr and save the token to .env file.
     
-    Authenticates with Dispatcharr using credentials from environment
-    variables. Stores the received token in .env file if it exists,
-    otherwise stores it in memory.
+    Authenticates with Dispatcharr using credentials from configuration
+    (JSON file or environment variables). Stores the received token in 
+    .env file if it exists, otherwise stores it in memory.
     
     Returns:
         bool: True if login successful, False otherwise.
     """
     log_function_call(logger, "login")
-    username = os.getenv("DISPATCHARR_USER")
-    password = os.getenv("DISPATCHARR_PASS")
-    base_url = _get_base_url()
+    config = get_dispatcharr_config()
+    username = config.get_username()
+    password = config.get_password()
+    base_url = config.get_base_url()
 
     if not all([username, password, base_url]):
         logger.error(
             "DISPATCHARR_USER, DISPATCHARR_PASS, and "
-            "DISPATCHARR_BASE_URL must be set in the .env file."
+            "DISPATCHARR_BASE_URL must be configured."
         )
         return False
 

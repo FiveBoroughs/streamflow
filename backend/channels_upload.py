@@ -18,6 +18,9 @@ from pathlib import Path
 
 from logging_config import setup_logging, log_function_call, log_function_return, log_exception
 
+# Import Dispatcharr configuration manager
+from dispatcharr_config import get_dispatcharr_config
+
 # --- Setup ---
 logger = setup_logging(__name__)
 env_path = Path('.') / '.env'
@@ -27,18 +30,21 @@ load_dotenv(dotenv_path=env_path)
 # --- API Utilities ---
 def _get_base_url() -> str:
     """
-    Get the base URL from environment variables.
+    Get the base URL from configuration.
+    
+    Priority: Environment variable > Config file
     
     Returns:
         str: The Dispatcharr base URL.
         
     Raises:
-        SystemExit: If DISPATCHARR_BASE_URL not set.
+        SystemExit: If DISPATCHARR_BASE_URL not configured.
     """
-    base_url = os.getenv("DISPATCHARR_BASE_URL")
+    config = get_dispatcharr_config()
+    base_url = config.get_base_url()
     if not base_url:
         logger.error(
-            "DISPATCHARR_BASE_URL not found in .env. Please set it."
+            "DISPATCHARR_BASE_URL not configured. Please configure it."
         )
         sys.exit(1)
     return base_url
@@ -84,14 +90,15 @@ def login() -> bool:
     Returns:
         bool: True if login successful, False otherwise.
     """
-    username = os.getenv("DISPATCHARR_USER")
-    password = os.getenv("DISPATCHARR_PASS")
-    base_url = _get_base_url()
+    config = get_dispatcharr_config()
+    username = config.get_username()
+    password = config.get_password()
+    base_url = config.get_base_url()
 
     if not all([username, password, base_url]):
         logger.error(
             "DISPATCHARR_USER, DISPATCHARR_PASS, and "
-            "DISPATCHARR_BASE_URL must be set in .env file."
+            "DISPATCHARR_BASE_URL must be configured."
         )
         return False
 

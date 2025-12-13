@@ -18,6 +18,7 @@ from typing import Dict, List, Optional, Any
 
 from logging_config import setup_logging
 from udi import get_udi_manager
+from dispatcharr_config import get_dispatcharr_config
 
 logger = setup_logging(__name__)
 
@@ -142,12 +143,15 @@ class SchedulingService:
             return self._save_config()
     
     def _get_base_url(self) -> Optional[str]:
-        """Get Dispatcharr base URL from environment.
+        """Get Dispatcharr base URL from configuration.
+        
+        Priority: Environment variable > Config file
         
         Returns:
             Base URL or None
         """
-        return os.getenv("DISPATCHARR_BASE_URL")
+        config = get_dispatcharr_config()
+        return config.get_base_url()
     
     def _get_auth_token(self) -> Optional[str]:
         """Get authentication token from environment.

@@ -15,6 +15,9 @@ from dotenv import load_dotenv, set_key
 
 from logging_config import setup_logging, log_api_request, log_api_response
 
+# Import Dispatcharr configuration manager
+from dispatcharr_config import get_dispatcharr_config
+
 logger = setup_logging(__name__)
 
 env_path = Path('.') / '.env'
@@ -31,12 +34,15 @@ TOKEN_VALIDATION_TTL = int(os.getenv("TOKEN_VALIDATION_TTL", "60"))
 
 
 def _get_base_url() -> Optional[str]:
-    """Get the base URL from environment variables.
+    """Get the base URL from configuration.
+    
+    Priority: Environment variable > Config file
     
     Returns:
-        The Dispatcharr base URL or None if not set.
+        The Dispatcharr base URL or None if not configured.
     """
-    return os.getenv("DISPATCHARR_BASE_URL")
+    config = get_dispatcharr_config()
+    return config.get_base_url()
 
 
 def _validate_token(token: str) -> bool:
@@ -116,14 +122,15 @@ def _login() -> bool:
     Returns:
         True if login successful, False otherwise.
     """
-    username = os.getenv("DISPATCHARR_USER")
-    password = os.getenv("DISPATCHARR_PASS")
-    base_url = _get_base_url()
+    config = get_dispatcharr_config()
+    username = config.get_username()
+    password = config.get_password()
+    base_url = config.get_base_url()
 
     if not all([username, password, base_url]):
         logger.error(
             "DISPATCHARR_USER, DISPATCHARR_PASS, and "
-            "DISPATCHARR_BASE_URL must be set."
+            "DISPATCHARR_BASE_URL must be configured."
         )
         return False
 

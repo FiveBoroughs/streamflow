@@ -25,6 +25,7 @@ from api_utils import _get_base_url
 from stream_checker_service import get_stream_checker_service
 from scheduling_service import get_scheduling_service
 from channel_settings_manager import get_channel_settings_manager
+from dispatcharr_config import get_dispatcharr_config
 
 # Import UDI for direct data access
 from udi import get_udi_manager
@@ -1201,51 +1202,52 @@ def create_sample_patterns():
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/dispatcharr/config', methods=['GET'])
-def get_dispatcharr_config():
+def get_dispatcharr_config_endpoint():
     """Get current Dispatcharr configuration (without exposing password)."""
     try:
-        config = {
-            "base_url": os.getenv("DISPATCHARR_BASE_URL", ""),
-            "username": os.getenv("DISPATCHARR_USER", ""),
-            # Never return the password for security reasons
-            "has_password": bool(os.getenv("DISPATCHARR_PASS"))
-        }
+        config_manager = get_dispatcharr_config()
+        config = config_manager.get_config()
         return jsonify(config)
     except Exception as e:
         logger.error(f"Error getting Dispatcharr config: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/dispatcharr/config', methods=['PUT'])
-def update_dispatcharr_config():
+def update_dispatcharr_config_endpoint():
     """Update Dispatcharr configuration."""
     try:
         data = request.get_json()
         if not data:
             return jsonify({"error": "No configuration data provided"}), 400
         
-        from dotenv import set_key
-        env_file = Path('.') / '.env'
+        config_manager = get_dispatcharr_config()
         
-        # Update environment variables
-        if 'base_url' in data:
-            base_url = data['base_url'].strip()
-            if env_file.exists():
-                set_key(env_file, "DISPATCHARR_BASE_URL", base_url)
-            os.environ["DISPATCHARR_BASE_URL"] = base_url
+        # Update configuration
+        base_url = data.get('base_url')
+        username = data.get('username')
+        password = data.get('password')
         
-        if 'username' in data:
-            username = data['username'].strip()
-            if env_file.exists():
-                set_key(env_file, "DISPATCHARR_USER", username)
-            os.environ["DISPATCHARR_USER"] = username
+        success = config_manager.update_config(
+            base_url=base_url,
+            username=username,
+            password=password
+        )
         
-        if 'password' in data:
-            password = data['password']
-            if env_file.exists():
-                set_key(env_file, "DISPATCHARR_PASS", password)
+        if not success:
+            return jsonify({"error": "Failed to save configuration"}), 500
+        
+        # Also update environment variables for backward compatibility
+        # and immediate effect without restart
+        if base_url is not None:
+            os.environ["DISPATCHARR_BASE_URL"] = base_url.strip()
+        if username is not None:
+            os.environ["DISPATCHARR_USER"] = username.strip()
+        if password is not None:
             os.environ["DISPATCHARR_PASS"] = password
         
         # Clear token when credentials change so we re-authenticate
+        from dotenv import set_key
+        env_file = Path('.') / '.env'
         if env_file.exists():
             set_key(env_file, "DISPATCHARR_TOKEN", "")
         os.environ["DISPATCHARR_TOKEN"] = ""

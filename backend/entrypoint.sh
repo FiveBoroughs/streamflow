@@ -32,17 +32,14 @@ echo "[INFO] Config directory: $CONFIG_DIR"
 
 # Validate environment setup
 if [ ! -f ".env" ]; then
-    echo "[WARNING] No .env file found. Using environment variables for configuration."
-    echo "[INFO] Ensure DISPATCHARR_BASE_URL, DISPATCHARR_USER, and DISPATCHARR_PASS are set."
+    echo "[INFO] No .env file found. Configuration will be loaded from JSON config files or environment variables."
     
-    # Check if required environment variables are set
-    if [ -z "$DISPATCHARR_BASE_URL" ] || [ -z "$DISPATCHARR_USER" ] || [ -z "$DISPATCHARR_PASS" ]; then
-        echo "[ERROR] Required environment variables not found:"
-        echo "[ERROR] DISPATCHARR_BASE_URL, DISPATCHARR_USER, and DISPATCHARR_PASS must be set"
-        echo "[INFO] You can either:"
-        echo "[INFO] 1. Set environment variables in docker-compose.yml, or"
-        echo "[INFO] 2. Copy .env.template to .env and configure your settings."
-        exit 1
+    # Check if required environment variables are set (optional override)
+    if [ -n "$DISPATCHARR_BASE_URL" ] && [ -n "$DISPATCHARR_USER" ] && [ -n "$DISPATCHARR_PASS" ]; then
+        echo "[INFO] Using environment variables for Dispatcharr configuration (override mode)."
+    else
+        echo "[INFO] Dispatcharr credentials will be configured via the Setup Wizard."
+        echo "[INFO] Configuration is stored in: $CONFIG_DIR/dispatcharr_config.json"
     fi
 else
     echo "[INFO] Using .env file for configuration."
