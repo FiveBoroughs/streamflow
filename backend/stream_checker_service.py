@@ -2459,6 +2459,8 @@ class StreamCheckerService:
                     refresh_m3u_playlists(account_id=account_id)
                 
                 # Refresh UDI cache to get updated streams
+                # Also refresh M3U accounts to detect any new accounts
+                udi.refresh_m3u_accounts()  # Check for new M3U accounts
                 udi.refresh_streams()
                 udi.refresh_channels()
                 logger.info("✓ Playlists refreshed and UDI cache updated")

@@ -9,6 +9,7 @@ import { api } from '@/services/api.js'
 import Dashboard from '@/pages/Dashboard'
 import StreamChecker from '@/pages/StreamChecker'
 import ChannelConfiguration from '@/pages/ChannelConfiguration'
+import ChannelOrdering from '@/pages/ChannelOrdering'
 import AutomationSettings from '@/pages/AutomationSettings'
 import Changelog from '@/pages/Changelog'
 import SetupWizard from '@/pages/SetupWizard'
@@ -92,6 +93,7 @@ function App() {
             <Route path="/" element={<Dashboard />} />
             <Route path="/stream-checker" element={<StreamChecker />} />
             <Route path="/channels" element={<ChannelConfiguration />} />
+            <Route path="/channel-ordering" element={<ChannelOrdering />} />
             <Route path="/settings" element={<AutomationSettings />} />
             <Route path="/scheduling" element={<Scheduling />} />
             <Route path="/changelog" element={<Changelog />} />

@@ -9,11 +9,14 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs.j
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert.jsx'
 import { Loader2, AlertCircle, CheckCircle2 } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast.js'
-import { automationAPI, streamCheckerAPI } from '@/services/api.js'
+import { automationAPI, streamCheckerAPI, dispatcharrAPI } from '@/services/api.js'
 
 export default function AutomationSettings() {
   const [config, setConfig] = useState(null)
   const [streamCheckerConfig, setStreamCheckerConfig] = useState(null)
+  const [dispatcharrConfig, setDispatcharrConfig] = useState(null)
+  const [testingConnection, setTestingConnection] = useState(false)
+  const [connectionTestResult, setConnectionTestResult] = useState(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const { toast } = useToast()
@@ -25,12 +28,14 @@ export default function AutomationSettings() {
   const loadConfig = async () => {
     try {
       setLoading(true)
-      const [automationResponse, streamCheckerResponse] = await Promise.all([
+      const [automationResponse, streamCheckerResponse, dispatcharrResponse] = await Promise.all([
         automationAPI.getConfig(),
-        streamCheckerAPI.getConfig()
+        streamCheckerAPI.getConfig(),
+        dispatcharrAPI.getConfig()
       ])
       setConfig(automationResponse.data)
       setStreamCheckerConfig(streamCheckerResponse.data)
+      setDispatcharrConfig(dispatcharrResponse.data)
     } catch (err) {
       console.error('Failed to load config:', err)
       toast({
@@ -48,7 +53,8 @@ export default function AutomationSettings() {
       setSaving(true)
       await Promise.all([
         automationAPI.updateConfig(config),
-        streamCheckerAPI.updateConfig(streamCheckerConfig)
+        streamCheckerAPI.updateConfig(streamCheckerConfig),
+        dispatcharrAPI.updateConfig(dispatcharrConfig)
       ])
       toast({
         title: "Success",
@@ -116,6 +122,45 @@ export default function AutomationSettings() {
     }
   }
 
+  const handleDispatcharrConfigChange = (field, value) => {
+    setDispatcharrConfig(prev => ({
+      ...prev,
+      [field]: value
+    }))
+  }
+
+  const handleTestConnection = async () => {
+    try {
+      setTestingConnection(true)
+      setConnectionTestResult(null)
+      
+      const response = await dispatcharrAPI.testConnection(dispatcharrConfig)
+      setConnectionTestResult({
+        success: true,
+        message: 'Connection successful!',
+        ...response.data
+      })
+      
+      toast({
+        title: "Success",
+        description: "Successfully connected to Dispatcharr"
+      })
+    } catch (err) {
+      const errorMsg = err.response?.data?.error || 'Failed to connect to Dispatcharr'
+      setConnectionTestResult({
+        success: false,
+        message: errorMsg
+      })
+      toast({
+        title: "Connection Failed",
+        description: errorMsg,
+        variant: "destructive"
+      })
+    } finally {
+      setTestingConnection(false)
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
@@ -147,9 +192,84 @@ export default function AutomationSettings() {
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Automation Settings</h1>
         <p className="text-muted-foreground">
-          Configure pipeline mode, scheduling, and automation parameters
+          Configure Dispatcharr connection, pipeline mode, scheduling, and automation parameters
         </p>
       </div>
+
+      {/* Dispatcharr Configuration */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Dispatcharr Connection</CardTitle>
+          <CardDescription>
+            Configure connection settings to the Dispatcharr API
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="base_url">Base URL</Label>
+            <Input
+              id="base_url"
+              type="url"
+              value={dispatcharrConfig?.base_url || ''}
+              onChange={(e) => handleDispatcharrConfigChange('base_url', e.target.value)}
+              placeholder="http://localhost:9191"
+            />
+            <p className="text-sm text-muted-foreground">The base URL for your Dispatcharr instance</p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="username">Username</Label>
+            <Input
+              id="username"
+              type="text"
+              value={dispatcharrConfig?.username || ''}
+              onChange={(e) => handleDispatcharrConfigChange('username', e.target.value)}
+              placeholder="admin"
+            />
+            <p className="text-sm text-muted-foreground">Your Dispatcharr username</p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="password">Password</Label>
+            <Input
+              id="password"
+              type="password"
+              value={dispatcharrConfig?.password || ''}
+              onChange={(e) => handleDispatcharrConfigChange('password', e.target.value)}
+              placeholder={dispatcharrConfig?.has_password ? '••••••••' : 'Enter password'}
+            />
+            <p className="text-sm text-muted-foreground">
+              {dispatcharrConfig?.has_password ? 'Leave blank to keep existing password' : 'Your Dispatcharr password'}
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2 pt-2">
+            <Button 
+              onClick={handleTestConnection} 
+              disabled={testingConnection}
+              variant="outline"
+            >
+              {testingConnection && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Test Connection
+            </Button>
+            {connectionTestResult && (
+              <div className="flex items-center gap-2">
+                {connectionTestResult.success ? (
+                  <>
+                    <CheckCircle2 className="h-4 w-4 text-green-600" />
+                    <span className="text-sm text-green-600">{connectionTestResult.message}</span>
+                  </>
+                ) : (
+                  <>
+                    <AlertCircle className="h-4 w-4 text-destructive" />
+                    <span className="text-sm text-destructive">{connectionTestResult.message}</span>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Pipeline Selection */}
       <Card>
