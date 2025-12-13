@@ -209,7 +209,6 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
       setTestingConnection(true)
       setConnectionTestResult(null)
       setError('')
-      setUdiInitialized(false)
       
       const response = await dispatcharrAPI.testConnection(dispatcharrConfig)
       setConnectionTestResult({
@@ -220,33 +219,9 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
       
       toast({
         title: "Success",
-        description: "Successfully connected to Dispatcharr"
+        description: "Successfully connected to Dispatcharr. Click 'Save Configuration' to complete setup."
       })
       
-      // Initialize UDI Manager after successful connection
-      setInitializingUdi(true)
-      try {
-        const udiResponse = await dispatcharrAPI.initializeUDI()
-        if (udiResponse.data.success) {
-          setUdiInitialized(true)
-          toast({
-            title: "Data Loaded",
-            description: `Loaded ${udiResponse.data.data.channels_count} channels from Dispatcharr`
-          })
-        }
-      } catch (udiErr) {
-        console.error('Failed to initialize UDI:', udiErr)
-        toast({
-          title: "Warning",
-          description: "Connection successful but failed to load channel data. Please try again.",
-          variant: "destructive"
-        })
-      } finally {
-        setInitializingUdi(false)
-      }
-      
-      // Refresh setup status
-      await refreshSetupStatus()
     } catch (err) {
       const errorMsg = err.response?.data?.error || 'Failed to connect to Dispatcharr'
       setConnectionTestResult({
@@ -266,12 +241,29 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
   const handleSaveDispatcharrConfig = async () => {
     try {
       setLoading(true)
+      setInitializingUdi(true)
+      setUdiInitialized(false)
+      
+      // Save configuration (backend will initialize UDI automatically)
       await dispatcharrAPI.updateConfig(dispatcharrConfig)
+      
       toast({
         title: "Success",
-        description: "Dispatcharr configuration saved"
+        description: "Dispatcharr configuration saved and data is being loaded..."
       })
+      
+      // Wait a moment for backend initialization, then refresh status
+      await new Promise(resolve => setTimeout(resolve, 1000))
       await refreshSetupStatus()
+      
+      // Mark UDI as initialized
+      setUdiInitialized(true)
+      
+      toast({
+        title: "Data Loaded",
+        description: "Channel data loaded successfully from Dispatcharr"
+      })
+      
     } catch (err) {
       toast({
         title: "Error",
@@ -279,6 +271,7 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
         variant: "destructive"
       })
     } finally {
+      setInitializingUdi(false)
       setLoading(false)
     }
   }
@@ -542,11 +535,11 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
             )}
 
             <div className="flex gap-2">
-              <Button onClick={handleTestConnection} disabled={testingConnection || initializingUdi}>
-                {testingConnection ? 'Testing...' : initializingUdi ? 'Loading Data...' : 'Test Connection'}
+              <Button onClick={handleTestConnection} disabled={testingConnection || initializingUdi || loading}>
+                {testingConnection ? 'Testing...' : 'Test Connection'}
               </Button>
-              <Button onClick={handleSaveDispatcharrConfig} variant="outline" disabled={loading}>
-                Save Configuration
+              <Button onClick={handleSaveDispatcharrConfig} variant="default" disabled={loading || testingConnection || initializingUdi}>
+                {initializingUdi ? 'Saving & Loading Data...' : 'Save & Load Data'}
               </Button>
             </div>
 
