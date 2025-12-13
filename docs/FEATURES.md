@@ -380,6 +380,9 @@ Automatically create scheduled events based on program name patterns:
 - **Autostart Default**: Automation enabled by default
 - Configuration validation
 - Quick start assistance
+- **Bug Fixes (Dec 2025)**:
+  - Fixed empty regex pattern entries appearing in step 1 table
+  - Reduced logo download log noise in non-debug mode
 
 ## Automation Features
 
