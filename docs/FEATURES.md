@@ -265,6 +265,10 @@ Automatically create scheduled events based on program name patterns:
 6. No manual intervention required - fully automatic!
 
 ### Channel Configuration
+- **Three Main Tabs**: Comprehensive channel management interface
+  - **Regex Configuration**: Pattern-based stream matching for individual channels
+  - **Group Management**: Bulk settings for entire channel groups
+  - **Channel Order**: Drag-and-drop channel organization
 - **Horizontal Channel Cards**: Modern card-based layout with expandable sections
   - Channel logo display (wider than taller for better visibility)
   - Channel name and metadata
@@ -274,6 +278,13 @@ Automatically create scheduled events based on program name patterns:
     - Most common resolution
     - Average bitrate (Kbps)
   - Quick actions: Edit Regex, **Check Channel**
+- **Group Management Features**: Control settings for entire channel groups at once
+  - **Stream Matching Toggle**: Enable/disable stream matching for all channels in a group
+  - **Stream Checking Toggle**: Enable/disable quality checking for all channels in a group
+  - **Visibility Control**: Channels from groups with both settings disabled are hidden from other tabs
+  - **Channel Count Display**: See how many channels are in each group
+  - **Bulk Operations**: Efficiently manage large numbers of channels
+  - **Persistent Settings**: Group settings stored to disk and survive restarts
 - **Per-Channel Settings**: Fine-grained control over each channel's behavior
   - **Matching Mode**: Control whether the channel participates in stream matching
     - `enabled` (default): Channel included in automatic stream discovery and assignment
