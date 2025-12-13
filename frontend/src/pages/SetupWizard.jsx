@@ -159,6 +159,8 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
   }, [streamCheckerConfig.pipeline_mode])
 
   // Load channels and patterns when entering step 1
+  // Only depends on activeStep to avoid unnecessary reloads
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (activeStep === 1 && channels.length === 0) {
       loadChannelsAndPatterns()

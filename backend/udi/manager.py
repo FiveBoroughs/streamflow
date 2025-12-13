@@ -34,6 +34,9 @@ from udi.cache import UDICache
 
 from logging_config import setup_logging
 
+# Import at module level for better performance
+from dispatcharr_config import get_dispatcharr_config
+
 logger = setup_logging(__name__)
 
 
@@ -665,7 +668,6 @@ class UDIManager:
         """
         if not self._initialized:
             # Check if Dispatcharr is configured before auto-initializing
-            from dispatcharr_config import get_dispatcharr_config
             config = get_dispatcharr_config()
             
             if not config.is_configured():
