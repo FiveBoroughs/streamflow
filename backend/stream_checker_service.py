@@ -2460,9 +2460,11 @@ class StreamCheckerService:
                 
                 # Refresh UDI cache to get updated streams
                 # Also refresh M3U accounts to detect any new accounts
+                # And refresh channel groups to detect any group changes
                 udi.refresh_m3u_accounts()  # Check for new M3U accounts
                 udi.refresh_streams()
                 udi.refresh_channels()
+                udi.refresh_channel_groups()  # Check for new/updated channel groups
                 logger.info("✓ Playlists refreshed and UDI cache updated")
             else:
                 logger.info("Step 2/5: No M3U accounts found for this channel, skipping playlist refresh")

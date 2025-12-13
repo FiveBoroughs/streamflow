@@ -562,11 +562,13 @@ class AutomatedStreamManager:
             # Refresh UDI cache to get updated streams and channels after playlist update
             # This ensures deleted/added streams are reflected in the cache
             # Also refresh M3U accounts to detect any new accounts added in Dispatcharr
+            # And refresh channel groups to detect any group changes (splits, merges, etc.)
             logger.info("Refreshing UDI cache after playlist update...")
             udi = get_udi_manager()
             udi.refresh_m3u_accounts()  # Check for new M3U accounts
             udi.refresh_streams()
             udi.refresh_channels()
+            udi.refresh_channel_groups()  # Check for new/updated channel groups
             logger.info("UDI cache refreshed successfully")
             
             # Get streams after refresh - log this one since it shows the final result
