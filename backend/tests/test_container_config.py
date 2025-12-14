@@ -55,8 +55,8 @@ def test_docker_compose():
         compose_content = f.read()
     
     # Check that no separate Redis service exists
-    if 'redis:' in compose_content and 'image: redis:7-alpine' in compose_content:
-        print("❌ FAIL: docker-compose.yml should not have separate Redis service")
+    if 'redis:' in compose_content or 'redis-server' in compose_content.lower():
+        print("❌ FAIL: docker-compose.yml should not have Redis-related services or references")
         return False
     
     # Check that no separate Celery worker service exists
