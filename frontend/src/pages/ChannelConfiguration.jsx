@@ -649,9 +649,14 @@ export default function ChannelConfiguration() {
   const handleUpdateGroupSettings = async (groupId, settings) => {
     try {
       await groupSettingsAPI.updateSettings(groupId, settings)
-      // Reload settings to get updated values
-      const groupSettingsResponse = await groupSettingsAPI.getAllSettings()
+      // Reload both group and channel settings to get updated values
+      // Channel settings need to be reloaded because they contain inherited values from groups
+      const [groupSettingsResponse, channelSettingsResponse] = await Promise.all([
+        groupSettingsAPI.getAllSettings(),
+        channelSettingsAPI.getAllSettings()
+      ])
       setGroupSettings(groupSettingsResponse.data || {})
+      setChannelSettings(channelSettingsResponse.data || {})
     } catch (err) {
       throw err
     }
