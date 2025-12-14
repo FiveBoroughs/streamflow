@@ -115,6 +115,13 @@ class StreamCheckConfig:
             'global_limit': 10,  # Maximum concurrent stream checks globally (0 = unlimited)
             'enabled': True,  # Enable concurrent checking via Celery
             'stagger_delay': 1.0  # Delay in seconds between dispatching tasks to prevent simultaneous starts
+        },
+        'dead_stream_handling': {
+            'enabled': True,  # Enable dead stream removal
+            'min_resolution_width': 0,  # Minimum width in pixels (0 = no minimum, e.g., 1280 for 720p)
+            'min_resolution_height': 0,  # Minimum height in pixels (0 = no minimum, e.g., 720 for 720p)
+            'min_bitrate_kbps': 0,  # Minimum bitrate in kbps (0 = no minimum)
+            'min_score': 0  # Minimum score (0-100, 0 = no minimum)
         }
     }
     
@@ -394,13 +401,44 @@ class ChannelUpdateTracker:
                     if max_channels and len(channels) >= max_channels:
                         break
             
-            # Filter channels by checking_mode setting
+            # Filter channels by checking_mode setting (channel-level overrides group-level)
+            # Need to get full channel data to access channel_group_id
             channel_settings = get_channel_settings_manager()
-            filtered_channels = [cid for cid in channels if channel_settings.is_checking_enabled(cid)]
+            udi = get_udi_manager()
+            
+            filtered_channels = []
+            for cid in channels:
+                # Get channel data to access group_id
+                channel_data = None
+                for ch in udi.get_channels():
+                    if ch.get('id') == cid:
+                        channel_data = ch
+                        break
+                
+                if channel_data:
+                    channel_group_id = channel_data.get('channel_group_id')
+                    
+                    # Check if channel has an explicit setting (not default)
+                    channel_explicit_settings = channel_settings._settings.get(cid, {})
+                    has_explicit_checking = 'checking_mode' in channel_explicit_settings
+                    
+                    if has_explicit_checking:
+                        # Channel has explicit override - use it
+                        if channel_settings.is_checking_enabled(cid):
+                            filtered_channels.append(cid)
+                    else:
+                        # No channel override - use group setting (or default to enabled if no group)
+                        if channel_settings.is_channel_enabled_by_group(channel_group_id, mode='checking'):
+                            filtered_channels.append(cid)
+                else:
+                    # If we can't find channel data, use channel-level setting only
+                    if channel_settings.is_checking_enabled(cid):
+                        filtered_channels.append(cid)
+            
             excluded_count = len(channels) - len(filtered_channels)
             
             if excluded_count > 0:
-                logger.info(f"Excluding {excluded_count} channel(s) with checking disabled")
+                logger.info(f"Excluding {excluded_count} channel(s) with checking disabled (channel or group level)")
             
             if filtered_channels:
                 self._save_updates()
@@ -1131,13 +1169,34 @@ class StreamCheckerService:
             if channels:
                 channel_ids = [ch['id'] for ch in channels if isinstance(ch, dict) and 'id' in ch]
                 
-                # Filter channels by checking_mode setting
+                # Filter channels by checking_mode setting (channel-level overrides group-level)
                 channel_settings = get_channel_settings_manager()
-                filtered_channel_ids = [cid for cid in channel_ids if channel_settings.is_checking_enabled(cid)]
+                filtered_channel_ids = []
+                
+                for ch in channels:
+                    if not isinstance(ch, dict) or 'id' not in ch:
+                        continue
+                    
+                    cid = ch['id']
+                    channel_group_id = ch.get('channel_group_id')
+                    
+                    # Check if channel has an explicit setting (not default)
+                    channel_explicit_settings = channel_settings._settings.get(cid, {})
+                    has_explicit_checking = 'checking_mode' in channel_explicit_settings
+                    
+                    if has_explicit_checking:
+                        # Channel has explicit override - use it
+                        if channel_settings.is_checking_enabled(cid):
+                            filtered_channel_ids.append(cid)
+                    else:
+                        # No channel override - use group setting (or default to enabled if no group)
+                        if channel_settings.is_channel_enabled_by_group(channel_group_id, mode='checking'):
+                            filtered_channel_ids.append(cid)
+                
                 excluded_count = len(channel_ids) - len(filtered_channel_ids)
                 
                 if excluded_count > 0:
-                    logger.info(f"Excluding {excluded_count} channel(s) with checking disabled from global action")
+                    logger.info(f"Excluding {excluded_count} channel(s) with checking disabled (channel or group level) from global action")
                 
                 if not filtered_channel_ids:
                     logger.info("No channels with checking enabled to queue for global check")
@@ -1169,7 +1228,8 @@ class StreamCheckerService:
     def _is_stream_dead(self, stream_data: Dict) -> bool:
         """Check if a stream should be considered dead based on analysis results.
         
-        Uses centralized utility function for consistent dead stream detection.
+        Uses centralized utility function for consistent dead stream detection
+        with configurable thresholds.
         
         Args:
             stream_data: Analyzed stream data dictionary
@@ -1177,7 +1237,23 @@ class StreamCheckerService:
         Returns:
             bool: True if stream is dead, False otherwise
         """
-        return utils_is_stream_dead(stream_data)
+        # Get dead stream handling configuration
+        dead_stream_config = self.config.get('dead_stream_handling', {})
+        
+        # If dead stream handling is disabled, never consider streams dead
+        # (except for the 0x0 resolution and 0 bitrate cases which are always dead)
+        if not dead_stream_config.get('enabled', True):
+            # Only check for absolute failures (0x0 resolution, 0 bitrate)
+            basic_config = {
+                'min_resolution_width': 0,
+                'min_resolution_height': 0,
+                'min_bitrate_kbps': 0,
+                'min_score': 0
+            }
+            return utils_is_stream_dead(stream_data, basic_config)
+        
+        # Pass the configuration to the utility function
+        return utils_is_stream_dead(stream_data, dead_stream_config)
     
     def _calculate_channel_averages(self, analyzed_streams: List[Dict], dead_stream_ids: set) -> Dict[str, str]:
         """Calculate channel-level average statistics from analyzed streams.
@@ -1397,6 +1473,9 @@ class StreamCheckerService:
         logger.info(f"=" * 80)
         logger.info(f"Checking channel {channel_id} (parallel mode)")
         logger.info(f"=" * 80)
+        
+        # Get dead stream removal configuration early (used later in finally block)
+        dead_stream_removal_enabled = self.config.get('dead_stream_handling', {}).get('enabled', True)
         
         try:
             # Get channel information from UDI
@@ -1663,12 +1742,15 @@ class StreamCheckerService:
             )
             analyzed_streams.sort(key=lambda x: x.get('score', 0), reverse=True)
             
-            # Remove dead streams from the channel
+            # Remove dead streams from the channel (if enabled in config)
             # Dead streams are checked during all channel checks (normal and global)
             # If they're still dead, they're removed; if revived, they remain
             if dead_stream_ids:
-                logger.warning(f"🔴 Removing {len(dead_stream_ids)} dead streams from channel {channel_name}")
-                analyzed_streams = [s for s in analyzed_streams if s['stream_id'] not in dead_stream_ids]
+                if dead_stream_removal_enabled:
+                    logger.warning(f"🔴 Removing {len(dead_stream_ids)} dead streams from channel {channel_name}")
+                    analyzed_streams = [s for s in analyzed_streams if s['stream_id'] not in dead_stream_ids]
+                else:
+                    logger.info(f"⚠️ Found {len(dead_stream_ids)} dead streams in channel {channel_name}, but removal is disabled in config")
             
             if revived_stream_ids:
                 logger.info(f"{len(revived_stream_ids)} streams were revived in channel {channel_name}")
@@ -1772,7 +1854,11 @@ class StreamCheckerService:
             # This prevents dead stream IDs from being saved in checked_stream_ids
             # which would cause them to be skipped by 2-hour immunity even after revival
             # Note: Using list comprehension instead of set operations to preserve order
-            final_stream_ids = [sid for sid in current_stream_ids if sid not in dead_stream_ids]
+            # Only exclude dead streams if removal is enabled
+            if dead_stream_removal_enabled:
+                final_stream_ids = [sid for sid in current_stream_ids if sid not in dead_stream_ids]
+            else:
+                final_stream_ids = current_stream_ids  # Keep all streams if removal is disabled
             self.update_tracker.mark_channel_checked(
                 channel_id, 
                 stream_count=len(streams),
@@ -1840,6 +1926,9 @@ class StreamCheckerService:
         logger.info(f"=" * 80)
         logger.info(f"Checking channel {channel_id} (sequential mode)")
         logger.info(f"=" * 80)
+        
+        # Get dead stream removal configuration early (used later in finally block)
+        dead_stream_removal_enabled = self.config.get('dead_stream_handling', {}).get('enabled', True)
         
         try:
             # Get channel information from UDI
@@ -2095,17 +2184,20 @@ class StreamCheckerService:
             )
             analyzed_streams.sort(key=lambda x: x.get('score', 0), reverse=True)
             
-            # Remove dead streams from the channel
+            # Remove dead streams from the channel (if enabled in config)
             # Dead streams are checked during all channel checks (normal and global)
             # If they're still dead, they're removed; if revived, they remain
             if dead_stream_ids:
-                logger.warning(f"🔴 Removing {len(dead_stream_ids)} dead streams from channel {channel_name}")
-                # Log which streams are being removed
-                for stream_id in dead_stream_ids:
-                    dead_stream = next((s for s in analyzed_streams if s['stream_id'] == stream_id), None)
-                    if dead_stream:
-                        logger.info(f"  - Removing dead stream {stream_id}: {dead_stream.get('stream_name', 'Unknown')}")
-                analyzed_streams = [s for s in analyzed_streams if s['stream_id'] not in dead_stream_ids]
+                if dead_stream_removal_enabled:
+                    logger.warning(f"🔴 Removing {len(dead_stream_ids)} dead streams from channel {channel_name}")
+                    # Log which streams are being removed
+                    for stream_id in dead_stream_ids:
+                        dead_stream = next((s for s in analyzed_streams if s['stream_id'] == stream_id), None)
+                        if dead_stream:
+                            logger.info(f"  - Removing dead stream {stream_id}: {dead_stream.get('stream_name', 'Unknown')}")
+                    analyzed_streams = [s for s in analyzed_streams if s['stream_id'] not in dead_stream_ids]
+                else:
+                    logger.info(f"⚠️ Found {len(dead_stream_ids)} dead streams in channel {channel_name}, but removal is disabled in config")
             
             if revived_stream_ids:
                 logger.info(f"{len(revived_stream_ids)} streams were revived in channel {channel_name}")
@@ -2228,7 +2320,11 @@ class StreamCheckerService:
             # This prevents dead stream IDs from being saved in checked_stream_ids
             # which would cause them to be skipped by 2-hour immunity even after revival
             # Note: Using list comprehension instead of set operations to preserve order
-            final_stream_ids = [sid for sid in current_stream_ids if sid not in dead_stream_ids]
+            # Only exclude dead streams if removal is enabled
+            if dead_stream_removal_enabled:
+                final_stream_ids = [sid for sid in current_stream_ids if sid not in dead_stream_ids]
+            else:
+                final_stream_ids = current_stream_ids  # Keep all streams if removal is disabled
             self.update_tracker.mark_channel_checked(
                 channel_id, 
                 stream_count=len(streams),

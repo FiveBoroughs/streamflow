@@ -197,11 +197,12 @@ export default function AutomationSettings() {
       </div>
 
       <Tabs defaultValue="connection" className="w-full">
-        <TabsList className="grid w-full grid-cols-4">
+        <TabsList className="grid w-full grid-cols-5">
           <TabsTrigger value="connection">Connection</TabsTrigger>
           <TabsTrigger value="pipeline">Pipeline</TabsTrigger>
           <TabsTrigger value="scheduling">Scheduling</TabsTrigger>
           <TabsTrigger value="queue">Queue</TabsTrigger>
+          <TabsTrigger value="dead-streams">Dead Streams</TabsTrigger>
         </TabsList>
         
         <TabsContent value="connection" className="space-y-6">
@@ -660,6 +661,124 @@ export default function AutomationSettings() {
               </AlertDescription>
             </Alert>
           )}
+
+          {/* Save Button */}
+          <div className="flex justify-end">
+            <Button onClick={handleSave} disabled={saving} size="lg">
+              {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Save Settings
+            </Button>
+          </div>
+        </TabsContent>
+        
+        <TabsContent value="dead-streams" className="space-y-6">
+          {/* Dead Stream Handling */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Dead Stream Handling</CardTitle>
+              <CardDescription>
+                Configure how dead or low-quality streams are detected and removed
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <Label htmlFor="dead_stream_enabled">Enable Dead Stream Removal</Label>
+                  <p className="text-sm text-muted-foreground">
+                    Automatically remove streams that are detected as dead or below quality thresholds
+                  </p>
+                </div>
+                <Switch
+                  id="dead_stream_enabled"
+                  checked={streamCheckerConfig.dead_stream_handling?.enabled !== false}
+                  onCheckedChange={(checked) => handleStreamCheckerConfigChange('dead_stream_handling.enabled', checked)}
+                />
+              </div>
+
+              {streamCheckerConfig.dead_stream_handling?.enabled !== false && (
+                <>
+                  <div className="space-y-4 pt-4 border-t">
+                    <h4 className="font-medium">Quality Thresholds</h4>
+                    <p className="text-sm text-muted-foreground">
+                      Streams below these thresholds will be considered dead and removed. Set to 0 to disable a specific threshold.
+                    </p>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="min_resolution_width">Minimum Width (pixels)</Label>
+                        <Input
+                          id="min_resolution_width"
+                          type="number"
+                          min="0"
+                          step="1"
+                          value={streamCheckerConfig.dead_stream_handling?.min_resolution_width ?? 0}
+                          onChange={(e) => handleStreamCheckerConfigChange('dead_stream_handling.min_resolution_width', parseInt(e.target.value) || 0)}
+                        />
+                        <p className="text-sm text-muted-foreground">
+                          e.g., 1280 for 720p minimum (0 = no minimum)
+                        </p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label htmlFor="min_resolution_height">Minimum Height (pixels)</Label>
+                        <Input
+                          id="min_resolution_height"
+                          type="number"
+                          min="0"
+                          step="1"
+                          value={streamCheckerConfig.dead_stream_handling?.min_resolution_height ?? 0}
+                          onChange={(e) => handleStreamCheckerConfigChange('dead_stream_handling.min_resolution_height', parseInt(e.target.value) || 0)}
+                        />
+                        <p className="text-sm text-muted-foreground">
+                          e.g., 720 for 720p minimum (0 = no minimum)
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="min_bitrate_kbps">Minimum Bitrate (kbps)</Label>
+                      <Input
+                        id="min_bitrate_kbps"
+                        type="number"
+                        min="0"
+                        step="100"
+                        value={streamCheckerConfig.dead_stream_handling?.min_bitrate_kbps ?? 0}
+                        onChange={(e) => handleStreamCheckerConfigChange('dead_stream_handling.min_bitrate_kbps', parseInt(e.target.value) || 0)}
+                      />
+                      <p className="text-sm text-muted-foreground">
+                        e.g., 1000 for 1 Mbps minimum (0 = no minimum)
+                      </p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="min_score">Minimum Quality Score</Label>
+                      <Input
+                        id="min_score"
+                        type="number"
+                        min="0"
+                        max="100"
+                        step="1"
+                        value={streamCheckerConfig.dead_stream_handling?.min_score ?? 0}
+                        onChange={(e) => handleStreamCheckerConfigChange('dead_stream_handling.min_score', parseInt(e.target.value) || 0)}
+                      />
+                      <p className="text-sm text-muted-foreground">
+                        Overall quality score from 0-100 (0 = no minimum)
+                      </p>
+                    </div>
+                  </div>
+
+                  <Alert>
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertTitle>Important</AlertTitle>
+                    <AlertDescription>
+                      Streams with 0x0 resolution or 0 bitrate are always considered dead, regardless of these settings.
+                      These thresholds provide additional quality controls beyond basic dead stream detection.
+                    </AlertDescription>
+                  </Alert>
+                </>
+              )}
+            </CardContent>
+          </Card>
 
           {/* Save Button */}
           <div className="flex justify-end">
