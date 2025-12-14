@@ -338,15 +338,21 @@ def calculate_channel_averages(streams: list, dead_stream_ids: set = None) -> Di
     }
 
 
-def is_stream_dead(stream_data: Dict[str, Any]) -> bool:
+def is_stream_dead(stream_data: Dict[str, Any], config: Dict[str, Any] = None) -> bool:
     """Check if a stream should be considered dead based on its statistics.
     
     A stream is dead if:
     - Resolution is '0x0' or contains 0 in width or height
     - Bitrate is 0 or None
+    - Falls below configured minimum thresholds (if config provided)
     
     Args:
         stream_data: Stream data dictionary (can contain stream_stats or direct fields)
+        config: Optional configuration dictionary with thresholds:
+                - min_resolution_width: Minimum width in pixels (default: 0 = no check)
+                - min_resolution_height: Minimum height in pixels (default: 0 = no check)
+                - min_bitrate_kbps: Minimum bitrate in kbps (default: 0 = no check)
+                - min_score: Minimum score 0-100 (default: 0 = no check)
         
     Returns:
         True if stream is dead, False otherwise
@@ -368,6 +374,15 @@ def is_stream_dead(stream_data: Dict[str, Any]) -> bool:
                     width, height = int(parts[0]), int(parts[1])
                     if width == 0 or height == 0:
                         return True
+                    
+                    # Check against configured minimum thresholds if provided
+                    if config:
+                        min_width = config.get('min_resolution_width', 0)
+                        min_height = config.get('min_resolution_height', 0)
+                        if min_width > 0 and width < min_width:
+                            return True
+                        if min_height > 0 and height < min_height:
+                            return True
             except (ValueError, IndexError):
                 pass
     
@@ -375,5 +390,20 @@ def is_stream_dead(stream_data: Dict[str, Any]) -> bool:
     bitrate = stats['bitrate_kbps']
     if bitrate in [0, None] or (isinstance(bitrate, (int, float)) and bitrate == 0):
         return True
+    
+    # Check against configured minimum bitrate if provided
+    if config and bitrate:
+        min_bitrate = config.get('min_bitrate_kbps', 0)
+        if min_bitrate > 0 and bitrate < min_bitrate:
+            return True
+    
+    # Check against configured minimum score if provided
+    if config:
+        min_score = config.get('min_score', 0)
+        if min_score > 0:
+            # Get score from stream_data if available
+            score = stream_data.get('score', 0)
+            if isinstance(score, (int, float)) and score < min_score:
+                return True
     
     return False

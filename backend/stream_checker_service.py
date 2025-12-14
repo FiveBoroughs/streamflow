@@ -115,6 +115,13 @@ class StreamCheckConfig:
             'global_limit': 10,  # Maximum concurrent stream checks globally (0 = unlimited)
             'enabled': True,  # Enable concurrent checking via Celery
             'stagger_delay': 1.0  # Delay in seconds between dispatching tasks to prevent simultaneous starts
+        },
+        'dead_stream_handling': {
+            'enabled': True,  # Enable dead stream removal
+            'min_resolution_width': 0,  # Minimum width in pixels (0 = no minimum, e.g., 1280 for 720p)
+            'min_resolution_height': 0,  # Minimum height in pixels (0 = no minimum, e.g., 720 for 720p)
+            'min_bitrate_kbps': 0,  # Minimum bitrate in kbps (0 = no minimum)
+            'min_score': 0.0  # Minimum score (0.0-100.0, 0 = no minimum)
         }
     }
     
@@ -1209,7 +1216,8 @@ class StreamCheckerService:
     def _is_stream_dead(self, stream_data: Dict) -> bool:
         """Check if a stream should be considered dead based on analysis results.
         
-        Uses centralized utility function for consistent dead stream detection.
+        Uses centralized utility function for consistent dead stream detection
+        with configurable thresholds.
         
         Args:
             stream_data: Analyzed stream data dictionary
@@ -1217,7 +1225,23 @@ class StreamCheckerService:
         Returns:
             bool: True if stream is dead, False otherwise
         """
-        return utils_is_stream_dead(stream_data)
+        # Get dead stream handling configuration
+        dead_stream_config = self.config.get('dead_stream_handling', {})
+        
+        # If dead stream handling is disabled, never consider streams dead
+        # (except for the 0x0 resolution and 0 bitrate cases which are always dead)
+        if not dead_stream_config.get('enabled', True):
+            # Only check for absolute failures (0x0 resolution, 0 bitrate)
+            basic_config = {
+                'min_resolution_width': 0,
+                'min_resolution_height': 0,
+                'min_bitrate_kbps': 0,
+                'min_score': 0
+            }
+            return utils_is_stream_dead(stream_data, basic_config)
+        
+        # Pass the configuration to the utility function
+        return utils_is_stream_dead(stream_data, dead_stream_config)
     
     def _calculate_channel_averages(self, analyzed_streams: List[Dict], dead_stream_ids: set) -> Dict[str, str]:
         """Calculate channel-level average statistics from analyzed streams.
