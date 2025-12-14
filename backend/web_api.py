@@ -996,22 +996,45 @@ def get_dead_streams():
 
 @app.route('/api/channel-settings', methods=['GET'])
 def get_all_channel_settings():
-    """Get settings for all channels."""
+    """Get settings for all channels with group inheritance info."""
     try:
         settings_manager = get_channel_settings_manager()
-        all_settings = settings_manager.get_all_settings()
-        return jsonify(all_settings)
+        udi = get_udi_manager()
+        
+        # Get all channels to retrieve their group IDs
+        all_channels = udi.get_channels()
+        
+        # Build a map of effective settings for all channels
+        all_effective_settings = {}
+        for channel in all_channels:
+            if isinstance(channel, dict) and 'id' in channel:
+                channel_id = channel['id']
+                channel_group_id = channel.get('channel_group_id')
+                all_effective_settings[channel_id] = settings_manager.get_channel_effective_settings(
+                    channel_id, 
+                    channel_group_id
+                )
+        
+        return jsonify(all_effective_settings)
     except Exception as e:
         logger.error(f"Error getting all channel settings: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/channel-settings/<int:channel_id>', methods=['GET'])
 def get_channel_settings_endpoint(channel_id):
-    """Get settings for a specific channel."""
+    """Get settings for a specific channel with group inheritance info."""
     try:
         settings_manager = get_channel_settings_manager()
-        settings = settings_manager.get_channel_settings(channel_id)
-        return jsonify(settings)
+        
+        # Get the channel to retrieve its group ID
+        udi = get_udi_manager()
+        channel = udi.get_channel_by_id(channel_id)
+        channel_group_id = channel.get('channel_group_id') if channel else None
+        
+        # Get effective settings with inheritance info
+        effective_settings = settings_manager.get_channel_effective_settings(channel_id, channel_group_id)
+        
+        return jsonify(effective_settings)
     except Exception as e:
         logger.error(f"Error getting channel settings: {e}")
         return jsonify({"error": str(e)}), 500

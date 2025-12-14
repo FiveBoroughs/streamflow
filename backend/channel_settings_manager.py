@@ -96,6 +96,60 @@ class ChannelSettingsManager:
                 'checking_mode': settings.get('checking_mode', self.MODE_ENABLED)
             }
     
+    def get_channel_effective_settings(self, channel_id: int, channel_group_id: Optional[int] = None) -> Dict[str, Any]:
+        """Get effective settings for a channel, considering group inheritance.
+        
+        Args:
+            channel_id: The channel ID
+            channel_group_id: The channel's group ID (None if no group assigned)
+            
+        Returns:
+            Dictionary with:
+            - matching_mode: Effective matching mode
+            - checking_mode: Effective checking mode
+            - matching_mode_source: 'channel' or 'group' or 'default'
+            - checking_mode_source: 'channel' or 'group' or 'default'
+            - has_explicit_matching: Whether channel has explicit matching setting
+            - has_explicit_checking: Whether channel has explicit checking setting
+        """
+        with self._lock:
+            channel_settings = self._settings.get(channel_id, {})
+            has_explicit_matching = 'matching_mode' in channel_settings
+            has_explicit_checking = 'checking_mode' in channel_settings
+            
+            # Determine effective matching mode
+            if has_explicit_matching:
+                matching_mode = channel_settings['matching_mode']
+                matching_mode_source = 'channel'
+            elif channel_group_id is not None:
+                group_settings = self._group_settings.get(channel_group_id, {})
+                matching_mode = group_settings.get('matching_mode', self.MODE_ENABLED)
+                matching_mode_source = 'group'
+            else:
+                matching_mode = self.MODE_ENABLED
+                matching_mode_source = 'default'
+            
+            # Determine effective checking mode
+            if has_explicit_checking:
+                checking_mode = channel_settings['checking_mode']
+                checking_mode_source = 'channel'
+            elif channel_group_id is not None:
+                group_settings = self._group_settings.get(channel_group_id, {})
+                checking_mode = group_settings.get('checking_mode', self.MODE_ENABLED)
+                checking_mode_source = 'group'
+            else:
+                checking_mode = self.MODE_ENABLED
+                checking_mode_source = 'default'
+            
+            return {
+                'matching_mode': matching_mode,
+                'checking_mode': checking_mode,
+                'matching_mode_source': matching_mode_source,
+                'checking_mode_source': checking_mode_source,
+                'has_explicit_matching': has_explicit_matching,
+                'has_explicit_checking': has_explicit_checking
+            }
+    
     def set_channel_settings(self, channel_id: int, matching_mode: Optional[str] = None,
                             checking_mode: Optional[str] = None) -> bool:
         """Set settings for a specific channel.

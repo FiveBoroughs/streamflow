@@ -43,6 +43,10 @@ function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheckC
 
   const matchingMode = channelSettings?.matching_mode || 'enabled'
   const checkingMode = channelSettings?.checking_mode || 'enabled'
+  const matchingModeSource = channelSettings?.matching_mode_source || 'default'
+  const checkingModeSource = channelSettings?.checking_mode_source || 'default'
+  const isMatchingInherited = matchingModeSource === 'group'
+  const isCheckingInherited = checkingModeSource === 'group'
 
   const handleMatchingModeChange = async (value) => {
     try {
@@ -229,6 +233,9 @@ function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheckC
               <div className="space-y-2">
                 <Label htmlFor={`matching-mode-${channel.id}`} className="text-sm font-medium">
                   Stream Matching
+                  {isMatchingInherited && (
+                    <Badge variant="outline" className="ml-2 text-xs">From Group</Badge>
+                  )}
                 </Label>
                 <Select value={matchingMode} onValueChange={handleMatchingModeChange}>
                   <SelectTrigger id={`matching-mode-${channel.id}`}>
@@ -243,11 +250,15 @@ function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheckC
                   {matchingMode === 'enabled' 
                     ? 'Channel will be included in stream matching'
                     : 'Channel will be excluded from stream matching'}
+                  {isMatchingInherited && ' (inherited from group)'}
                 </p>
               </div>
               <div className="space-y-2">
                 <Label htmlFor={`checking-mode-${channel.id}`} className="text-sm font-medium">
                   Stream Checking
+                  {isCheckingInherited && (
+                    <Badge variant="outline" className="ml-2 text-xs">From Group</Badge>
+                  )}
                 </Label>
                 <Select value={checkingMode} onValueChange={handleCheckingModeChange}>
                   <SelectTrigger id={`checking-mode-${channel.id}`}>
@@ -262,6 +273,7 @@ function ChannelCard({ channel, patterns, onEditRegex, onDeletePattern, onCheckC
                   {checkingMode === 'enabled'
                     ? 'Channel streams will be quality checked'
                     : 'Channel streams will not be quality checked'}
+                  {isCheckingInherited && ' (inherited from group)'}
                 </p>
               </div>
             </div>
