@@ -716,7 +716,7 @@ class AutomatedStreamManager:
                 logger.warning("No channels found")
                 return {}
             
-            # Filter channels by matching_mode setting (both channel-level and group-level)
+            # Filter channels by matching_mode setting (channel-level overrides group-level)
             channel_settings = get_channel_settings_manager()
             matching_enabled_channel_ids = []
             
@@ -726,13 +726,18 @@ class AutomatedStreamManager:
                 channel_id = channel['id']
                 channel_group_id = channel.get('channel_group_id')
                 
-                # Check both channel-level and group-level settings
-                channel_enabled = channel_settings.is_matching_enabled(channel_id)
-                group_enabled = channel_settings.is_channel_enabled_by_group(channel_group_id, mode='matching')
+                # Check if channel has an explicit setting (not default)
+                channel_explicit_settings = channel_settings._settings.get(channel_id, {})
+                has_explicit_matching = 'matching_mode' in channel_explicit_settings
                 
-                # Channel must be enabled at both levels
-                if channel_enabled and group_enabled:
-                    matching_enabled_channel_ids.append(channel_id)
+                if has_explicit_matching:
+                    # Channel has explicit override - use it
+                    if channel_settings.is_matching_enabled(channel_id):
+                        matching_enabled_channel_ids.append(channel_id)
+                else:
+                    # No channel override - use group setting (or default to enabled if no group)
+                    if channel_settings.is_channel_enabled_by_group(channel_group_id, mode='matching'):
+                        matching_enabled_channel_ids.append(channel_id)
             
             # Filter channels to only those with matching enabled
             filtered_channels = [ch for ch in all_channels if ch.get('id') in matching_enabled_channel_ids]

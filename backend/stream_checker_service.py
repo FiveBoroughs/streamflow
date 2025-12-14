@@ -121,7 +121,7 @@ class StreamCheckConfig:
             'min_resolution_width': 0,  # Minimum width in pixels (0 = no minimum, e.g., 1280 for 720p)
             'min_resolution_height': 0,  # Minimum height in pixels (0 = no minimum, e.g., 720 for 720p)
             'min_bitrate_kbps': 0,  # Minimum bitrate in kbps (0 = no minimum)
-            'min_score': 0.0  # Minimum score (0.0-100.0, 0 = no minimum)
+            'min_score': 0  # Minimum score (0-100, 0 = no minimum)
         }
     }
     
@@ -401,7 +401,7 @@ class ChannelUpdateTracker:
                     if max_channels and len(channels) >= max_channels:
                         break
             
-            # Filter channels by checking_mode setting (both channel-level and group-level)
+            # Filter channels by checking_mode setting (channel-level overrides group-level)
             # Need to get full channel data to access channel_group_id
             channel_settings = get_channel_settings_manager()
             udi = get_udi_manager()
@@ -417,14 +417,21 @@ class ChannelUpdateTracker:
                 
                 if channel_data:
                     channel_group_id = channel_data.get('channel_group_id')
-                    channel_enabled = channel_settings.is_checking_enabled(cid)
-                    group_enabled = channel_settings.is_channel_enabled_by_group(channel_group_id, mode='checking')
                     
-                    # Channel must be enabled at both levels
-                    if channel_enabled and group_enabled:
-                        filtered_channels.append(cid)
+                    # Check if channel has an explicit setting (not default)
+                    channel_explicit_settings = channel_settings._settings.get(cid, {})
+                    has_explicit_checking = 'checking_mode' in channel_explicit_settings
+                    
+                    if has_explicit_checking:
+                        # Channel has explicit override - use it
+                        if channel_settings.is_checking_enabled(cid):
+                            filtered_channels.append(cid)
+                    else:
+                        # No channel override - use group setting (or default to enabled if no group)
+                        if channel_settings.is_channel_enabled_by_group(channel_group_id, mode='checking'):
+                            filtered_channels.append(cid)
                 else:
-                    # If we can't find channel data, include it by default for safety
+                    # If we can't find channel data, use channel-level setting only
                     if channel_settings.is_checking_enabled(cid):
                         filtered_channels.append(cid)
             
@@ -1162,7 +1169,7 @@ class StreamCheckerService:
             if channels:
                 channel_ids = [ch['id'] for ch in channels if isinstance(ch, dict) and 'id' in ch]
                 
-                # Filter channels by checking_mode setting (both channel-level and group-level)
+                # Filter channels by checking_mode setting (channel-level overrides group-level)
                 channel_settings = get_channel_settings_manager()
                 filtered_channel_ids = []
                 
@@ -1173,13 +1180,18 @@ class StreamCheckerService:
                     cid = ch['id']
                     channel_group_id = ch.get('channel_group_id')
                     
-                    # Check both channel-level and group-level settings
-                    channel_enabled = channel_settings.is_checking_enabled(cid)
-                    group_enabled = channel_settings.is_channel_enabled_by_group(channel_group_id, mode='checking')
+                    # Check if channel has an explicit setting (not default)
+                    channel_explicit_settings = channel_settings._settings.get(cid, {})
+                    has_explicit_checking = 'checking_mode' in channel_explicit_settings
                     
-                    # Channel must be enabled at both levels
-                    if channel_enabled and group_enabled:
-                        filtered_channel_ids.append(cid)
+                    if has_explicit_checking:
+                        # Channel has explicit override - use it
+                        if channel_settings.is_checking_enabled(cid):
+                            filtered_channel_ids.append(cid)
+                    else:
+                        # No channel override - use group setting (or default to enabled if no group)
+                        if channel_settings.is_channel_enabled_by_group(channel_group_id, mode='checking'):
+                            filtered_channel_ids.append(cid)
                 
                 excluded_count = len(channel_ids) - len(filtered_channel_ids)
                 

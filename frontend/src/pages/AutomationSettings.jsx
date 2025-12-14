@@ -759,7 +759,7 @@ export default function AutomationSettings() {
                         max="100"
                         step="1"
                         value={streamCheckerConfig.dead_stream_handling?.min_score ?? 0}
-                        onChange={(e) => handleStreamCheckerConfigChange('dead_stream_handling.min_score', parseFloat(e.target.value) || 0)}
+                        onChange={(e) => handleStreamCheckerConfigChange('dead_stream_handling.min_score', parseInt(e.target.value) || 0)}
                       />
                       <p className="text-sm text-muted-foreground">
                         Overall quality score from 0-100 (0 = no minimum)

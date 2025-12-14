@@ -1079,7 +1079,7 @@ def get_group_settings_endpoint(group_id):
 
 @app.route('/api/group-settings/<int:group_id>', methods=['PUT', 'PATCH'])
 def update_group_settings_endpoint(group_id):
-    """Update settings for a specific channel group."""
+    """Update settings for a specific channel group and cascade to all channels in the group."""
     try:
         data = request.get_json()
         if not data:
@@ -1087,6 +1087,7 @@ def update_group_settings_endpoint(group_id):
         
         matching_mode = data.get('matching_mode')
         checking_mode = data.get('checking_mode')
+        cascade_to_channels = data.get('cascade_to_channels', True)  # Default to True
         
         # Validate modes if provided
         valid_modes = ['enabled', 'disabled']
@@ -1096,20 +1097,48 @@ def update_group_settings_endpoint(group_id):
             return jsonify({"error": f"Invalid checking_mode. Must be one of: {valid_modes}"}), 400
         
         settings_manager = get_channel_settings_manager()
+        
+        # Update the group settings
         success = settings_manager.set_group_settings(
             group_id,
             matching_mode=matching_mode,
             checking_mode=checking_mode
         )
         
-        if success:
-            updated_settings = settings_manager.get_group_settings(group_id)
-            return jsonify({
-                "message": "Group settings updated successfully",
-                "settings": updated_settings
-            })
-        else:
+        if not success:
             return jsonify({"error": "Failed to update group settings"}), 500
+        
+        # Cascade to all channels in the group if requested
+        channels_updated = 0
+        if cascade_to_channels:
+            try:
+                # Get all channels in this group
+                udi = get_udi_manager()
+                all_channels = udi.get_channels()
+                
+                for channel in all_channels:
+                    if isinstance(channel, dict) and channel.get('channel_group_id') == group_id:
+                        channel_id = channel.get('id')
+                        if channel_id:
+                            # Update channel to match group settings
+                            settings_manager.set_channel_settings(
+                                channel_id,
+                                matching_mode=matching_mode,
+                                checking_mode=checking_mode
+                            )
+                            channels_updated += 1
+                
+                logger.info(f"Cascaded group {group_id} settings to {channels_updated} channel(s)")
+            except Exception as e:
+                logger.error(f"Error cascading settings to channels: {e}")
+                # Continue even if cascade fails
+        
+        updated_settings = settings_manager.get_group_settings(group_id)
+        return jsonify({
+            "message": "Group settings updated successfully",
+            "settings": updated_settings,
+            "channels_updated": channels_updated
+        })
     except Exception as e:
         logger.error(f"Error updating group settings: {e}")
         return jsonify({"error": str(e)}), 500
