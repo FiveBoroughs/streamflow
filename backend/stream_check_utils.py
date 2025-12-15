@@ -675,7 +675,8 @@ def analyze_stream(
         stream_name: Human-readable name for the stream
         ffmpeg_duration: Duration in seconds for analysis
         timeout: Timeout in seconds for the operation
-        retries: Number of retry attempts on failure
+        retries: Number of retry attempts on failure (0 = try once with no retries,
+                 1 = try once then retry once if failed, 2 = try once then retry twice, etc.)
         retry_delay: Delay in seconds between retries
         user_agent: User agent string to use for HTTP requests
 
@@ -709,7 +710,9 @@ def analyze_stream(
     }
     
     try:
-        for attempt in range(retries):
+        # Convert retries to total attempts: retries=0 means 1 attempt, retries=1 means 2 attempts, etc.
+        total_attempts = retries + 1
+        for attempt in range(total_attempts):
             if attempt > 0:
                 logger.info(f"  Retry attempt {attempt}/{retries} for {stream_name}")
                 time.sleep(retry_delay)
@@ -760,15 +763,13 @@ def analyze_stream(
                     logger.warning(f"    ✗ Status: {result['status']} (elapsed: {result_data['elapsed_time']:.2f}s)")
 
                     # If not the last attempt, continue to retry
-                    # Note: The original code checked "attempt < retries" which would be true even on the last attempt
-                    # when using range(retries). This preserves that behavior for compatibility.
-                    if attempt < retries:
-                        logger.warning(f"  Stream '{stream_name}' failed with status '{result['status']}'. Retrying in {retry_delay} seconds... ({attempt + 1}/{retries})")
+                    if attempt < total_attempts - 1:
+                        logger.warning(f"  Stream '{stream_name}' failed with status '{result['status']}'. Retrying in {retry_delay} seconds... ({attempt + 1}/{total_attempts})")
             except Exception as inner_e:
-                logger.error(f"  Exception during stream analysis attempt {attempt + 1}/{retries}: {inner_e}")
+                logger.error(f"  Exception during stream analysis attempt {attempt + 1}/{total_attempts}: {inner_e}")
                 # Continue to next retry if available, otherwise use the default error result
-                if attempt < retries:
-                    logger.warning(f"  Retrying in {retry_delay} seconds... ({attempt + 1}/{retries})")
+                if attempt < total_attempts - 1:
+                    logger.warning(f"  Retrying in {retry_delay} seconds... ({attempt + 1}/{total_attempts})")
     except Exception as outer_e:
         logger.error(f"Unexpected error in analyze_stream for {stream_name}: {outer_e}")
         # Result already has default error values, so just return it

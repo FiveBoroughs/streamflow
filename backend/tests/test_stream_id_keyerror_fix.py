@@ -23,23 +23,21 @@ class TestStreamIdKeyErrorFix(unittest.TestCase):
     def test_analyze_stream_with_zero_retries(self):
         """Test that analyze_stream returns complete dict when retries=0.
         
-        Note: retries=0 means range(0) which produces no iterations, so the
-        function returns the default error result immediately. This test
-        verifies that the default result includes all required fields.
+        With the fix, retries=0 means "try once without retries" (1 attempt).
+        This test verifies that the function makes one attempt and returns a
+        complete dict with all required fields, even if the stream analysis fails.
         """
         from stream_check_utils import analyze_stream
         
         # Call analyze_stream with retries=0
-        # Note: This is an edge case - with the current implementation using range(retries),
-        # retries=0 causes zero attempts. This test verifies the bug fix ensures a complete
-        # dict is returned even in this edge case.
+        # With the new implementation, retries=0 means 1 attempt (try once, no retries)
         result = analyze_stream(
             stream_url='http://example.com/stream.m3u8',
             stream_id=12345,
             stream_name='Test Stream',
             ffmpeg_duration=20,
             timeout=30,
-            retries=0,  # Edge case: causes range(0) = empty, so no attempts are made
+            retries=0,  # 1 attempt (try once, no retries)
             retry_delay=10,
             user_agent='VLC/3.0.14'
         )
@@ -61,13 +59,13 @@ class TestStreamIdKeyErrorFix(unittest.TestCase):
         self.assertEqual(result['stream_name'], 'Test Stream')
         self.assertEqual(result['stream_url'], 'http://example.com/stream.m3u8')
         
-        # Verify default error values
+        # Since we're testing with an invalid URL, the analysis will fail,
+        # but we still get a complete dict with default error values
         self.assertEqual(result['video_codec'], 'N/A')
         self.assertEqual(result['audio_codec'], 'N/A')
         self.assertEqual(result['resolution'], '0x0')
         self.assertEqual(result['fps'], 0)
         self.assertIsNone(result['bitrate_kbps'])
-        self.assertEqual(result['status'], 'Error')
     
     @patch('stream_check_utils.get_stream_info_and_bitrate')
     def test_analyze_stream_with_exception(self, mock_get_info):
