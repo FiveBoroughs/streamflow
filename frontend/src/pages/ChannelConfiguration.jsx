@@ -662,6 +662,15 @@ export default function ChannelConfiguration() {
     }
   }
 
+  const reloadAllSettings = async () => {
+    const [groupSettingsResponse, channelSettingsResponse] = await Promise.all([
+      groupSettingsAPI.getAllSettings(),
+      channelSettingsAPI.getAllSettings()
+    ])
+    setGroupSettings(groupSettingsResponse.data || {})
+    setChannelSettings(channelSettingsResponse.data || {})
+  }
+
   const handleBulkDisableMatching = async () => {
     try {
       const response = await groupSettingsAPI.bulkDisableMatching()
@@ -670,12 +679,7 @@ export default function ChannelConfiguration() {
         description: response.data.message || "Disabled matching for all groups",
       })
       // Reload both group and channel settings
-      const [groupSettingsResponse, channelSettingsResponse] = await Promise.all([
-        groupSettingsAPI.getAllSettings(),
-        channelSettingsAPI.getAllSettings()
-      ])
-      setGroupSettings(groupSettingsResponse.data || {})
-      setChannelSettings(channelSettingsResponse.data || {})
+      await reloadAllSettings()
     } catch (err) {
       console.error('Failed to bulk disable matching:', err)
       toast({
@@ -694,12 +698,7 @@ export default function ChannelConfiguration() {
         description: response.data.message || "Disabled checking for all groups",
       })
       // Reload both group and channel settings
-      const [groupSettingsResponse, channelSettingsResponse] = await Promise.all([
-        groupSettingsAPI.getAllSettings(),
-        channelSettingsAPI.getAllSettings()
-      ])
-      setGroupSettings(groupSettingsResponse.data || {})
-      setChannelSettings(channelSettingsResponse.data || {})
+      await reloadAllSettings()
     } catch (err) {
       console.error('Failed to bulk disable checking:', err)
       toast({
