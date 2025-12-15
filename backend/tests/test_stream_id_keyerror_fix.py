@@ -21,17 +21,25 @@ class TestStreamIdKeyErrorFix(unittest.TestCase):
     """Test that analyze_stream always returns complete dict with stream_id."""
     
     def test_analyze_stream_with_zero_retries(self):
-        """Test that analyze_stream returns complete dict when retries=0."""
+        """Test that analyze_stream returns complete dict when retries=0.
+        
+        Note: retries=0 means range(0) which produces no iterations, so the
+        function returns the default error result immediately. This test
+        verifies that the default result includes all required fields.
+        """
         from stream_check_utils import analyze_stream
         
         # Call analyze_stream with retries=0
+        # Note: This is an edge case - with the current implementation using range(retries),
+        # retries=0 causes zero attempts. This test verifies the bug fix ensures a complete
+        # dict is returned even in this edge case.
         result = analyze_stream(
             stream_url='http://example.com/stream.m3u8',
             stream_id=12345,
             stream_name='Test Stream',
             ffmpeg_duration=20,
             timeout=30,
-            retries=0,  # This will cause the retry loop to not execute
+            retries=0,  # Edge case: causes range(0) = empty, so no attempts are made
             retry_delay=10,
             user_agent='VLC/3.0.14'
         )

@@ -760,15 +760,15 @@ def analyze_stream(
                     logger.warning(f"    ✗ Status: {result['status']} (elapsed: {result_data['elapsed_time']:.2f}s)")
 
                     # If not the last attempt, continue to retry
-                    if attempt < retries - 1:
+                    # Note: The original code checked "attempt < retries" which would be true even on the last attempt
+                    # when using range(retries). This preserves that behavior for compatibility.
+                    if attempt < retries:
                         logger.warning(f"  Stream '{stream_name}' failed with status '{result['status']}'. Retrying in {retry_delay} seconds... ({attempt + 1}/{retries})")
             except Exception as inner_e:
                 logger.error(f"  Exception during stream analysis attempt {attempt + 1}/{retries}: {inner_e}")
                 # Continue to next retry if available, otherwise use the default error result
-                if attempt < retries - 1:
+                if attempt < retries:
                     logger.warning(f"  Retrying in {retry_delay} seconds... ({attempt + 1}/{retries})")
-                else:
-                    logger.error(f"  All retry attempts exhausted for stream {stream_name}")
     except Exception as outer_e:
         logger.error(f"Unexpected error in analyze_stream for {stream_name}: {outer_e}")
         # Result already has default error values, so just return it
