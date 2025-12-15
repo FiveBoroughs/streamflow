@@ -1,4 +1,5 @@
 # StreamFlow for Dispatcharr
+![Docker Pulls](https://ghcr-badge.elias.eu.org/shield/krinkuto11/streamflow/streamflow)
 
 Automated stream management system for Dispatcharr IPTV services with intelligent quality checking and automatic stream reordering.
 1. Updates playlists.
