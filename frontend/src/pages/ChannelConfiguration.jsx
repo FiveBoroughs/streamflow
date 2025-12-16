@@ -12,6 +12,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert.jsx'
 import { useToast } from '@/hooks/use-toast.js'
 import { channelsAPI, regexAPI, streamCheckerAPI, channelSettingsAPI, channelOrderAPI, groupSettingsAPI, profileAPI } from '@/services/api.js'
 import { CheckCircle, Edit, Plus, Trash2, Loader2, Search, X, Download, Upload, GripVertical, Save, RotateCcw, ArrowUpDown } from 'lucide-react'
+import ProfileManagement from '@/components/ProfileManagement.jsx'
 import {
   DndContext,
   closestCenter,
@@ -1253,10 +1254,11 @@ export default function ChannelConfiguration() {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <TabsList className="grid w-full grid-cols-3">
+        <TabsList className="grid w-full grid-cols-4">
           <TabsTrigger value="regex">Regex Configuration</TabsTrigger>
           <TabsTrigger value="groups">Group Management</TabsTrigger>
           <TabsTrigger value="ordering">Channel Order</TabsTrigger>
+          <TabsTrigger value="profiles">Profiles</TabsTrigger>
         </TabsList>
         
         <TabsContent value="regex" className="space-y-6">
@@ -1813,6 +1815,11 @@ export default function ChannelConfiguration() {
               </Button>
             </div>
           )}
+        </TabsContent>
+        
+        {/* Profiles Tab */}
+        <TabsContent value="profiles" className="space-y-6">
+          <ProfileManagement />
         </TabsContent>
       </Tabs>
 
