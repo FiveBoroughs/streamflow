@@ -13,7 +13,7 @@ logger = setup_logging(__name__)
 
 
 # Valid entity types for caching
-VALID_ENTITY_TYPES = [the valid entity types (see VALID_ENTITY_TYPES constant)]
+VALID_ENTITY_TYPES = ['channels', 'streams', 'channel_groups', 'logos', 'm3u_accounts', 'channel_profiles']
 
 
 # Default TTL values in seconds
