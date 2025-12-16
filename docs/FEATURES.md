@@ -14,6 +14,16 @@
 - **Real-time Updates**: Account list refreshed after every playlist refresh
 - **UDI Integration**: Uses Universal Data Index (UDI) for efficient caching
 
+### Channel Profile Management
+- **Profile Selection**: Choose specific Dispatcharr channel profiles instead of the general channel list
+- **Dead Stream Management**: Automatically disable channels with no working streams in a target profile
+- **Snapshot-Based Re-enabling**: Create snapshots to track which channels should be re-enabled when streams return
+- **Selective Control**: Different profiles can serve different purposes (e.g., main profile, disabled channels profile)
+- **Manual Triggers**: Manually trigger empty channel disabling at any time
+- **Visual Management**: User-friendly interface in Automation Settings with snapshot information display
+
+See [CHANNEL_PROFILES_FEATURE.md](CHANNEL_PROFILES_FEATURE.md) for detailed profile management documentation.
+
 ## Stream Management
 
 ### Channel Ordering Interface
