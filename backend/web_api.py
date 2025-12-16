@@ -1166,6 +1166,66 @@ def update_group_settings_endpoint(group_id):
         logger.error(f"Error updating group settings: {e}")
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/group-settings/bulk-disable-matching', methods=['POST'])
+def bulk_disable_group_matching():
+    """Disable matching for all channel groups."""
+    try:
+        settings_manager = get_channel_settings_manager()
+        udi = get_udi_manager()
+        
+        # Get all groups (with channels)
+        groups = udi.get_channel_groups()
+        
+        updated_count = 0
+        for group in groups:
+            group_id = group.get('id')
+            if group_id:
+                success = settings_manager.set_group_settings(
+                    group_id,
+                    matching_mode='disabled'
+                )
+                if success:
+                    updated_count += 1
+        
+        logger.info(f"Bulk disabled matching for {updated_count} group(s)")
+        return jsonify({
+            "message": f"Disabled matching for {updated_count} group(s)",
+            "groups_updated": updated_count
+        })
+    except Exception as e:
+        logger.error(f"Error in bulk disable matching: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/group-settings/bulk-disable-checking', methods=['POST'])
+def bulk_disable_group_checking():
+    """Disable checking for all channel groups."""
+    try:
+        settings_manager = get_channel_settings_manager()
+        udi = get_udi_manager()
+        
+        # Get all groups (with channels)
+        groups = udi.get_channel_groups()
+        
+        updated_count = 0
+        for group in groups:
+            group_id = group.get('id')
+            if group_id:
+                success = settings_manager.set_group_settings(
+                    group_id,
+                    checking_mode='disabled'
+                )
+                if success:
+                    updated_count += 1
+        
+        logger.info(f"Bulk disabled checking for {updated_count} group(s)")
+        return jsonify({
+            "message": f"Disabled checking for {updated_count} group(s)",
+            "groups_updated": updated_count
+        })
+    except Exception as e:
+        logger.error(f"Error in bulk disable checking: {e}")
+        return jsonify({"error": str(e)}), 500
+
 # ==================== CHANNEL ORDER ENDPOINTS ====================
 
 @app.route('/api/channel-order', methods=['GET'])

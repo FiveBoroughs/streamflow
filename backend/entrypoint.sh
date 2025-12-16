@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # StreamFlow Entrypoint
-# Starts Flask API in a single container
+# Starts Flask API directly
 
 set -e
 
@@ -13,7 +13,7 @@ API_PORT="${API_PORT:-5000}"
 DEBUG_MODE="${DEBUG_MODE:-false}"
 CONFIG_DIR="${CONFIG_DIR:-/app/data}"
 
-# Export environment variables for supervisor programs
+# Export environment variables for the Flask application
 export API_HOST API_PORT DEBUG_MODE CONFIG_DIR
 
 # Deprecated: Old manual interval approach (kept for backward compatibility warnings)
@@ -56,11 +56,8 @@ echo "[INFO] Access the web interface at http://localhost:${API_PORT}"
 echo "[INFO] API documentation available at http://localhost:${API_PORT}/api/health"
 echo "[INFO] ============================================"
 
-# Start supervisor in foreground mode (nodaemon=true)
-# This will become PID 1 and properly forward all logs to Docker stdout
-echo "[INFO] Starting supervisor to manage Flask API..."
+# Start Flask API directly
+echo "[INFO] Starting Flask API..."
 
-# Note: Supervisor will run in foreground and manage all processes
-# All logs will be forwarded to stdout/stderr automatically
-# Use exec to ensure supervisor becomes PID 1 and receives signals properly
-exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf
+# Use exec to ensure Flask becomes PID 1 and receives signals properly
+exec python3 web_api.py --host "${API_HOST}" --port "${API_PORT}"

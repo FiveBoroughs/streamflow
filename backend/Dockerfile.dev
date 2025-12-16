@@ -1,12 +1,10 @@
 # Development Dockerfile for Backend
 FROM python:3.11-slim
 
-# Install system dependencies including Redis and supervisor
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
     curl \
     ffmpeg \
-    redis-server \
-    supervisor \
     && rm -rf /var/lib/apt/lists/*
 
 # Create working directory
@@ -20,18 +18,15 @@ RUN pip install --no-cache-dir --trusted-host pypi.org --trusted-host files.pyth
 RUN pip install --no-cache-dir watchdog flask-cors
 
 # Create necessary directories
-RUN mkdir -p csv logs data /var/lib/redis
+RUN mkdir -p csv logs data
 
 # Set environment variable for config directory
 ENV CONFIG_DIR=/app/data
 ENV FLASK_ENV=development
 ENV PYTHONUNBUFFERED=1
 
-# Copy supervisor configuration
-COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
-
 # Expose Flask port
 EXPOSE 5000
 
-# Start supervisor to manage all services
-CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
+# Start Flask API directly with hot-reload
+CMD ["python3", "web_api.py", "--host", "0.0.0.0", "--port", "5000", "--debug"]

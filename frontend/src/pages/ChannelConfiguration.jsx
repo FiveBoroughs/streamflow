@@ -662,6 +662,53 @@ export default function ChannelConfiguration() {
     }
   }
 
+  const reloadAllSettings = async () => {
+    const [groupSettingsResponse, channelSettingsResponse] = await Promise.all([
+      groupSettingsAPI.getAllSettings(),
+      channelSettingsAPI.getAllSettings()
+    ])
+    setGroupSettings(groupSettingsResponse.data || {})
+    setChannelSettings(channelSettingsResponse.data || {})
+  }
+
+  const handleBulkDisableMatching = async () => {
+    try {
+      const response = await groupSettingsAPI.bulkDisableMatching()
+      toast({
+        title: "Success",
+        description: response.data.message || "Disabled matching for all groups",
+      })
+      // Reload both group and channel settings
+      await reloadAllSettings()
+    } catch (err) {
+      console.error('Failed to bulk disable matching:', err)
+      toast({
+        title: "Error",
+        description: err.response?.data?.error || "Failed to disable matching for all groups",
+        variant: "destructive"
+      })
+    }
+  }
+
+  const handleBulkDisableChecking = async () => {
+    try {
+      const response = await groupSettingsAPI.bulkDisableChecking()
+      toast({
+        title: "Success",
+        description: response.data.message || "Disabled checking for all groups",
+      })
+      // Reload both group and channel settings
+      await reloadAllSettings()
+    } catch (err) {
+      console.error('Failed to bulk disable checking:', err)
+      toast({
+        title: "Error",
+        description: err.response?.data?.error || "Failed to disable checking for all groups",
+        variant: "destructive"
+      })
+    }
+  }
+
   const handleCheckChannel = async (channelId) => {
     try {
       setCheckingChannel(channelId)
@@ -1377,11 +1424,33 @@ export default function ChannelConfiguration() {
 
           <Card>
             <CardHeader>
-              <CardTitle>Channel Group Settings</CardTitle>
-              <CardDescription>
-                Manage stream matching and checking settings for entire channel groups. 
-                When both settings are disabled for a group, its channels will not appear in Regex Configuration or Channel Ordering.
-              </CardDescription>
+              <div className="flex items-start justify-between">
+                <div className="flex-1">
+                  <CardTitle>Channel Group Settings</CardTitle>
+                  <CardDescription>
+                    Manage stream matching and checking settings for entire channel groups. 
+                    When both settings are disabled for a group, its channels will not appear in Regex Configuration or Channel Ordering.
+                  </CardDescription>
+                </div>
+                <div className="flex gap-2 ml-4">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleBulkDisableMatching}
+                    className="whitespace-nowrap"
+                  >
+                    Disable Matching for All
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleBulkDisableChecking}
+                    className="whitespace-nowrap"
+                  >
+                    Disable Checking for All
+                  </Button>
+                </div>
+              </div>
             </CardHeader>
             <CardContent className="space-y-4">
               {/* Pagination info and controls at top */}

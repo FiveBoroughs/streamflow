@@ -60,6 +60,8 @@ export const groupSettingsAPI = {
   getAllSettings: () => api.get('/group-settings'),
   getSettings: (groupId) => api.get(`/group-settings/${groupId}`),
   updateSettings: (groupId, settings) => api.put(`/group-settings/${groupId}`, settings),
+  bulkDisableMatching: () => api.post('/group-settings/bulk-disable-matching'),
+  bulkDisableChecking: () => api.post('/group-settings/bulk-disable-checking'),
 };
 
 export const channelOrderAPI = {

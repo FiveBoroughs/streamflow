@@ -1748,7 +1748,7 @@ class StreamCheckerService:
             if dead_stream_ids:
                 if dead_stream_removal_enabled:
                     logger.warning(f"🔴 Removing {len(dead_stream_ids)} dead streams from channel {channel_name}")
-                    analyzed_streams = [s for s in analyzed_streams if s['stream_id'] not in dead_stream_ids]
+                    analyzed_streams = [s for s in analyzed_streams if s.get('stream_id') not in dead_stream_ids]
                 else:
                     logger.info(f"⚠️ Found {len(dead_stream_ids)} dead streams in channel {channel_name}, but removal is disabled in config")
             
@@ -1765,7 +1765,7 @@ class StreamCheckerService:
                 step='Reordering streams',
                 step_detail='Applying new stream order to channel'
             )
-            reordered_ids = [s['stream_id'] for s in analyzed_streams]
+            reordered_ids = [s.get('stream_id') for s in analyzed_streams if s.get('stream_id') is not None]
             # Dead streams have already been filtered from analyzed_streams, so allow_dead_streams=False
             update_channel_streams(channel_id, reordered_ids, allow_dead_streams=False)
             
@@ -2192,10 +2192,10 @@ class StreamCheckerService:
                     logger.warning(f"🔴 Removing {len(dead_stream_ids)} dead streams from channel {channel_name}")
                     # Log which streams are being removed
                     for stream_id in dead_stream_ids:
-                        dead_stream = next((s for s in analyzed_streams if s['stream_id'] == stream_id), None)
+                        dead_stream = next((s for s in analyzed_streams if s.get('stream_id') == stream_id), None)
                         if dead_stream:
                             logger.info(f"  - Removing dead stream {stream_id}: {dead_stream.get('stream_name', 'Unknown')}")
-                    analyzed_streams = [s for s in analyzed_streams if s['stream_id'] not in dead_stream_ids]
+                    analyzed_streams = [s for s in analyzed_streams if s.get('stream_id') not in dead_stream_ids]
                 else:
                     logger.info(f"⚠️ Found {len(dead_stream_ids)} dead streams in channel {channel_name}, but removal is disabled in config")
             
@@ -2212,7 +2212,7 @@ class StreamCheckerService:
                 step='Reordering streams',
                 step_detail='Applying new stream order to channel'
             )
-            reordered_ids = [s['stream_id'] for s in analyzed_streams]
+            reordered_ids = [s.get('stream_id') for s in analyzed_streams if s.get('stream_id') is not None]
             # Dead streams have already been filtered from analyzed_streams, so allow_dead_streams=False
             update_channel_streams(channel_id, reordered_ids, allow_dead_streams=False)
             

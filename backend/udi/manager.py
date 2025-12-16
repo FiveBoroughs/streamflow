@@ -283,13 +283,20 @@ class UDIManager:
         return self._valid_stream_ids.copy()
     
     def get_channel_groups(self) -> List[Dict[str, Any]]:
-        """Get all channel groups.
+        """Get all channel groups that have associated channels.
+        
+        Only returns groups where channel_count > 0 to avoid cluttering
+        the Group Management UI.
         
         Returns:
-            List of channel group dictionaries
+            List of channel group dictionaries with channels
         """
         self._ensure_initialized()
-        return self._channel_groups_cache.copy()
+        # Filter out groups with no channels
+        return [
+            group for group in self._channel_groups_cache 
+            if group.get('channel_count', 0) > 0
+        ]
     
     def get_logos(self) -> List[Dict[str, Any]]:
         """Get all logos.

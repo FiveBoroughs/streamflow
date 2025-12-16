@@ -48,7 +48,7 @@ See [Deployment Guide](docs/DEPLOYMENT.md) for detailed instructions.
 - Single port (5000) for all web access
 - Multi-platform support: linux/amd64, linux/arm64
 
-All services run within a single container managed by Supervisor for simplified deployment.
+The Flask API runs directly as PID 1 in the container for simplified deployment.
 
 ## Configuration
 
