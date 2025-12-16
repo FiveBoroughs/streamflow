@@ -2025,38 +2025,38 @@ def test_dispatcharr_connection():
                     return jsonify({
                         "success": False,
                         "error": "Authentication successful but failed to fetch channels"
-                    })
+                    }), 400
             else:
                 return jsonify({
                     "success": False,
                     "error": "No token received from Dispatcharr"
-                })
+                }), 400
         except requests.exceptions.Timeout:
             return jsonify({
                 "success": False,
                 "error": "Connection timeout. Please check the URL and network connectivity."
-            })
+            }), 400
         except requests.exceptions.ConnectionError:
             return jsonify({
                 "success": False,
                 "error": "Could not connect to Dispatcharr. Please check the URL."
-            })
+            }), 400
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 401:
                 return jsonify({
                     "success": False,
                     "error": "Invalid username or password"
-                })
+                }), 401
             else:
                 return jsonify({
                     "success": False,
                     "error": f"HTTP error: {e.response.status_code}"
-                })
+                }), 400
         except Exception as e:
             return jsonify({
                 "success": False,
                 "error": f"Connection failed: {str(e)}"
-            })
+            }), 400
             
     except Exception as e:
         logger.error(f"Error testing Dispatcharr connection: {e}")
