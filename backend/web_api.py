@@ -1231,14 +1231,8 @@ def get_profile_channels(profile_id):
             
             return jsonify(profile_channels_to_cache)
     
-    except requests.exceptions.RequestException as e:
+    except Exception as e:
         logger.error(f"Error fetching profile channels: {e}")
-        return jsonify({"error": str(e)}), 500
-    except Exception as e:
-        logger.error(f"Unexpected error in get_profile_channels: {e}")
-        return jsonify({"error": str(e)}), 500
-    except Exception as e:
-        logger.error(f"Error getting profile channels: {e}")
         return jsonify({"error": str(e)}), 500
 
 
