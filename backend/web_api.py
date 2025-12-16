@@ -935,6 +935,355 @@ def test_regex_pattern_live():
         logger.error(f"Error testing regex patterns live: {e}")
         return jsonify({"error": str(e)}), 500
 
+# ============================================================
+# PROFILE CONFIGURATION API ENDPOINTS
+# ============================================================
+
+@app.route('/api/profile-config', methods=['GET'])
+@log_function_call
+def get_profile_config():
+    """Get the current profile configuration.
+    
+    Returns:
+        JSON with profile configuration
+    """
+    try:
+        from profile_config import get_profile_config
+        profile_config = get_profile_config()
+        
+        config = profile_config.get_config()
+        
+        return jsonify(config)
+    except Exception as e:
+        logger.error(f"Error getting profile config: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/profile-config', methods=['PUT'])
+@log_function_call
+def update_profile_config():
+    """Update profile configuration.
+    
+    Expects JSON with configuration options:
+    - selected_profile_id: Profile ID to use (null for general)
+    - selected_profile_name: Profile name (for display)
+    - dead_streams.enabled: Enable empty channel management
+    - dead_streams.target_profile_id: Profile to disable channels in
+    - dead_streams.target_profile_name: Profile name
+    - dead_streams.use_snapshot: Use snapshot for re-enabling
+    
+    Returns:
+        JSON with result
+    """
+    try:
+        from profile_config import get_profile_config
+        profile_config = get_profile_config()
+        
+        data = request.get_json()
+        
+        # Update selected profile
+        if 'selected_profile_id' in data:
+            profile_config.set_selected_profile(
+                data.get('selected_profile_id'),
+                data.get('selected_profile_name')
+            )
+        
+        # Update dead stream config
+        if 'dead_streams' in data:
+            ds_config = data['dead_streams']
+            profile_config.set_dead_stream_config(
+                enabled=ds_config.get('enabled'),
+                target_profile_id=ds_config.get('target_profile_id'),
+                target_profile_name=ds_config.get('target_profile_name'),
+                use_snapshot=ds_config.get('use_snapshot')
+            )
+        
+        return jsonify({"message": "Profile configuration updated successfully"})
+    except Exception as e:
+        logger.error(f"Error updating profile config: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/profiles', methods=['GET'])
+@log_function_call
+def get_profiles():
+    """Get all available channel profiles from Dispatcharr.
+    
+    Returns:
+        JSON list of profiles
+    """
+    try:
+        # Get profiles from UDI
+        udi = get_udi_manager()
+        profiles = udi.get_channel_profiles()
+        
+        return jsonify(profiles)
+    except Exception as e:
+        logger.error(f"Error getting profiles: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/profiles/<int:profile_id>/channels', methods=['GET'])
+@log_function_call
+def get_profile_channels(profile_id):
+    """Get channels for a specific profile.
+    
+    Makes a direct API call to Dispatcharr to get the current channel list.
+    
+    Args:
+        profile_id: Profile ID
+        
+    Returns:
+        JSON with profile and channels
+    """
+    try:
+        base_url = _get_base_url()
+        if not base_url:
+            return jsonify({"error": "Dispatcharr base URL not configured"}), 500
+        
+        # Import here to avoid circular dependency
+        from udi.fetcher import _get_auth_headers
+        
+        # Get profile details
+        profile_url = f"{base_url}/api/channels/profiles/{profile_id}/"
+        resp = requests.get(profile_url, headers=_get_auth_headers(), timeout=30)
+        resp.raise_for_status()
+        profile = resp.json()
+        
+        # Get channels for this profile
+        # Note: The profile.channels field might be a list of IDs or a serialized representation
+        # We'll fetch all channels and filter by profile if needed
+        udi = get_udi_manager()
+        all_channels = udi.get_channels()
+        
+        # Return profile with channels
+        return jsonify({
+            'profile': profile,
+            'channels': all_channels  # In production, filter by profile
+        })
+    except Exception as e:
+        logger.error(f"Error getting profile channels: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/profiles/<int:profile_id>/snapshot', methods=['POST'])
+@log_function_call
+def create_profile_snapshot(profile_id):
+    """Create a snapshot of the current channels in a profile.
+    
+    This records which channels are in the profile so we can re-enable them
+    after they've been filled back again.
+    
+    Args:
+        profile_id: Profile ID
+        
+    Returns:
+        JSON with result
+    """
+    try:
+        from profile_config import get_profile_config
+        
+        # Get profile info from UDI
+        udi = get_udi_manager()
+        profile = udi.get_channel_profile_by_id(profile_id)
+        
+        if not profile:
+            return jsonify({"error": "Profile not found"}), 404
+        
+        # Get channels for this profile
+        # For now, we'll snapshot all channels
+        # In production, this should query Dispatcharr for channels in this specific profile
+        all_channels = udi.get_channels()
+        channel_ids = [ch['id'] for ch in all_channels if ch.get('id')]
+        
+        # Create snapshot
+        profile_config = get_profile_config()
+        success = profile_config.create_snapshot(
+            profile_id,
+            profile.get('name', 'Unknown'),
+            channel_ids
+        )
+        
+        if success:
+            snapshot = profile_config.get_snapshot(profile_id)
+            return jsonify({
+                "message": "Snapshot created successfully",
+                "snapshot": snapshot
+            })
+        else:
+            return jsonify({"error": "Failed to create snapshot"}), 500
+            
+    except Exception as e:
+        logger.error(f"Error creating profile snapshot: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/profiles/<int:profile_id>/snapshot', methods=['GET'])
+@log_function_call
+def get_profile_snapshot(profile_id):
+    """Get the snapshot for a profile.
+    
+    Args:
+        profile_id: Profile ID
+        
+    Returns:
+        JSON with snapshot data
+    """
+    try:
+        from profile_config import get_profile_config
+        profile_config = get_profile_config()
+        
+        snapshot = profile_config.get_snapshot(profile_id)
+        
+        if snapshot:
+            return jsonify(snapshot)
+        else:
+            return jsonify({"message": "No snapshot found for this profile"}), 404
+            
+    except Exception as e:
+        logger.error(f"Error getting profile snapshot: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/profiles/<int:profile_id>/snapshot', methods=['DELETE'])
+@log_function_call
+def delete_profile_snapshot(profile_id):
+    """Delete the snapshot for a profile.
+    
+    Args:
+        profile_id: Profile ID
+        
+    Returns:
+        JSON with result
+    """
+    try:
+        from profile_config import get_profile_config
+        profile_config = get_profile_config()
+        
+        success = profile_config.delete_snapshot(profile_id)
+        
+        if success:
+            return jsonify({"message": "Snapshot deleted successfully"})
+        else:
+            return jsonify({"error": "Failed to delete snapshot"}), 500
+            
+    except Exception as e:
+        logger.error(f"Error deleting profile snapshot: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/profiles/snapshots', methods=['GET'])
+@log_function_call
+def get_all_snapshots():
+    """Get all profile snapshots.
+    
+    Returns:
+        JSON with all snapshots
+    """
+    try:
+        from profile_config import get_profile_config
+        profile_config = get_profile_config()
+        
+        snapshots = profile_config.get_all_snapshots()
+        
+        return jsonify(snapshots)
+    except Exception as e:
+        logger.error(f"Error getting snapshots: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/profiles/<int:profile_id>/disable-empty-channels', methods=['POST'])
+@log_function_call
+def disable_empty_channels_in_profile(profile_id):
+    """Disable channels with no streams in a specific profile.
+    
+    This removes channels from the profile if they have no working streams.
+    Uses the dead_streams_tracker to identify empty channels.
+    
+    Args:
+        profile_id: Profile ID
+        
+    Returns:
+        JSON with result and count of disabled channels
+    """
+    try:
+        from dead_streams_tracker import DeadStreamsTracker
+        
+        base_url = _get_base_url()
+        if not base_url:
+            return jsonify({"error": "Dispatcharr base URL not configured"}), 500
+        
+        # Get all channels
+        udi = get_udi_manager()
+        channels = udi.get_channels()
+        
+        # Initialize dead streams tracker
+        tracker = DeadStreamsTracker()
+        
+        # Find channels with all streams dead
+        channels_to_disable = []
+        
+        for channel in channels:
+            channel_id = channel.get('id')
+            if not channel_id:
+                continue
+            
+            # Get streams for this channel
+            stream_ids = channel.get('streams', [])
+            
+            if not stream_ids:
+                # Channel has no streams at all - consider it empty
+                channels_to_disable.append(channel_id)
+                continue
+            
+            # Check if all streams are dead
+            all_dead = True
+            for stream_id in stream_ids:
+                stream = udi.get_stream_by_id(stream_id)
+                if stream and not tracker.is_dead(stream.get('url', '')):
+                    all_dead = False
+                    break
+            
+            if all_dead:
+                channels_to_disable.append(channel_id)
+        
+        # Disable channels in the profile via Dispatcharr API
+        from udi.fetcher import _get_auth_headers
+        
+        disabled_count = 0
+        for channel_id in channels_to_disable:
+            try:
+                # PATCH /api/channels/profiles/{profile_id}/channels/{channel_id}/
+                url = f"{base_url}/api/channels/profiles/{profile_id}/channels/{channel_id}/"
+                resp = requests.patch(
+                    url,
+                    headers=_get_auth_headers(),
+                    json={'enabled': False},
+                    timeout=30
+                )
+                
+                if resp.status_code in [200, 204]:
+                    disabled_count += 1
+                else:
+                    logger.warning(f"Failed to disable channel {channel_id} in profile {profile_id}: {resp.status_code}")
+                    
+            except Exception as e:
+                logger.error(f"Error disabling channel {channel_id}: {e}")
+                continue
+        
+        logger.info(f"Disabled {disabled_count} empty channels in profile {profile_id}")
+        
+        return jsonify({
+            "message": f"Disabled {disabled_count} empty channels",
+            "disabled_count": disabled_count,
+            "total_checked": len(channels)
+        })
+        
+    except Exception as e:
+        logger.error(f"Error disabling empty channels: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route('/api/changelog', methods=['GET'])
 def get_changelog():
     """Get recent changelog entries from both automation and stream checker."""
