@@ -160,6 +160,41 @@ Response:
 ]
 ```
 
+#### Get Profile Channels
+```http
+GET /api/profiles/{id}/channels
+```
+Response:
+```json
+{
+  "profile": {
+    "id": 1,
+    "name": "Family Profile",
+    "channels": "..."
+  },
+  "channels": [
+    {
+      "channel_id": 1,
+      "enabled": true
+    },
+    {
+      "channel_id": 2,
+      "enabled": false
+    },
+    {
+      "channel_id": 3,
+      "enabled": true
+    }
+  ]
+}
+```
+
+**Note**: The `channels` array contains objects with:
+- `channel_id`: The channel ID in Dispatcharr
+- `enabled`: Whether the channel is enabled in this profile
+
+This endpoint parses Dispatcharr's profile channels field and converts it to the format expected by the frontend. If parsing fails, it falls back to returning all channels as enabled.
+
 #### Create Profile Snapshot
 ```http
 POST /api/profiles/1/snapshot

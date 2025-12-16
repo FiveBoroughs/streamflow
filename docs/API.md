@@ -841,7 +841,7 @@ Get detailed diagnostic information about profile fetching status. Useful for tr
 ```
 GET /api/profiles/{profile_id}/channels
 ```
-Get channels for a specific profile from Dispatcharr.
+Get channels for a specific profile from Dispatcharr, including their enabled/disabled status.
 
 **Response:**
 ```json
@@ -850,9 +850,29 @@ Get channels for a specific profile from Dispatcharr.
     "id": 1,
     "name": "Family Profile",
     "channels": "..."
-  }
+  },
+  "channels": [
+    {
+      "channel_id": 1,
+      "enabled": true
+    },
+    {
+      "channel_id": 2,
+      "enabled": false
+    },
+    {
+      "channel_id": 3,
+      "enabled": true
+    }
+  ]
 }
 ```
+
+**Notes:**
+- The `channels` array contains channel-profile associations
+- Each channel object has `channel_id` and `enabled` properties
+- The frontend uses this to filter which channels to display when a profile filter is active
+- If Dispatcharr's profile data cannot be parsed, falls back to returning all channels as enabled
 
 ### Create Profile Snapshot
 ```
