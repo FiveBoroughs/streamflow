@@ -186,17 +186,39 @@ export default function AutomationSettings() {
   const handleProfileConfigChange = (field, value) => {
     if (field.includes('.')) {
       const parts = field.split('.')
+      
+      // Guard against prototype pollution
+      const dangerousKeys = ['__proto__', 'constructor', 'prototype']
+      if (parts.some(part => dangerousKeys.includes(part))) {
+        console.warn('Attempted to set dangerous property:', field)
+        return
+      }
+      
       setProfileConfig(prev => {
         const newConfig = { ...prev }
         let current = newConfig
         for (let i = 0; i < parts.length - 1; i++) {
-          if (!current[parts[i]]) current[parts[i]] = {}
-          current = current[parts[i]]
+          const key = parts[i]
+          if (!current[key] || typeof current[key] !== 'object') {
+            current[key] = {}
+          }
+          current = current[key]
         }
-        current[parts[parts.length - 1]] = value
+        // Additional check for the final key
+        const finalKey = parts[parts.length - 1]
+        if (!['__proto__', 'constructor', 'prototype'].includes(finalKey)) {
+          current[finalKey] = value
+        }
         return newConfig
       })
     } else {
+      // Guard against prototype pollution for single-level keys
+      const dangerousKeys = ['__proto__', 'constructor', 'prototype']
+      if (dangerousKeys.includes(field)) {
+        console.warn('Attempted to set dangerous property:', field)
+        return
+      }
+      
       setProfileConfig(prev => ({
         ...prev,
         [field]: value
