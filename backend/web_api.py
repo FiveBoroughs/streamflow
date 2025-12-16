@@ -1320,7 +1320,7 @@ def get_all_snapshots():
 
 @app.route('/api/profiles/<int:profile_id>/disable-empty-channels', methods=['POST'])
 @log_function_call
-def disable_empty_channels_in_profile(profile_id):
+def disable_empty_channels_in_profile_endpoint(profile_id):
     """Disable channels with no streams in a specific profile.
     
     This removes channels from the profile if they have no working streams.
@@ -1333,76 +1333,14 @@ def disable_empty_channels_in_profile(profile_id):
         JSON with result and count of disabled channels
     """
     try:
-        from dead_streams_tracker import DeadStreamsTracker
+        from empty_channel_manager import disable_empty_channels_in_profile
         
-        base_url = _get_base_url()
-        if not base_url:
-            return jsonify({"error": "Dispatcharr base URL not configured"}), 500
-        
-        # Get all channels
-        udi = get_udi_manager()
-        channels = udi.get_channels()
-        
-        # Initialize dead streams tracker
-        tracker = DeadStreamsTracker()
-        
-        # Find channels with all streams dead
-        channels_to_disable = []
-        
-        for channel in channels:
-            channel_id = channel.get('id')
-            if not channel_id:
-                continue
-            
-            # Get streams for this channel
-            stream_ids = channel.get('streams', [])
-            
-            if not stream_ids:
-                # Channel has no streams at all - consider it empty
-                channels_to_disable.append(channel_id)
-                continue
-            
-            # Check if all streams are dead
-            all_dead = True
-            for stream_id in stream_ids:
-                stream = udi.get_stream_by_id(stream_id)
-                if stream and not tracker.is_dead(stream.get('url', '')):
-                    all_dead = False
-                    break
-            
-            if all_dead:
-                channels_to_disable.append(channel_id)
-        
-        # Disable channels in the profile via Dispatcharr API
-        from udi.fetcher import _get_auth_headers
-        
-        disabled_count = 0
-        for channel_id in channels_to_disable:
-            try:
-                # PATCH /api/channels/profiles/{profile_id}/channels/{channel_id}/
-                url = f"{base_url}/api/channels/profiles/{profile_id}/channels/{channel_id}/"
-                resp = requests.patch(
-                    url,
-                    headers=_get_auth_headers(),
-                    json={'enabled': False},
-                    timeout=30
-                )
-                
-                if resp.status_code in [200, 204]:
-                    disabled_count += 1
-                else:
-                    logger.warning(f"Failed to disable channel {channel_id} in profile {profile_id}: {resp.status_code}")
-                    
-            except Exception as e:
-                logger.error(f"Error disabling channel {channel_id}: {e}")
-                continue
-        
-        logger.info(f"Disabled {disabled_count} empty channels in profile {profile_id}")
+        disabled_count, total_checked = disable_empty_channels_in_profile(profile_id)
         
         return jsonify({
             "message": f"Disabled {disabled_count} empty channels",
             "disabled_count": disabled_count,
-            "total_checked": len(channels)
+            "total_checked": total_checked
         })
         
     except Exception as e:

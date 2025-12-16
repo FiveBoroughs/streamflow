@@ -1076,6 +1076,7 @@ class StreamCheckerService:
         3. Reloads enabled M3U accounts
         4. Matches new streams with regex patterns (including previously dead ones)
         5. Checks every channel from every stream (bypassing 2-hour immunity)
+        6. Disables empty channels if configured
         
         During this operation, regular automated updates, matching, and checking are paused.
         """
@@ -1088,7 +1089,7 @@ class StreamCheckerService:
             logger.info("=" * 80)
             
             # Step 1: Refresh UDI cache to ensure we have current data from Dispatcharr
-            logger.info("Step 1/5: Refreshing UDI cache...")
+            logger.info("Step 1/6: Refreshing UDI cache...")
             try:
                 from udi import get_udi_manager
                 udi = get_udi_manager()
@@ -1101,7 +1102,7 @@ class StreamCheckerService:
                 logger.error(f"✗ Failed to refresh UDI cache: {e}")
             
             # Step 2: Clear ALL dead streams from tracker to give them a second chance
-            logger.info("Step 2/5: Clearing dead stream tracker to give all streams a second chance...")
+            logger.info("Step 2/6: Clearing dead stream tracker to give all streams a second chance...")
             try:
                 dead_count = len(self.dead_streams_tracker.get_dead_streams())
                 if dead_count > 0:
@@ -1115,7 +1116,7 @@ class StreamCheckerService:
             automation_manager = None
             
             # Step 3: Update M3U playlists
-            logger.info("Step 3/5: Updating M3U playlists...")
+            logger.info("Step 3/6: Updating M3U playlists...")
             try:
                 from automated_stream_manager import AutomatedStreamManager
                 automation_manager = AutomatedStreamManager()
@@ -1128,7 +1129,7 @@ class StreamCheckerService:
                 logger.error(f"✗ Failed to update M3U playlists: {e}")
             
             # Step 4: Match and assign streams (including previously dead ones since tracker was cleared)
-            logger.info("Step 4/5: Matching and assigning streams...")
+            logger.info("Step 4/6: Matching and assigning streams...")
             try:
                 if automation_manager is not None:
                     assignments = automation_manager.discover_and_assign_streams()
@@ -1142,8 +1143,15 @@ class StreamCheckerService:
                 logger.error(f"✗ Failed to match streams: {e}")
             
             # Step 5: Check all channels (force check to bypass immunity)
-            logger.info("Step 5/5: Queueing all channels for checking...")
+            logger.info("Step 5/6: Queueing all channels for checking...")
             self._queue_all_channels(force_check=True)
+            
+            # Step 6: After all channels are queued, disable empty channels if configured
+            # Note: This will be triggered after the batch finalization in _finalize_batch_changelog
+            # but we also trigger it here in case the batch finalization doesn't run
+            # (e.g., if there are no channels to check or if checking is disabled)
+            logger.info("Step 6/6: Checking for empty channels to disable...")
+            self._trigger_empty_channel_disabling()
             
             logger.info("=" * 80)
             logger.info("GLOBAL ACTION INITIATED SUCCESSFULLY")
@@ -1431,12 +1439,34 @@ class StreamCheckerService:
                 
                 logger.info(f"Finalized batch changelog: {total_channels} channels, {streams_analyzed} streams analyzed in {duration_str}")
                 
+                # After batch finalization, trigger empty channel disabling if configured
+                self._trigger_empty_channel_disabling()
+                
             except Exception as e:
                 logger.error(f"Failed to finalize batch changelog: {e}", exc_info=True)
             finally:
                 # Reset batch tracking
                 self.batch_start_time = None
                 self.batch_changelog_entries = []
+    
+    def _trigger_empty_channel_disabling(self):
+        """Trigger empty channel disabling if configured.
+        
+        This method checks if empty channel management is enabled in the profile
+        configuration and triggers the disabling operation if so.
+        """
+        try:
+            from empty_channel_manager import trigger_empty_channel_disabling
+            
+            result = trigger_empty_channel_disabling()
+            if result:
+                disabled_count, total_checked = result
+                if disabled_count > 0:
+                    logger.info(f"Empty channel management: Disabled {disabled_count} empty channels (checked {total_checked} channels)")
+                else:
+                    logger.debug(f"Empty channel management: No empty channels found (checked {total_checked} channels)")
+        except Exception as e:
+            logger.error(f"Error triggering empty channel disabling: {e}", exc_info=True)
     
     def _check_channel(self, channel_id: int, skip_batch_changelog: bool = False):
         """Check and reorder streams for a specific channel.
@@ -2723,6 +2753,10 @@ class StreamCheckerService:
                     logger.warning(f"Failed to add changelog entry: {e}")
             
             logger.info(f"✓ Single channel check completed for {channel_name} in {duration_str}")
+            
+            # Trigger empty channel disabling if configured
+            # This ensures that if this channel became empty after checking, it gets disabled
+            self._trigger_empty_channel_disabling()
             
             return {
                 'success': True,
