@@ -376,56 +376,93 @@ export default function ProfileManagement() {
                     </SelectContent>
                   </Select>
                 </div>
+              </div>
+            )}
+          </div>
+
+          {/* Snapshot Management - Always visible for Empty Channel Management */}
+          <div className="border-t pt-6">
+            <h3 className="text-lg font-medium mb-4">Snapshot Management</h3>
+            <p className="text-sm text-muted-foreground mb-4">
+              Snapshots track which channels should be enabled in a profile. 
+              Useful for re-enabling channels after they've been disabled by Empty Channel Management.
+            </p>
+            
+            {profiles.length === 0 ? (
+              <Alert>
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>
+                  No profiles available. Please refresh the profiles list.
+                </AlertDescription>
+              </Alert>
+            ) : (
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="snapshot_profile">Select Profile for Snapshot</Label>
+                  <Select
+                    value={profileConfig?.selected_profile_id?.toString() || ''}
+                    onValueChange={(value) => {
+                      const profileId = parseInt(value)
+                      const profile = profiles.find(p => p.id === profileId)
+                      handleProfileConfigChange('selected_profile_id', profileId)
+                      handleProfileConfigChange('selected_profile_name', profile?.name || '')
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select a profile" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {profiles.map((profile) => (
+                        <SelectItem key={profile.id} value={profile.id.toString()}>
+                          {profile.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
 
                 {profileConfig?.selected_profile_id && (
-                  <div className="space-y-4">
-                    <div className="border-t pt-4">
-                      <h4 className="text-sm font-medium mb-2">Snapshot Management</h4>
-                      <p className="text-sm text-muted-foreground mb-3">
-                        Snapshots track which channels should be enabled in this profile. Useful for re-enabling channels after they've been disabled.
-                      </p>
-                      
-                      {snapshots[profileConfig.selected_profile_id] ? (
-                        <div className="space-y-2">
-                          <Alert>
-                            <AlertCircle className="h-4 w-4" />
-                            <AlertTitle>Snapshot Exists</AlertTitle>
-                            <AlertDescription>
-                              Created: {new Date(snapshots[profileConfig.selected_profile_id].created_at).toLocaleString()}
-                              <br />
-                              Channels: {snapshots[profileConfig.selected_profile_id].channel_count}
-                            </AlertDescription>
-                          </Alert>
-                          <Button
-                            variant="destructive"
-                            size="sm"
-                            onClick={() => handleDeleteSnapshot(profileConfig.selected_profile_id)}
-                            disabled={loadingProfiles}
-                          >
-                            {loadingProfiles ? (
-                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                            ) : (
-                              <Trash2 className="mr-2 h-4 w-4" />
-                            )}
-                            Delete Snapshot
-                          </Button>
-                        </div>
-                      ) : (
+                  <div className="space-y-2">
+                    {snapshots[profileConfig.selected_profile_id] ? (
+                      <>
+                        <Alert>
+                          <AlertCircle className="h-4 w-4" />
+                          <AlertTitle>Snapshot Exists</AlertTitle>
+                          <AlertDescription>
+                            Created: {new Date(snapshots[profileConfig.selected_profile_id].created_at).toLocaleString()}
+                            <br />
+                            Channels: {snapshots[profileConfig.selected_profile_id].channel_count}
+                          </AlertDescription>
+                        </Alert>
                         <Button
-                          variant="outline"
+                          variant="destructive"
                           size="sm"
-                          onClick={() => handleCreateSnapshot(profileConfig.selected_profile_id)}
+                          onClick={() => handleDeleteSnapshot(profileConfig.selected_profile_id)}
                           disabled={loadingProfiles}
                         >
                           {loadingProfiles ? (
                             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                           ) : (
-                            <Plus className="mr-2 h-4 w-4" />
+                            <Trash2 className="mr-2 h-4 w-4" />
                           )}
-                          Create Snapshot
+                          Delete Snapshot
                         </Button>
-                      )}
-                    </div>
+                      </>
+                    ) : (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleCreateSnapshot(profileConfig.selected_profile_id)}
+                        disabled={loadingProfiles}
+                      >
+                        {loadingProfiles ? (
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        ) : (
+                          <Plus className="mr-2 h-4 w-4" />
+                        )}
+                        Create Snapshot
+                      </Button>
+                    )}
                   </div>
                 )}
               </div>

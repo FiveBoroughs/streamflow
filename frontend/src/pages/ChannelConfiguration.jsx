@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs.jsx'
 import { Alert, AlertDescription } from '@/components/ui/alert.jsx'
 import { useToast } from '@/hooks/use-toast.js'
-import { channelsAPI, regexAPI, streamCheckerAPI, channelSettingsAPI, channelOrderAPI, groupSettingsAPI, profileAPI } from '@/services/api.js'
+import { channelsAPI, regexAPI, streamCheckerAPI, channelSettingsAPI, channelOrderAPI, groupSettingsAPI, profileAPI, m3uAPI } from '@/services/api.js'
 import { CheckCircle, Edit, Plus, Trash2, Loader2, Search, X, Download, Upload, GripVertical, Save, RotateCcw, ArrowUpDown } from 'lucide-react'
 import ProfileManagement from '@/components/ProfileManagement.jsx'
 import {
@@ -509,6 +509,148 @@ function GroupCard({ group, channels, groupSettings, onUpdateSettings }) {
             </div>
           </div>
         </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+// M3U Priority Management Component
+function M3UPriorityManagement() {
+  const [accounts, setAccounts] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const { toast } = useToast()
+
+  useEffect(() => {
+    loadAccounts()
+  }, [])
+
+  const loadAccounts = async () => {
+    try {
+      setLoading(true)
+      const response = await m3uAPI.getAccounts()
+      setAccounts(response.data || [])
+    } catch (err) {
+      console.error('Failed to load M3U accounts:', err)
+      toast({
+        title: "Error",
+        description: "Failed to load M3U accounts",
+        variant: "destructive"
+      })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handlePriorityChange = async (accountId, field, value) => {
+    try {
+      setSaving(true)
+      await m3uAPI.updateAccountPriority(accountId, { [field]: value })
+      
+      // Update local state
+      setAccounts(prev => prev.map(acc => 
+        acc.id === accountId ? { ...acc, [field]: value } : acc
+      ))
+      
+      toast({
+        title: "Success",
+        description: "M3U account priority updated successfully"
+      })
+    } catch (err) {
+      console.error('Failed to update priority:', err)
+      toast({
+        title: "Error",
+        description: err.response?.data?.error || "Failed to update priority",
+        variant: "destructive"
+      })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    )
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>M3U Account Priority System</CardTitle>
+        <CardDescription>
+          Configure stream selection priority for your M3U accounts. Higher priority accounts' streams will be preferred during stream matching.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        {accounts.length === 0 ? (
+          <Alert>
+            <AlertDescription>
+              No M3U accounts found. Add M3U accounts in Dispatcharr to configure their priority.
+            </AlertDescription>
+          </Alert>
+        ) : (
+          <>
+            <div className="space-y-4">
+              <div className="rounded-lg border">
+                <div className="grid grid-cols-4 gap-4 p-4 bg-muted font-medium text-sm">
+                  <div>Account Name</div>
+                  <div>Priority (0-100)</div>
+                  <div className="col-span-2">Priority Mode</div>
+                </div>
+                {accounts.map((account) => (
+                  <div key={account.id} className="grid grid-cols-4 gap-4 p-4 border-t items-center">
+                    <div className="font-medium">{account.name}</div>
+                    <div>
+                      <Input
+                        type="number"
+                        min="0"
+                        max="100"
+                        value={account.priority || 0}
+                        onChange={(e) => handlePriorityChange(account.id, 'priority', parseInt(e.target.value) || 0)}
+                        disabled={saving}
+                      />
+                    </div>
+                    <div className="col-span-2">
+                      <Select
+                        value={account.priority_mode || 'disabled'}
+                        onValueChange={(value) => handlePriorityChange(account.id, 'priority_mode', value)}
+                        disabled={saving}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="disabled">Disabled</SelectItem>
+                          <SelectItem value="same_resolution">Same Resolution Only</SelectItem>
+                          <SelectItem value="all_streams">All Streams</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        {account.priority_mode === 'disabled' && 'Priority is not applied'}
+                        {account.priority_mode === 'same_resolution' && 'Priority applied within same resolution group'}
+                        {account.priority_mode === 'all_streams' && 'Priority applied to all streams regardless of quality'}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <Alert>
+              <AlertDescription>
+                <strong>How it works:</strong>
+                <ul className="list-disc list-inside mt-2 space-y-1">
+                  <li><strong>Disabled:</strong> Priority value is ignored, streams are selected based on quality only</li>
+                  <li><strong>Same Resolution Only:</strong> Among streams with the same resolution, prefer streams from higher priority accounts</li>
+                  <li><strong>All Streams:</strong> Always prefer streams from higher priority accounts, even if lower quality</li>
+                </ul>
+              </AlertDescription>
+            </Alert>
+          </>
+        )}
       </CardContent>
     </Card>
   )
@@ -1254,11 +1396,12 @@ export default function ChannelConfiguration() {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <TabsList className="grid w-full grid-cols-4">
+        <TabsList className="grid w-full grid-cols-5">
           <TabsTrigger value="regex">Regex Configuration</TabsTrigger>
           <TabsTrigger value="groups">Group Management</TabsTrigger>
           <TabsTrigger value="ordering">Channel Order</TabsTrigger>
           <TabsTrigger value="profiles">Profiles</TabsTrigger>
+          <TabsTrigger value="m3u-priority">M3U Priority</TabsTrigger>
         </TabsList>
         
         <TabsContent value="regex" className="space-y-6">
@@ -1820,6 +1963,11 @@ export default function ChannelConfiguration() {
         {/* Profiles Tab */}
         <TabsContent value="profiles" className="space-y-6">
           <ProfileManagement />
+        </TabsContent>
+
+        {/* M3U Priority Tab */}
+        <TabsContent value="m3u-priority" className="space-y-6">
+          <M3UPriorityManagement />
         </TabsContent>
       </Tabs>
 
