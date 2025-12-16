@@ -791,4 +791,7 @@ export default function AutomationSettings() {
             </Button>
           </div>
         </TabsContent>
-
+      </Tabs>
+    </div>
+  )
+}
