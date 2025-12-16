@@ -1783,9 +1783,14 @@ def refresh_playlist():
 
 @app.route('/api/m3u-accounts', methods=['GET'])
 def get_m3u_accounts_endpoint():
-    """Get all M3U accounts from Dispatcharr, filtering out 'custom' account if no custom streams exist and non-active accounts."""
+    """Get all M3U accounts from Dispatcharr, filtering out 'custom' account if no custom streams exist and non-active accounts.
+    
+    Also merges priority_mode settings from local configuration.
+    """
     try:
         from api_utils import get_m3u_accounts, has_custom_streams
+        from m3u_priority_config import get_m3u_priority_config
+        
         accounts = get_m3u_accounts()
         
         if accounts is None:
@@ -1807,9 +1812,89 @@ def get_m3u_accounts_endpoint():
                 if acc.get('name', '').lower() != 'custom'
             ]
         
+        # Merge priority_mode from local configuration
+        priority_config = get_m3u_priority_config()
+        for account in accounts:
+            account_id = account.get('id')
+            if account_id:
+                # Add priority_mode from local config (defaults to 'disabled')
+                account['priority_mode'] = priority_config.get_priority_mode(account_id)
+        
         return jsonify(accounts)
     except Exception as e:
         logger.error(f"Error fetching M3U accounts: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/m3u-accounts/<int:account_id>/priority', methods=['PATCH'])
+@log_function_call
+def update_m3u_account_priority(account_id):
+    """Update M3U account priority settings.
+    
+    This endpoint:
+    - Updates the 'priority' field in Dispatcharr via API
+    - Stores the 'priority_mode' field locally (StreamFlow-specific)
+    
+    Request body:
+        {
+            "priority": int (0-100) - optional, updates Dispatcharr
+            "priority_mode": str ("disabled", "same_resolution", "all_streams") - optional, stored locally
+        }
+    """
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+        
+        # Update priority in Dispatcharr if provided
+        if 'priority' in data:
+            priority = data.get('priority', 0)
+            if not isinstance(priority, int) or priority < 0:
+                return jsonify({"error": "Priority must be a non-negative integer"}), 400
+            
+            # Update via Dispatcharr API
+            from api_utils import _get_base_url, _get_auth_headers
+            base_url = _get_base_url()
+            headers = _get_auth_headers()
+            
+            if not base_url or not headers:
+                return jsonify({"error": "Dispatcharr not configured"}), 500
+            
+            # PATCH request to update priority
+            url = f"{base_url}/api/m3u/accounts/{account_id}/"
+            resp = requests.patch(
+                url,
+                headers=headers,
+                json={"priority": priority},
+                timeout=10
+            )
+            
+            if resp.status_code not in [200, 201]:
+                logger.error(f"Failed to update priority in Dispatcharr: {resp.status_code} - {resp.text}")
+                return jsonify({"error": f"Failed to update priority: {resp.text}"}), resp.status_code
+            
+            logger.info(f"Updated priority for M3U account {account_id} to {priority} in Dispatcharr")
+        
+        # Store priority_mode locally (StreamFlow-specific configuration)
+        if 'priority_mode' in data:
+            priority_mode = data.get('priority_mode', 'disabled')
+            from m3u_priority_config import get_m3u_priority_config
+            
+            priority_config = get_m3u_priority_config()
+            if not priority_config.set_priority_mode(account_id, priority_mode):
+                return jsonify({"error": "Failed to save priority_mode"}), 500
+            
+            logger.info(f"Updated priority_mode for M3U account {account_id} to {priority_mode}")
+        
+        # Refresh UDI to get updated data from Dispatcharr
+        if 'priority' in data:
+            udi = get_udi_manager()
+            udi.refresh_m3u_accounts()
+        
+        return jsonify({"message": "M3U account priority updated successfully"})
+        
+    except Exception as e:
+        logger.error(f"Error updating M3U account priority: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/setup-wizard', methods=['GET'])
