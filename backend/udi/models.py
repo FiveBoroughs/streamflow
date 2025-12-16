@@ -225,6 +225,7 @@ class M3UAccount:
     password: Optional[str] = None
     stale_stream_days: int = 0
     priority: int = 0
+    priority_mode: str = "disabled"  # Options: "disabled", "same_resolution", "all_streams"
     status: Optional[str] = None
     last_message: Optional[str] = None
     enable_vod: bool = False
@@ -257,6 +258,7 @@ class M3UAccount:
             password=data.get('password'),
             stale_stream_days=data.get('stale_stream_days', 0),
             priority=data.get('priority', 0),
+            priority_mode=data.get('priority_mode', 'disabled'),
             status=data.get('status'),
             last_message=data.get('last_message'),
             enable_vod=data.get('enable_vod', False),
@@ -289,6 +291,7 @@ class M3UAccount:
             'password': self.password,
             'stale_stream_days': self.stale_stream_days,
             'priority': self.priority,
+            'priority_mode': self.priority_mode,
             'status': self.status,
             'last_message': self.last_message,
             'enable_vod': self.enable_vod,
