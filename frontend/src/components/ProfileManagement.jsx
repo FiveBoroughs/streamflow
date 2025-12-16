@@ -68,6 +68,9 @@ export default function ProfileManagement() {
   }
 
   const handleProfileConfigChange = (field, value) => {
+    // Guard against prototype pollution
+    const dangerousKeys = ['__proto__', 'constructor', 'prototype']
+    
     if (field.includes('.')) {
       const parts = field.split('.')
       setProfileConfig(prev => {
@@ -75,19 +78,26 @@ export default function ProfileManagement() {
         let current = newConfig
         for (let i = 0; i < parts.length - 1; i++) {
           const key = parts[i]
+          // Check each intermediate key for prototype pollution
+          if (dangerousKeys.includes(key)) {
+            console.warn('Attempted to set dangerous property:', key)
+            return prev  // Return unchanged config
+          }
           if (!current[key] || typeof current[key] !== 'object') {
             current[key] = {}
           }
           current = current[key]
         }
+        // Check the final key
         const finalKey = parts[parts.length - 1]
-        if (!['__proto__', 'constructor', 'prototype'].includes(finalKey)) {
-          current[finalKey] = value
+        if (dangerousKeys.includes(finalKey)) {
+          console.warn('Attempted to set dangerous property:', finalKey)
+          return prev  // Return unchanged config
         }
+        current[finalKey] = value
         return newConfig
       })
     } else {
-      const dangerousKeys = ['__proto__', 'constructor', 'prototype']
       if (dangerousKeys.includes(field)) {
         console.warn('Attempted to set dangerous property:', field)
         return
@@ -372,7 +382,7 @@ export default function ProfileManagement() {
                     <div className="border-t pt-4">
                       <h4 className="text-sm font-medium mb-2">Snapshot Management</h4>
                       <p className="text-sm text-muted-foreground mb-3">
-                        Snapshots track which channels should be enabled in this profile. Useful for re-enabling channels after they're filled.
+                        Snapshots track which channels should be enabled in this profile. Useful for re-enabling channels after they've been disabled.
                       </p>
                       
                       {snapshots[profileConfig.selected_profile_id] ? (

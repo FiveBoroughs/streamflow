@@ -1210,9 +1210,6 @@ def get_profile_channels(profile_id):
             # Parse the channels field
             channels_data = profile_data.get('channels', '')
             
-            # Parse the channels field
-            channels_data = profile_data.get('channels', '')
-            
             # Try to parse if it's a JSON string
             if isinstance(channels_data, str) and channels_data.strip():
                 try:
@@ -1240,54 +1237,6 @@ def get_profile_channels(profile_id):
     except Exception as e:
         logger.error(f"Unexpected error in get_profile_channels: {e}")
         return jsonify({"error": str(e)}), 500
-        
-        # Convert the channels data to the format expected by frontend: [{channel_id, enabled}, ...]
-        # The data might be in different formats:
-        # 1. Already in correct format: [{channel_id: 1, enabled: true}, ...]
-        # 2. Just IDs: [1, 2, 3, ...]
-        # 3. Channel objects: [{id: 1, name: "...", ...}, ...]
-        formatted_channels = []
-        for item in channels_data:
-            if isinstance(item, dict):
-                # Check if already in the right format (has 'enabled' and 'channel_id')
-                if 'channel_id' in item and 'enabled' in item:
-                    formatted_channels.append(item)
-                # Or if it has 'id' and 'enabled'
-                elif 'id' in item and 'enabled' in item:
-                    formatted_channels.append({
-                        'channel_id': item['id'],
-                        'enabled': item['enabled']
-                    })
-                # Otherwise assume it's a full channel object with 'id' (assume enabled=True)
-                elif 'id' in item:
-                    formatted_channels.append({
-                        'channel_id': item['id'],
-                        'enabled': True
-                    })
-            elif isinstance(item, (int, str)):
-                # Just an ID - assume enabled=True
-                try:
-                    channel_id = int(item)
-                    formatted_channels.append({
-                        'channel_id': channel_id,
-                        'enabled': True
-                    })
-                except (ValueError, TypeError):
-                    # Log type only, not the actual value to avoid exposing sensitive data
-                    logger.warning(f"Could not convert channel item to int, type: {type(item).__name__}")
-        
-        if not formatted_channels:
-            # If we couldn't parse any channels, fall back to all channels
-            logger.warning(f"No channels were parsed from profile.channels. Falling back to all channels.")
-            formatted_channels = _get_all_channels_as_enabled()
-        
-        logger.info(f"Returning {len(formatted_channels)} channels for profile {profile_id}")
-        
-        # Return profile with formatted channels
-        return jsonify({
-            'profile': profile,
-            'channels': formatted_channels
-        })
     except Exception as e:
         logger.error(f"Error getting profile channels: {e}")
         return jsonify({"error": str(e)}), 500
