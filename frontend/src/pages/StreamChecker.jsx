@@ -10,7 +10,7 @@ import { Switch } from '@/components/ui/switch.jsx'
 import { Separator } from '@/components/ui/separator.jsx'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs.jsx'
 import { useToast } from '@/hooks/use-toast.js'
-import { streamCheckerAPI } from '@/services/api.js'
+import { streamCheckerAPI, deadStreamsAPI } from '@/services/api.js'
 import { 
   Activity, 
   CheckCircle2, 
@@ -33,6 +33,8 @@ export default function StreamChecker() {
   const [actionLoading, setActionLoading] = useState('')
   const [configEditing, setConfigEditing] = useState(false)
   const [editedConfig, setEditedConfig] = useState(null)
+  const [deadStreams, setDeadStreams] = useState([])
+  const [deadStreamsLoading, setDeadStreamsLoading] = useState(false)
   const { toast } = useToast()
 
   useEffect(() => {
@@ -153,6 +155,63 @@ export default function StreamChecker() {
       current[safeKeys[safeKeys.length - 1]] = value
       return newConfig
     })
+  }
+
+  const loadDeadStreams = async () => {
+    try {
+      setDeadStreamsLoading(true)
+      const response = await deadStreamsAPI.getDeadStreams()
+      setDeadStreams(response.data.dead_streams || [])
+    } catch (err) {
+      console.error('Failed to load dead streams:', err)
+      toast({
+        title: "Error",
+        description: "Failed to load dead streams",
+        variant: "destructive"
+      })
+    } finally {
+      setDeadStreamsLoading(false)
+    }
+  }
+
+  const handleReviveStream = async (streamUrl) => {
+    try {
+      setActionLoading(`revive-${streamUrl}`)
+      await deadStreamsAPI.reviveStream(streamUrl)
+      toast({
+        title: "Success",
+        description: "Stream revived successfully"
+      })
+      await loadDeadStreams()
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err.response?.data?.error || "Failed to revive stream",
+        variant: "destructive"
+      })
+    } finally {
+      setActionLoading('')
+    }
+  }
+
+  const handleClearAllDeadStreams = async () => {
+    try {
+      setActionLoading('clear-all-dead')
+      const response = await deadStreamsAPI.clearAllDeadStreams()
+      toast({
+        title: "Success",
+        description: response.data.message || "All dead streams cleared"
+      })
+      await loadDeadStreams()
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err.response?.data?.error || "Failed to clear dead streams",
+        variant: "destructive"
+      })
+    } finally {
+      setActionLoading('')
+    }
   }
 
   if (loading) {
@@ -695,6 +754,103 @@ export default function StreamChecker() {
                         </Alert>
                       </>
                     )}
+
+                    {/* Dead Streams List */}
+                    <Separator className="my-6" />
+                    
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h4 className="font-medium">Dead Streams List</h4>
+                          <p className="text-sm text-muted-foreground">
+                            View and manage streams that have been marked as dead
+                          </p>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={loadDeadStreams}
+                            disabled={deadStreamsLoading}
+                          >
+                            {deadStreamsLoading ? (
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            ) : (
+                              <RefreshCw className="mr-2 h-4 w-4" />
+                            )}
+                            Refresh
+                          </Button>
+                          {deadStreams.length > 0 && (
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              onClick={handleClearAllDeadStreams}
+                              disabled={actionLoading === 'clear-all-dead'}
+                            >
+                              {actionLoading === 'clear-all-dead' ? (
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              ) : (
+                                <Trash2 className="mr-2 h-4 w-4" />
+                              )}
+                              Clear All
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+
+                      {deadStreamsLoading ? (
+                        <div className="flex items-center justify-center py-8">
+                          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                        </div>
+                      ) : deadStreams.length === 0 ? (
+                        <Alert>
+                          <CheckCircle2 className="h-4 w-4" />
+                          <AlertTitle>No Dead Streams</AlertTitle>
+                          <AlertDescription>
+                            No streams are currently marked as dead. This is good news!
+                          </AlertDescription>
+                        </Alert>
+                      ) : (
+                        <div className="space-y-2">
+                          {deadStreams.map((stream) => (
+                            <Card key={stream.url} className="p-4">
+                              <div className="flex items-start justify-between gap-4">
+                                <div className="flex-1 space-y-1">
+                                  <div className="flex items-center gap-2">
+                                    <Badge variant="destructive">Dead</Badge>
+                                    <span className="font-medium">{stream.stream_name}</span>
+                                  </div>
+                                  <div className="text-sm text-muted-foreground space-y-1">
+                                    <div className="flex items-center gap-2">
+                                      <span className="font-mono text-xs">{stream.url}</span>
+                                    </div>
+                                    {stream.marked_dead_at && (
+                                      <div className="flex items-center gap-2">
+                                        <Clock className="h-3 w-3" />
+                                        <span>Marked dead: {new Date(stream.marked_dead_at).toLocaleString()}</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => handleReviveStream(stream.url)}
+                                  disabled={actionLoading === `revive-${stream.url}`}
+                                >
+                                  {actionLoading === `revive-${stream.url}` ? (
+                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                  ) : (
+                                    <CheckCircle2 className="mr-2 h-4 w-4" />
+                                  )}
+                                  Revive
+                                </Button>
+                              </div>
+                            </Card>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </TabsContent>
               </Tabs>

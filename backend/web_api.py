@@ -1456,6 +1456,50 @@ def get_dead_streams():
         logger.error(f"Error getting dead streams: {e}")
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/dead-streams/revive', methods=['POST'])
+def revive_dead_stream():
+    """Mark a stream as alive (remove from dead streams)."""
+    try:
+        data = request.json
+        stream_url = data.get('stream_url')
+        
+        if not stream_url:
+            return jsonify({"error": "stream_url is required"}), 400
+        
+        checker = get_stream_checker_service()
+        if not checker or not checker.dead_streams_tracker:
+            return jsonify({"error": "Dead streams tracker not available"}), 503
+        
+        success = checker.dead_streams_tracker.mark_as_alive(stream_url)
+        
+        if success:
+            return jsonify({"success": True, "message": "Stream marked as alive"})
+        else:
+            return jsonify({"error": "Failed to mark stream as alive"}), 500
+    except Exception as e:
+        logger.error(f"Error reviving dead stream: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/dead-streams/clear', methods=['POST'])
+def clear_all_dead_streams():
+    """Clear all dead streams from the tracker."""
+    try:
+        checker = get_stream_checker_service()
+        if not checker or not checker.dead_streams_tracker:
+            return jsonify({"error": "Dead streams tracker not available"}), 503
+        
+        dead_count = len(checker.dead_streams_tracker.get_dead_streams())
+        checker.dead_streams_tracker.clear_all_dead_streams()
+        
+        return jsonify({
+            "success": True,
+            "message": f"Cleared {dead_count} dead stream(s)",
+            "cleared_count": dead_count
+        })
+    except Exception as e:
+        logger.error(f"Error clearing dead streams: {e}")
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/api/channel-settings', methods=['GET'])
 def get_all_channel_settings():
     """Get settings for all channels with group inheritance info."""

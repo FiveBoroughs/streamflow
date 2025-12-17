@@ -428,6 +428,10 @@ class AutomatedStreamManager:
         # Cache for M3U accounts to avoid redundant API calls within a single automation cycle
         # This is cleared after each cycle completes
         self._m3u_accounts_cache = None
+        
+        # Cache for dead stream removal setting to avoid repeated file I/O
+        self._dead_stream_removal_enabled_cache = None
+        self._dead_stream_removal_cache_time = None
     
     def _load_config(self) -> Dict:
         """Load automation configuration."""
@@ -500,6 +504,44 @@ class AutomatedStreamManager:
             logger.info("Changes will take effect on next scheduled operation")
         else:
             logger.info("Automation configuration updated")
+    
+    def _is_dead_stream_removal_enabled(self) -> bool:
+        """Check if dead stream removal is enabled in stream checker config.
+        
+        Uses a 60-second cache to avoid repeated file I/O operations.
+        
+        Returns:
+            True if dead stream removal is enabled, False otherwise
+        """
+        import time
+        current_time = time.time()
+        
+        # Check if cache is still valid (60 seconds)
+        if (self._dead_stream_removal_cache_time is not None and 
+            current_time - self._dead_stream_removal_cache_time < 60 and
+            self._dead_stream_removal_enabled_cache is not None):
+            return self._dead_stream_removal_enabled_cache
+        
+        # Cache expired or not set, read from file
+        try:
+            stream_checker_config_file = CONFIG_DIR / 'stream_checker_config.json'
+            if stream_checker_config_file.exists():
+                with open(stream_checker_config_file, 'r') as f:
+                    config = json.load(f)
+                    enabled = config.get('dead_stream_handling', {}).get('enabled', True)
+            else:
+                # Default to True if config doesn't exist
+                enabled = True
+            
+            # Update cache
+            self._dead_stream_removal_enabled_cache = enabled
+            self._dead_stream_removal_cache_time = current_time
+            return enabled
+        except Exception as e:
+            logger.error(f"Error reading stream checker config: {e}")
+            # Default to True on error (conservative approach)
+            # Don't cache errors, try again next time
+            return True
     
     def refresh_playlists(self, force: bool = False) -> bool:
         """Refresh M3U playlists and track changes.
@@ -822,12 +864,17 @@ class AutomatedStreamManager:
                 if not stream_name or not stream_id:
                     continue
                 
-                # Skip streams marked as dead in the tracker
+                # Skip streams marked as dead in the tracker (if dead stream removal is enabled)
                 # Dead streams should not be added to channels during subsequent matches
                 stream_url = stream.get('url', '')
                 if self.dead_streams_tracker and self.dead_streams_tracker.is_dead(stream_url):
-                    logger.debug(f"Skipping dead stream {stream_id}: {stream_name} (URL: {stream_url})")
-                    continue
+                    # Check if dead stream removal is enabled
+                    dead_stream_removal_enabled = self._is_dead_stream_removal_enabled()
+                    if dead_stream_removal_enabled:
+                        logger.debug(f"Skipping dead stream {stream_id}: {stream_name} (URL: {stream_url})")
+                        continue
+                    else:
+                        logger.debug(f"Including dead stream {stream_id}: {stream_name} (dead stream removal is disabled)")
                 
                 # Find matching channels
                 matching_channels = self.regex_matcher.match_stream_to_channels(stream_name)
