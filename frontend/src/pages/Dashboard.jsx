@@ -52,7 +52,8 @@ export default function Dashboard() {
   const loadPlaylists = async () => {
     try {
       const response = await m3uAPI.getAccounts()
-      setPlaylists(response.data)
+      // API returns { accounts: [], global_priority_mode: '' }
+      setPlaylists(response.data.accounts || [])
     } catch (err) {
       console.error('Failed to load playlists:', err)
     }

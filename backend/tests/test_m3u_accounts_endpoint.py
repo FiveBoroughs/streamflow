@@ -20,16 +20,22 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 class TestM3UAccountsEndpoint(unittest.TestCase):
     """Test M3U accounts endpoint filtering."""
     
+    @patch('m3u_priority_config.get_m3u_priority_config')
     @patch('api_utils.has_custom_streams')
     @patch('api_utils.get_m3u_accounts')
-    def test_filters_custom_account_when_no_custom_streams(self, mock_get_accounts, mock_has_custom):
+    def test_filters_custom_account_when_no_custom_streams(self, mock_get_accounts, mock_has_custom, mock_priority_config):
         """Test that 'custom' M3U account is filtered out when there are no custom streams."""
         from web_api import app
         
+        # Mock priority config
+        mock_config = MagicMock()
+        mock_config.get_global_priority_mode.return_value = 'disabled'
+        mock_priority_config.return_value = mock_config
+        
         # Mock M3U accounts including a "custom" account
         mock_get_accounts.return_value = [
-            {'id': 1, 'name': 'IPTV Provider', 'server_url': 'http://example.com'},
-            {'id': 2, 'name': 'custom', 'server_url': None, 'file_path': None},
+            {'id': 1, 'name': 'IPTV Provider', 'server_url': 'http://example.com', 'is_active': True},
+            {'id': 2, 'name': 'custom', 'server_url': None, 'file_path': None, 'is_active': True},
         ]
         
         # Mock has_custom_streams to return False (no custom streams)
@@ -39,21 +45,32 @@ class TestM3UAccountsEndpoint(unittest.TestCase):
             response = client.get('/api/m3u-accounts')
             data = json.loads(response.data)
             
+            # Response should be an object with 'accounts' and 'global_priority_mode' keys
+            self.assertIn('accounts', data)
+            self.assertIn('global_priority_mode', data)
+            
             # Should only return the non-custom account
-            self.assertEqual(len(data), 1)
-            self.assertEqual(data[0]['id'], 1)
-            self.assertEqual(data[0]['name'], 'IPTV Provider')
+            accounts = data['accounts']
+            self.assertEqual(len(accounts), 1)
+            self.assertEqual(accounts[0]['id'], 1)
+            self.assertEqual(accounts[0]['name'], 'IPTV Provider')
     
+    @patch('m3u_priority_config.get_m3u_priority_config')
     @patch('api_utils.has_custom_streams')
     @patch('api_utils.get_m3u_accounts')
-    def test_keeps_custom_account_when_custom_streams_exist(self, mock_get_accounts, mock_has_custom):
+    def test_keeps_custom_account_when_custom_streams_exist(self, mock_get_accounts, mock_has_custom, mock_priority_config):
         """Test that 'custom' M3U account is kept when custom streams exist."""
         from web_api import app
         
+        # Mock priority config
+        mock_config = MagicMock()
+        mock_config.get_global_priority_mode.return_value = 'disabled'
+        mock_priority_config.return_value = mock_config
+        
         # Mock M3U accounts including a "custom" account
         mock_get_accounts.return_value = [
-            {'id': 1, 'name': 'IPTV Provider', 'server_url': 'http://example.com'},
-            {'id': 2, 'name': 'custom', 'server_url': None, 'file_path': None},
+            {'id': 1, 'name': 'IPTV Provider', 'server_url': 'http://example.com', 'is_active': True},
+            {'id': 2, 'name': 'custom', 'server_url': None, 'file_path': None, 'is_active': True},
         ]
         
         # Mock has_custom_streams to return True (custom streams exist)
@@ -63,26 +80,37 @@ class TestM3UAccountsEndpoint(unittest.TestCase):
             response = client.get('/api/m3u-accounts')
             data = json.loads(response.data)
             
+            # Response should be an object with 'accounts' and 'global_priority_mode' keys
+            self.assertIn('accounts', data)
+            self.assertIn('global_priority_mode', data)
+            
             # Should return both accounts since custom streams exist
-            self.assertEqual(len(data), 2)
-            account_names = [acc['name'] for acc in data]
+            accounts = data['accounts']
+            self.assertEqual(len(accounts), 2)
+            account_names = [acc['name'] for acc in accounts]
             self.assertIn('IPTV Provider', account_names)
             self.assertIn('custom', account_names)
     
+    @patch('m3u_priority_config.get_m3u_priority_config')
     @patch('api_utils.has_custom_streams')
     @patch('api_utils.get_m3u_accounts')
-    def test_keeps_account_with_null_urls_when_no_custom_streams(self, mock_get_accounts, mock_has_custom):
+    def test_keeps_account_with_null_urls_when_no_custom_streams(self, mock_get_accounts, mock_has_custom, mock_priority_config):
         """Test that accounts with null server_url and file_path are kept (not filtered) when no custom streams.
         
         This ensures legitimate disabled or file-based accounts aren't incorrectly filtered out.
         """
         from web_api import app
         
+        # Mock priority config
+        mock_config = MagicMock()
+        mock_config.get_global_priority_mode.return_value = 'disabled'
+        mock_priority_config.return_value = mock_config
+        
         # Mock M3U accounts with different configurations
         mock_get_accounts.return_value = [
-            {'id': 1, 'name': 'IPTV Provider', 'server_url': 'http://example.com'},
-            {'id': 2, 'name': 'Placeholder', 'server_url': None, 'file_path': None},
-            {'id': 3, 'name': 'File Source', 'server_url': None, 'file_path': '/path/to/file.m3u'},
+            {'id': 1, 'name': 'IPTV Provider', 'server_url': 'http://example.com', 'is_active': True},
+            {'id': 2, 'name': 'Placeholder', 'server_url': None, 'file_path': None, 'is_active': True},
+            {'id': 3, 'name': 'File Source', 'server_url': None, 'file_path': '/path/to/file.m3u', 'is_active': True},
         ]
         
         # Mock has_custom_streams to return False (no custom streams)
@@ -92,26 +120,36 @@ class TestM3UAccountsEndpoint(unittest.TestCase):
             response = client.get('/api/m3u-accounts')
             data = json.loads(response.data)
             
+            # Response should be an object with 'accounts' and 'global_priority_mode' keys
+            self.assertIn('accounts', data)
+            
             # Should return all 3 accounts - we no longer filter based on null URLs
             # Only filter by name matching "custom" (case-insensitive)
-            self.assertEqual(len(data), 3)
-            account_ids = [acc['id'] for acc in data]
+            accounts = data['accounts']
+            self.assertEqual(len(accounts), 3)
+            account_ids = [acc['id'] for acc in accounts]
             self.assertIn(1, account_ids)
             self.assertIn(2, account_ids)
             self.assertIn(3, account_ids)
     
+    @patch('m3u_priority_config.get_m3u_priority_config')
     @patch('api_utils.has_custom_streams')
     @patch('api_utils.get_m3u_accounts')
-    def test_case_insensitive_custom_name_filter(self, mock_get_accounts, mock_has_custom):
+    def test_case_insensitive_custom_name_filter(self, mock_get_accounts, mock_has_custom, mock_priority_config):
         """Test that 'custom' name filtering is case-insensitive."""
         from web_api import app
         
+        # Mock priority config
+        mock_config = MagicMock()
+        mock_config.get_global_priority_mode.return_value = 'disabled'
+        mock_priority_config.return_value = mock_config
+        
         # Mock M3U accounts with different case variations of "custom"
         mock_get_accounts.return_value = [
-            {'id': 1, 'name': 'IPTV Provider', 'server_url': 'http://example.com'},
-            {'id': 2, 'name': 'Custom', 'server_url': None},
-            {'id': 3, 'name': 'CUSTOM', 'server_url': None},
-            {'id': 4, 'name': 'CuStOm', 'server_url': None},
+            {'id': 1, 'name': 'IPTV Provider', 'server_url': 'http://example.com', 'is_active': True},
+            {'id': 2, 'name': 'Custom', 'server_url': None, 'is_active': True},
+            {'id': 3, 'name': 'CUSTOM', 'server_url': None, 'is_active': True},
+            {'id': 4, 'name': 'CuStOm', 'server_url': None, 'is_active': True},
         ]
         
         # Mock has_custom_streams to return False (no custom streams)
@@ -121,22 +159,32 @@ class TestM3UAccountsEndpoint(unittest.TestCase):
             response = client.get('/api/m3u-accounts')
             data = json.loads(response.data)
             
+            # Response should be an object with 'accounts' and 'global_priority_mode' keys
+            self.assertIn('accounts', data)
+            
             # Should only return the non-custom account (all variations of "custom" filtered)
-            self.assertEqual(len(data), 1)
-            self.assertEqual(data[0]['id'], 1)
-            self.assertEqual(data[0]['name'], 'IPTV Provider')
+            accounts = data['accounts']
+            self.assertEqual(len(accounts), 1)
+            self.assertEqual(accounts[0]['id'], 1)
+            self.assertEqual(accounts[0]['name'], 'IPTV Provider')
     
+    @patch('m3u_priority_config.get_m3u_priority_config')
     @patch('api_utils.has_custom_streams')
     @patch('api_utils.get_m3u_accounts')
-    def test_returns_all_accounts_when_custom_streams_present(self, mock_get_accounts, mock_has_custom):
+    def test_returns_all_accounts_when_custom_streams_present(self, mock_get_accounts, mock_has_custom, mock_priority_config):
         """Test that all accounts are returned when custom streams are present."""
         from web_api import app
         
+        # Mock priority config
+        mock_config = MagicMock()
+        mock_config.get_global_priority_mode.return_value = 'disabled'
+        mock_priority_config.return_value = mock_config
+        
         # Mock various M3U accounts
         mock_get_accounts.return_value = [
-            {'id': 1, 'name': 'IPTV Provider', 'server_url': 'http://example.com'},
-            {'id': 2, 'name': 'custom', 'server_url': None, 'file_path': None},
-            {'id': 3, 'name': 'Another Provider', 'server_url': 'http://another.com'},
+            {'id': 1, 'name': 'IPTV Provider', 'server_url': 'http://example.com', 'is_active': True},
+            {'id': 2, 'name': 'custom', 'server_url': None, 'file_path': None, 'is_active': True},
+            {'id': 3, 'name': 'Another Provider', 'server_url': 'http://another.com', 'is_active': True},
         ]
         
         # Mock has_custom_streams to return True (custom streams exist)
@@ -146,12 +194,17 @@ class TestM3UAccountsEndpoint(unittest.TestCase):
             response = client.get('/api/m3u-accounts')
             data = json.loads(response.data)
             
+            # Response should be an object with 'accounts' and 'global_priority_mode' keys
+            self.assertIn('accounts', data)
+            
             # Should return all 3 accounts since custom streams exist
-            self.assertEqual(len(data), 3)
+            accounts = data['accounts']
+            self.assertEqual(len(accounts), 3)
     
+    @patch('m3u_priority_config.get_m3u_priority_config')
     @patch('api_utils.has_custom_streams')
     @patch('api_utils.get_m3u_accounts')
-    def test_disabled_accounts_with_null_urls_are_not_filtered(self, mock_get_accounts, mock_has_custom):
+    def test_disabled_accounts_with_null_urls_are_not_filtered(self, mock_get_accounts, mock_has_custom, mock_priority_config):
         """Test edge case: disabled accounts with null URLs should not be filtered out.
         
         This was the bug - accounts with null server_url and file_path were being filtered
@@ -159,11 +212,16 @@ class TestM3UAccountsEndpoint(unittest.TestCase):
         """
         from web_api import app
         
+        # Mock priority config
+        mock_config = MagicMock()
+        mock_config.get_global_priority_mode.return_value = 'disabled'
+        mock_priority_config.return_value = mock_config
+        
         # Mock accounts where some might be disabled with null URLs
         mock_get_accounts.return_value = [
-            {'id': 1, 'name': 'Active Account', 'server_url': 'http://example.com'},
-            {'id': 2, 'name': 'Disabled Account', 'server_url': None, 'file_path': None},
-            {'id': 3, 'name': 'custom', 'server_url': None, 'file_path': None},
+            {'id': 1, 'name': 'Active Account', 'server_url': 'http://example.com', 'is_active': True},
+            {'id': 2, 'name': 'Disabled Account', 'server_url': None, 'file_path': None, 'is_active': True},
+            {'id': 3, 'name': 'custom', 'server_url': None, 'file_path': None, 'is_active': True},
         ]
         
         # Mock has_custom_streams to return False (no custom streams)
@@ -173,25 +231,35 @@ class TestM3UAccountsEndpoint(unittest.TestCase):
             response = client.get('/api/m3u-accounts')
             data = json.loads(response.data)
             
+            # Response should be an object with 'accounts' and 'global_priority_mode' keys
+            self.assertIn('accounts', data)
+            
             # Should return Active and Disabled accounts, but filter out "custom"
-            self.assertEqual(len(data), 2)
-            account_names = [acc['name'] for acc in data]
+            accounts = data['accounts']
+            self.assertEqual(len(accounts), 2)
+            account_names = [acc['name'] for acc in accounts]
             self.assertIn('Active Account', account_names)
             self.assertIn('Disabled Account', account_names)
             self.assertNotIn('custom', account_names)
 
 
+    @patch('m3u_priority_config.get_m3u_priority_config')
     @patch('api_utils.has_custom_streams')
     @patch('api_utils.get_m3u_accounts')
-    def test_uses_efficient_has_custom_streams_method(self, mock_get_accounts, mock_has_custom):
+    def test_uses_efficient_has_custom_streams_method(self, mock_get_accounts, mock_has_custom, mock_priority_config):
         """Test that the endpoint uses the efficient has_custom_streams() method instead of get_streams().
         
         This ensures we're not fetching all streams (3000+) when checking for custom streams.
         """
         from web_api import app
         
+        # Mock priority config
+        mock_config = MagicMock()
+        mock_config.get_global_priority_mode.return_value = 'disabled'
+        mock_priority_config.return_value = mock_config
+        
         mock_get_accounts.return_value = [
-            {'id': 1, 'name': 'IPTV Provider', 'server_url': 'http://example.com'},
+            {'id': 1, 'name': 'IPTV Provider', 'server_url': 'http://example.com', 'is_active': True},
         ]
         
         # Mock has_custom_streams to return False
