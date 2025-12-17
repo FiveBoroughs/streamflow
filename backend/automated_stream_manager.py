@@ -501,6 +501,25 @@ class AutomatedStreamManager:
         else:
             logger.info("Automation configuration updated")
     
+    def _is_dead_stream_removal_enabled(self) -> bool:
+        """Check if dead stream removal is enabled in stream checker config.
+        
+        Returns:
+            True if dead stream removal is enabled, False otherwise
+        """
+        try:
+            stream_checker_config_file = CONFIG_DIR / 'stream_checker_config.json'
+            if stream_checker_config_file.exists():
+                with open(stream_checker_config_file, 'r') as f:
+                    config = json.load(f)
+                    return config.get('dead_stream_handling', {}).get('enabled', True)
+            # Default to True if config doesn't exist
+            return True
+        except Exception as e:
+            logger.error(f"Error reading stream checker config: {e}")
+            # Default to True on error (conservative approach)
+            return True
+    
     def refresh_playlists(self, force: bool = False) -> bool:
         """Refresh M3U playlists and track changes.
         
@@ -822,12 +841,17 @@ class AutomatedStreamManager:
                 if not stream_name or not stream_id:
                     continue
                 
-                # Skip streams marked as dead in the tracker
+                # Skip streams marked as dead in the tracker (if dead stream removal is enabled)
                 # Dead streams should not be added to channels during subsequent matches
                 stream_url = stream.get('url', '')
                 if self.dead_streams_tracker and self.dead_streams_tracker.is_dead(stream_url):
-                    logger.debug(f"Skipping dead stream {stream_id}: {stream_name} (URL: {stream_url})")
-                    continue
+                    # Check if dead stream removal is enabled
+                    dead_stream_removal_enabled = self._is_dead_stream_removal_enabled()
+                    if dead_stream_removal_enabled:
+                        logger.debug(f"Skipping dead stream {stream_id}: {stream_name} (URL: {stream_url})")
+                        continue
+                    else:
+                        logger.debug(f"Including dead stream {stream_id}: {stream_name} (dead stream removal is disabled)")
                 
                 # Find matching channels
                 matching_channels = self.regex_matcher.match_stream_to_channels(stream_name)
