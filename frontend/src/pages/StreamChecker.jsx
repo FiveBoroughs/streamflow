@@ -466,7 +466,7 @@ export default function StreamChecker() {
                         max={300}
                       />
                       <p className="text-xs text-muted-foreground">
-                        Timeout for stream operations
+                        Timeout for stream operations (actual timeout = timeout + duration + 10s overhead for buffering)
                       </p>
                     </div>
 

@@ -117,10 +117,11 @@ function ChannelItem({ item, groupType, groupIndex, itemIndex }) {
           {/* Stream details for check */}
           {groupType === 'check' && item.stats && item.stats.stream_details && item.stats.stream_details.length > 0 && (
             <div className="rounded-md border mt-2">
-              <Table>
+               <Table>
                 <TableHeader>
                   <TableRow>
                     <TableHead>Stream Name</TableHead>
+                    <TableHead>M3U Account</TableHead>
                     <TableHead>Resolution</TableHead>
                     <TableHead>Framerate</TableHead>
                     <TableHead>Bitrate</TableHead>
@@ -141,6 +142,7 @@ function ChannelItem({ item, groupType, groupIndex, itemIndex }) {
                     .map((streamDetail, idx) => (
                     <TableRow key={streamDetail.stream_id || `detail-${idx}`}>
                       <TableCell className="font-medium">{streamDetail.stream_name || 'Unknown'}</TableCell>
+                      <TableCell>{streamDetail.m3u_account || 'N/A'}</TableCell>
                       <TableCell>{streamDetail.resolution || 'N/A'}</TableCell>
                       <TableCell>{streamDetail.fps || 'N/A'}</TableCell>
                       <TableCell>{streamDetail.bitrate || 'N/A'}</TableCell>

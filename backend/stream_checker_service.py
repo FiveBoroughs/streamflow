@@ -1277,6 +1277,37 @@ class StreamCheckerService:
         """
         return calculate_channel_averages(analyzed_streams, dead_stream_ids)
     
+    def _get_m3u_account_name(self, stream_id: int, udi=None) -> Optional[str]:
+        """Get the M3U account name for a stream.
+        
+        Args:
+            stream_id: The stream ID to look up
+            udi: Optional UDI manager instance (will fetch if not provided)
+            
+        Returns:
+            M3U account name or None if not found
+        """
+        try:
+            if udi is None:
+                udi = get_udi_manager()
+            
+            stream_data = udi.get_stream_by_id(stream_id)
+            if not stream_data:
+                return None
+            
+            m3u_account_id = stream_data.get('m3u_account')
+            if not m3u_account_id:
+                return None
+            
+            m3u_account = udi.get_m3u_account_by_id(m3u_account_id)
+            if not m3u_account:
+                return None
+            
+            return m3u_account.get('name', 'Unknown')
+        except Exception as e:
+            logger.debug(f"Could not fetch M3U account for stream {stream_id}: {e}")
+            return None
+    
     
     def _update_stream_stats(self, stream_data: Dict) -> bool:
         """Update stream stats for a single stream on the server."""
@@ -1838,6 +1869,9 @@ class StreamCheckerService:
                         extracted_stats = extract_stream_stats(analyzed)
                         formatted_stats = format_stream_stats_for_display(extracted_stats)
                         
+                        # Get M3U account name for this stream using helper method
+                        m3u_account_name = self._get_m3u_account_name(stream_id, udi)
+                        
                         stream_stat = {
                             'stream_id': stream_id,
                             'stream_name': analyzed.get('stream_name'),
@@ -1845,6 +1879,7 @@ class StreamCheckerService:
                             'fps': formatted_stats['fps'],
                             'video_codec': formatted_stats['video_codec'],
                             'bitrate': formatted_stats['bitrate'],
+                            'm3u_account': m3u_account_name
                         }
                         
                         # Mark dead streams as "dead" instead of showing score:0
@@ -2289,6 +2324,9 @@ class StreamCheckerService:
                         extracted_stats = extract_stream_stats(analyzed)
                         formatted_stats = format_stream_stats_for_display(extracted_stats)
                         
+                        # Get M3U account name for this stream using helper method
+                        m3u_account_name = self._get_m3u_account_name(stream_id, udi)
+                        
                         stream_stat = {
                             'stream_id': stream_id,
                             'stream_name': analyzed.get('stream_name'),
@@ -2297,6 +2335,7 @@ class StreamCheckerService:
                             'video_codec': formatted_stats['video_codec'],
                             'audio_codec': formatted_stats['audio_codec'],
                             'bitrate': formatted_stats['bitrate'],
+                            'm3u_account': m3u_account_name
                         }
                         
                         # Mark dead streams as "dead" instead of showing score:0
@@ -2768,6 +2807,12 @@ class StreamCheckerService:
                 # Calculate score
                 score = self._calculate_stream_score(score_data)
                 
+                # Get M3U account name for this stream using helper method
+                m3u_account_name = None
+                m3u_account_id = stream.get('m3u_account')
+                if m3u_account_id:
+                    m3u_account_name = self._get_m3u_account_name(stream.get('id'), udi)
+                
                 check_stats['stream_details'].append({
                     'stream_id': stream.get('id'),
                     'stream_name': stream.get('name', 'Unknown'),
@@ -2775,7 +2820,8 @@ class StreamCheckerService:
                     'bitrate': formatted_stats['bitrate'],
                     'video_codec': formatted_stats['video_codec'],
                     'fps': formatted_stats['fps'],
-                    'score': score
+                    'score': score,
+                    'm3u_account': m3u_account_name
                 })
             
             # Calculate duration

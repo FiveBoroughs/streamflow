@@ -693,7 +693,11 @@ def analyze_stream(
         - bitrate_kbps: Bitrate in kbps (float or None)
         - status: "OK", "Timeout", or "Error"
     """
-    logger.info(f"▶ Analyzing stream: {stream_name} (ID: {stream_id})")
+    # In debug mode, show detailed entry log; in non-debug mode, be more concise
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.info(f"▶ Analyzing stream: {stream_name} (ID: {stream_id})")
+    else:
+        logger.info(f"▶ Checking {stream_name}")
 
     # Default result in case of failure - includes all required fields
     result = {
@@ -714,12 +718,17 @@ def analyze_stream(
         total_attempts = retries + 1
         for attempt in range(total_attempts):
             if attempt > 0:
-                logger.info(f"  Retry attempt {attempt} of {retries} (attempt {attempt + 1} of {total_attempts}) for {stream_name}")
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.info(f"  Retry attempt {attempt} of {retries} (attempt {attempt + 1} of {total_attempts}) for {stream_name}")
+                else:
+                    # Show current attempt out of total attempts
+                    logger.info(f"  ↻ Retry {attempt + 1}/{total_attempts} for {stream_name}")
                 time.sleep(retry_delay)
 
             try:
                 # Use single ffmpeg call to get all stream information
-                logger.info("  Analyzing stream (single ffmpeg call)...")
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.info("  Analyzing stream (single ffmpeg call)...")
                 result_data = get_stream_info_and_bitrate(
                     url=stream_url,
                     duration=ffmpeg_duration,
@@ -742,29 +751,49 @@ def analyze_stream(
                 }
 
                 # Log results
-                if result['video_codec'] != 'N/A' or result['resolution'] != '0x0':
-                    logger.info(f"    ✓ Video: {result['video_codec']}, {result['resolution']}, {result['fps']} FPS")
-                else:
-                    logger.warning("    ✗ No video info found")
-
-                if result['audio_codec'] != 'N/A':
-                    logger.info(f"    ✓ Audio: {result['audio_codec']}")
-                else:
-                    logger.warning("    ✗ No audio info found")
-
-                if result['status'] == "OK":
-                    if result['bitrate_kbps'] is not None:
-                        logger.info(f"    ✓ Bitrate: {result['bitrate_kbps']:.2f} kbps (elapsed: {result_data['elapsed_time']:.2f}s)")
+                # In debug mode, show detailed multi-line logs
+                # In non-debug mode, use one-liner for failures
+                if logger.isEnabledFor(logging.DEBUG):
+                    # Debug mode: verbose multi-line logging
+                    if result['video_codec'] != 'N/A' or result['resolution'] != '0x0':
+                        logger.info(f"    ✓ Video: {result['video_codec']}, {result['resolution']}, {result['fps']} FPS")
                     else:
-                        logger.warning(f"    ⚠ Bitrate detection failed (elapsed: {result_data['elapsed_time']:.2f}s)")
-                    logger.info(f"  ✓ Stream analysis complete for {stream_name}")
+                        logger.warning("    ✗ No video info found")
+
+                    if result['audio_codec'] != 'N/A':
+                        logger.info(f"    ✓ Audio: {result['audio_codec']}")
+                    else:
+                        logger.warning("    ✗ No audio info found")
+
+                    if result['status'] == "OK":
+                        if result['bitrate_kbps'] is not None:
+                            logger.info(f"    ✓ Bitrate: {result['bitrate_kbps']:.2f} kbps (elapsed: {result_data['elapsed_time']:.2f}s)")
+                        else:
+                            logger.warning(f"    ⚠ Bitrate detection failed (elapsed: {result_data['elapsed_time']:.2f}s)")
+                        logger.info(f"  ✓ Stream analysis complete for {stream_name}")
+                    else:
+                        logger.warning(f"    ✗ Status: {result['status']} (elapsed: {result_data['elapsed_time']:.2f}s)")
+                else:
+                    # Non-debug mode: one-liner for results
+                    if result['status'] == "OK":
+                        # Success: one line with key metrics
+                        bitrate_str = f"{result['bitrate_kbps']:.2f} kbps" if result['bitrate_kbps'] is not None else "N/A"
+                        logger.info(f"  ✓ {stream_name}: {result['resolution']}, {result['fps']} FPS, {bitrate_str}, {result['video_codec']}/{result['audio_codec']} ({result_data['elapsed_time']:.2f}s)")
+                    else:
+                        # Failure: one-liner with status and elapsed time
+                        logger.warning(f"  ✗ {stream_name}: Check failed - {result['status']} ({result_data['elapsed_time']:.2f}s)")
+                
+                # Break on success
+                if result['status'] == "OK":
                     break
                 else:
-                    logger.warning(f"    ✗ Status: {result['status']} (elapsed: {result_data['elapsed_time']:.2f}s)")
-
                     # If not the last attempt, continue to retry
                     if attempt < total_attempts - 1:
-                        logger.warning(f"  Stream '{stream_name}' failed with status '{result['status']}'. Retrying in {retry_delay} seconds... (attempt {attempt + 1} of {total_attempts})")
+                        if logger.isEnabledFor(logging.DEBUG):
+                            logger.warning(f"  Stream '{stream_name}' failed with status '{result['status']}'. Retrying in {retry_delay} seconds... (attempt {attempt + 1} of {total_attempts})")
+                        else:
+                            # Show next attempt number correctly
+                            logger.warning(f"  ↻ Retrying {stream_name} in {retry_delay}s (attempt {attempt + 2}/{total_attempts})")
             except Exception as inner_e:
                 logger.error(f"  Exception during stream analysis (attempt {attempt + 1} of {total_attempts}): {inner_e}")
                 # Continue to next retry if available, otherwise use the default error result
