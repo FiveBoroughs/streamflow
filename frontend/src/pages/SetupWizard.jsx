@@ -303,7 +303,7 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
         regexAPI.getPatterns(),
         m3uAPI.getAccounts().catch(err => {
           console.warn('Failed to load M3U accounts:', err)
-          return { data: [] }
+          return { data: { accounts: [] } }
         })
       ])
       
@@ -311,7 +311,8 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
       // Extract just the patterns object, not the whole config structure
       const patternsData = patternsResponse.data?.patterns || {}
       setPatterns(patternsData)
-      setM3uAccounts(m3uResponse.data || [])
+      // API returns { accounts: [], global_priority_mode: '' }
+      setM3uAccounts(m3uResponse.data.accounts || [])
     } catch (err) {
       console.error('Failed to load channels and patterns:', err)
       toast({
