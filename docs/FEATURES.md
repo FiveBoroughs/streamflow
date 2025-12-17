@@ -52,6 +52,14 @@ See [PIPELINE_SYSTEM.md](PIPELINE_SYSTEM.md) for detailed pipeline documentation
 - Detects playlist changes in real-time
 - Updates channels immediately when M3U refreshes
 - Tracks update history in changelog
+- **M3U Priority System**: Configure stream selection priority
+  - **Global Priority Mode**: Single mode applies to all M3U accounts
+    - Disabled: Priority ignored, streams selected by quality only
+    - Same Resolution Only: Priority applied within same resolution groups
+    - All Streams: Always prefer higher priority accounts regardless of quality
+  - Per-account priority values (0-100)
+  - Priority fields disabled when mode is "disabled"
+  - Only enabled/active playlists shown in priority UI
 
 ### Intelligent Stream Quality Checking
 Multi-factor analysis of stream quality using a single optimized ffmpeg call:
@@ -372,8 +380,21 @@ Automatically create scheduled events based on program name patterns:
   - Adjustable stagger delay between task dispatches
 - **Context-Aware Settings**: Only relevant options shown based on selected pipeline
 - **Update Intervals**: Configure M3U refresh frequency (for applicable pipelines)
-- **Stream Analysis Parameters**: FFmpeg duration, timeouts, retries
-- **Queue Settings**: Maximum queue size, channels per run
+- **Stream Analysis Parameters**: 
+  - FFmpeg duration (seconds to analyze each stream)
+  - Base timeout for operations
+  - **Stream Startup Buffer**: Configurable buffer time (5-120s, default: 10s) for stream startup
+    - Allows high-quality streams that take longer to start to be properly analyzed
+    - Total timeout = base timeout + duration + startup buffer
+  - Retry attempts and delay between retries
+  - User agent string for FFmpeg/FFprobe
+- **Queue Settings**: 
+  - Maximum queue size
+  - Channels per run
+  - **Regex Validation**: Toggle to validate existing streams against regex patterns
+    - Removes streams from channels that no longer match patterns
+    - Useful when providers change stream names
+    - Runs before stream checking in global actions
 
 ### Changelog
 - Complete activity history
