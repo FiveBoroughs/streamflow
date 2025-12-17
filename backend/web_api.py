@@ -1848,7 +1848,8 @@ def get_m3u_accounts_endpoint():
         
         # Filter out non-active accounts per Dispatcharr API spec
         # Only show enabled/active playlists in the priority UI
-        accounts = [acc for acc in accounts if acc.get('is_active', True)]
+        # Filter explicitly for is_active == True to avoid showing inactive accounts
+        accounts = [acc for acc in accounts if acc.get('is_active') is True]
         
         # Check if there are any custom streams using efficient method
         has_custom = has_custom_streams()

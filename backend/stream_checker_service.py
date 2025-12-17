@@ -1130,7 +1130,7 @@ class StreamCheckerService:
                 logger.error(f"✗ Failed to update M3U playlists: {e}")
             
             # Step 4: Validate existing streams against regex patterns (remove non-matching)
-            logger.info("Step 4/7: Validating existing streams against regex patterns...")
+            logger.info("Step 4/6: Validating existing streams against regex patterns...")
             try:
                 if automation_manager is not None:
                     validation_results = automation_manager.validate_and_remove_non_matching_streams()
@@ -1144,7 +1144,7 @@ class StreamCheckerService:
                 logger.error(f"✗ Failed to validate streams: {e}")
             
             # Step 5: Match and assign streams (including previously dead ones since tracker was cleared)
-            logger.info("Step 5/7: Matching and assigning streams...")
+            logger.info("Step 5/6: Matching and assigning streams...")
             try:
                 if automation_manager is not None:
                     assignments = automation_manager.discover_and_assign_streams()
@@ -1158,15 +1158,10 @@ class StreamCheckerService:
                 logger.error(f"✗ Failed to match streams: {e}")
             
             # Step 6: Check all channels (force check to bypass immunity)
-            logger.info("Step 6/7: Queueing all channels for checking...")
+            logger.info("Step 6/6: Queueing all channels for checking...")
             self._queue_all_channels(force_check=True)
             
-            # Step 7: After all channels are queued, disable empty channels if configured
-            # Note: This will be triggered after the batch finalization in _finalize_batch_changelog
-            # but we also trigger it here in case the batch finalization doesn't run
-            # (e.g., if there are no channels to check or if checking is disabled)
-            logger.info("Step 7/7: Checking for empty channels to disable...")
-            self._trigger_empty_channel_disabling()
+            # Note: Empty channel disabling will be triggered after batch finalization
             
             logger.info("=" * 80)
             logger.info("GLOBAL ACTION INITIATED SUCCESSFULLY")

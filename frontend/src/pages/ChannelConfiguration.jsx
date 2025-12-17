@@ -530,9 +530,14 @@ function M3UPriorityManagement() {
     try {
       setLoading(true)
       const response = await m3uAPI.getAccounts()
-      // Response now contains { accounts: [], global_priority_mode: '' }
-      setAccounts(response.data?.accounts || response.data || [])
-      setGlobalPriorityMode(response.data?.global_priority_mode || 'disabled')
+      // API returns { accounts: [], global_priority_mode: '' }
+      if (response.data && Array.isArray(response.data.accounts)) {
+        setAccounts(response.data.accounts)
+        setGlobalPriorityMode(response.data.global_priority_mode || 'disabled')
+      } else {
+        // Fallback for backwards compatibility if API returns array directly
+        setAccounts(Array.isArray(response.data) ? response.data : [])
+      }
     } catch (err) {
       console.error('Failed to load M3U accounts:', err)
       toast({
