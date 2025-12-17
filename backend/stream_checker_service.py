@@ -92,6 +92,7 @@ class StreamCheckConfig:
         'stream_analysis': {
             'ffmpeg_duration': 30,  # seconds to analyze each stream
             'timeout': 30,  # timeout for operations
+            'stream_startup_buffer': 10,  # seconds buffer for stream startup (max time before stream starts)
             'retries': 1,  # retry attempts
             'retry_delay': 10,  # seconds between retries
             'user_agent': 'VLC/3.0.14'  # user agent for ffmpeg/ffprobe
@@ -1691,7 +1692,8 @@ class StreamCheckerService:
                     timeout=analysis_params.get('timeout', 30),
                     retries=analysis_params.get('retries', 1),
                     retry_delay=analysis_params.get('retry_delay', 10),
-                    user_agent=analysis_params.get('user_agent', 'VLC/3.0.14')
+                    user_agent=analysis_params.get('user_agent', 'VLC/3.0.14'),
+                    stream_startup_buffer=analysis_params.get('stream_startup_buffer', 10)
                 )
                 
                 # Process results - ALL checks are complete at this point
@@ -2117,7 +2119,8 @@ class StreamCheckerService:
                     timeout=analysis_params.get('timeout', 30),
                     retries=analysis_params.get('retries', 1),
                     retry_delay=analysis_params.get('retry_delay', 10),
-                    user_agent=analysis_params.get('user_agent', 'VLC/3.0.14')
+                    user_agent=analysis_params.get('user_agent', 'VLC/3.0.14'),
+                    stream_startup_buffer=analysis_params.get('stream_startup_buffer', 10)
                 )
                 
                 # Update stream stats on dispatcharr with ffmpeg-extracted data
@@ -2230,7 +2233,8 @@ class StreamCheckerService:
                         timeout=analysis_params.get('timeout', 30),
                         retries=analysis_params.get('retries', 1),
                         retry_delay=analysis_params.get('retry_delay', 10),
-                        user_agent=analysis_params.get('user_agent', 'VLC/3.0.14')
+                        user_agent=analysis_params.get('user_agent', 'VLC/3.0.14'),
+                        stream_startup_buffer=analysis_params.get('stream_startup_buffer', 10)
                     )
                     self._update_stream_stats(analyzed)
                     score = self._calculate_stream_score(analyzed)

@@ -278,7 +278,7 @@ def get_stream_info(url: str, timeout: int = 30, user_agent: str = 'VLC/3.0.14')
         return None, None
 
 
-def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30, user_agent: str = 'VLC/3.0.14') -> Dict[str, Any]:
+def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30, user_agent: str = 'VLC/3.0.14', stream_startup_buffer: int = 10) -> Dict[str, Any]:
     """
     Get complete stream information using ffmpeg in a single call.
     
@@ -291,6 +291,7 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
         duration: Duration in seconds to analyze the stream
         timeout: Base timeout in seconds (actual timeout includes duration + overhead)
         user_agent: User agent string to use for HTTP requests
+        stream_startup_buffer: Buffer in seconds for stream startup (default: 10s)
 
     Returns:
         Dictionary containing:
@@ -348,7 +349,8 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
     }
 
     # Add buffer to timeout to account for ffmpeg startup, network latency, and shutdown overhead
-    actual_timeout = timeout + duration + 10
+    # Uses configurable stream_startup_buffer for high quality streams that take longer to start
+    actual_timeout = timeout + duration + stream_startup_buffer
 
     try:
         start = time.time()
@@ -518,7 +520,7 @@ def get_stream_info_and_bitrate(url: str, duration: int = 30, timeout: int = 30,
     return result_data
 
 
-def get_stream_bitrate(url: str, duration: int = 30, timeout: int = 30, user_agent: str = 'VLC/3.0.14') -> Tuple[Optional[float], str, float]:
+def get_stream_bitrate(url: str, duration: int = 30, timeout: int = 30, user_agent: str = 'VLC/3.0.14', stream_startup_buffer: int = 10) -> Tuple[Optional[float], str, float]:
     """
     Get stream bitrate using ffmpeg to analyze actual stream data.
 
@@ -532,6 +534,7 @@ def get_stream_bitrate(url: str, duration: int = 30, timeout: int = 30, user_age
         duration: Duration in seconds to analyze the stream
         timeout: Base timeout in seconds (actual timeout includes duration + overhead)
         user_agent: User agent string to use for HTTP requests
+        stream_startup_buffer: Buffer in seconds for stream startup (default: 10s)
 
     Returns:
         Tuple of (bitrate_kbps, status, elapsed_time)
@@ -550,7 +553,8 @@ def get_stream_bitrate(url: str, duration: int = 30, timeout: int = 30, user_age
 
     # Add buffer to timeout to account for ffmpeg startup, network latency, and shutdown overhead
     # Since -re flag reads at real-time, ffmpeg takes at least duration seconds
-    actual_timeout = timeout + duration + 10
+    # Uses configurable stream_startup_buffer for high quality streams that take longer to start
+    actual_timeout = timeout + duration + stream_startup_buffer
 
     try:
         start = time.time()
@@ -660,7 +664,8 @@ def analyze_stream(
     timeout: int = 30,
     retries: int = 1,
     retry_delay: int = 10,
-    user_agent: str = 'VLC/3.0.14'
+    user_agent: str = 'VLC/3.0.14',
+    stream_startup_buffer: int = 10
 ) -> Dict[str, Any]:
     """
     Perform complete stream analysis including codec, resolution, FPS, bitrate, and audio.
@@ -679,6 +684,7 @@ def analyze_stream(
                  1 = try once then retry once if failed, 2 = try once then retry twice, etc.)
         retry_delay: Delay in seconds between retries
         user_agent: User agent string to use for HTTP requests
+        stream_startup_buffer: Buffer in seconds for stream startup (default: 10s)
 
     Returns:
         Dictionary containing analysis results with keys:
@@ -733,7 +739,8 @@ def analyze_stream(
                     url=stream_url,
                     duration=ffmpeg_duration,
                     timeout=timeout,
-                    user_agent=user_agent
+                    user_agent=user_agent,
+                    stream_startup_buffer=stream_startup_buffer
                 )
 
                 # Build result dictionary with metadata

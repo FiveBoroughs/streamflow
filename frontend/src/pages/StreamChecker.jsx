@@ -466,7 +466,23 @@ export default function StreamChecker() {
                         max={300}
                       />
                       <p className="text-xs text-muted-foreground">
-                        Timeout for stream operations (actual timeout = timeout + duration + 10s overhead for buffering)
+                        Base timeout for stream operations (does not include duration or startup buffer)
+                      </p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="stream_startup_buffer">Stream Startup Buffer (seconds)</Label>
+                      <Input
+                        id="stream_startup_buffer"
+                        type="number"
+                        value={editedConfig?.stream_analysis?.stream_startup_buffer || 10}
+                        onChange={(e) => updateConfigValue('stream_analysis.stream_startup_buffer', parseInt(e.target.value))}
+                        disabled={!configEditing}
+                        min={5}
+                        max={120}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Maximum time to wait for stream to start (actual timeout = timeout + duration + buffer)
                       </p>
                     </div>
 
