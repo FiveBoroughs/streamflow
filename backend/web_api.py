@@ -1437,13 +1437,13 @@ def get_dead_streams():
     try:
         # Get pagination parameters
         page = int(request.args.get('page', 1))
-        per_page = int(request.args.get('per_page', 50))
+        per_page = int(request.args.get('per_page', 20))
         
         # Validate pagination parameters
         if page < 1:
             page = 1
         if per_page < 1 or per_page > 100:
-            per_page = 50
+            per_page = 20
         
         checker = get_stream_checker_service()
         if not checker or not checker.dead_streams_tracker:

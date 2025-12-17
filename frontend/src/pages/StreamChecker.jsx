@@ -170,12 +170,22 @@ export default function StreamChecker() {
     try {
       setDeadStreamsLoading(true)
       const response = await deadStreamsAPI.getDeadStreams(page, deadStreamsPagination.per_page)
-      setDeadStreams(response.data.dead_streams || [])
+      const deadStreamsData = response.data.dead_streams || []
+      const paginationData = response.data.pagination || {}
+      
+      // Validate that backend returned the page we requested
+      if (paginationData.page && paginationData.page !== page) {
+        console.warn(`Requested page ${page} but received page ${paginationData.page}`)
+      }
+      
+      setDeadStreams(deadStreamsData)
       setTotalDeadStreams(response.data.total_dead_streams || 0)
       setDeadStreamsPagination({
-        ...deadStreamsPagination,
-        ...response.data.pagination,
-        page: page
+        page: paginationData.page || page,
+        per_page: paginationData.per_page || deadStreamsPagination.per_page,
+        total_pages: paginationData.total_pages || 0,
+        has_next: paginationData.has_next || false,
+        has_prev: paginationData.has_prev || false
       })
     } catch (err) {
       console.error('Failed to load dead streams:', err)
@@ -897,25 +907,51 @@ export default function StreamChecker() {
                                     />
                                   </PaginationItem>
                                   
-                                  {/* Show current page and surrounding pages */}
-                                  {Array.from({ length: Math.min(5, deadStreamsPagination.total_pages) }, (_, i) => {
-                                    const startPage = Math.max(1, deadStreamsPagination.page - 2)
-                                    const pageNum = startPage + i
-                                    if (pageNum <= deadStreamsPagination.total_pages) {
+                                  {/* Show page numbers with smart windowing */}
+                                  {(() => {
+                                    const currentPage = deadStreamsPagination.page
+                                    const totalPages = deadStreamsPagination.total_pages
+                                    const maxVisiblePages = 5
+                                    let startPage, endPage
+                                    
+                                    if (totalPages <= maxVisiblePages) {
+                                      // Show all pages if total is less than max
+                                      startPage = 1
+                                      endPage = totalPages
+                                    } else {
+                                      // Calculate range to show current page in the middle when possible
+                                      const halfVisible = Math.floor(maxVisiblePages / 2)
+                                      
+                                      if (currentPage <= halfVisible + 1) {
+                                        // Near the start
+                                        startPage = 1
+                                        endPage = maxVisiblePages
+                                      } else if (currentPage >= totalPages - halfVisible) {
+                                        // Near the end
+                                        startPage = totalPages - maxVisiblePages + 1
+                                        endPage = totalPages
+                                      } else {
+                                        // In the middle
+                                        startPage = currentPage - halfVisible
+                                        endPage = currentPage + halfVisible
+                                      }
+                                    }
+                                    
+                                    return Array.from({ length: endPage - startPage + 1 }, (_, i) => {
+                                      const pageNum = startPage + i
                                       return (
                                         <PaginationItem key={pageNum}>
                                           <PaginationLink
                                             onClick={() => loadDeadStreams(pageNum)}
-                                            isActive={pageNum === deadStreamsPagination.page}
+                                            isActive={pageNum === currentPage}
                                             className="cursor-pointer"
                                           >
                                             {pageNum}
                                           </PaginationLink>
                                         </PaginationItem>
                                       )
-                                    }
-                                    return null
-                                  })}
+                                    })
+                                  })()}
                                   
                                   <PaginationItem>
                                     <PaginationNext 
