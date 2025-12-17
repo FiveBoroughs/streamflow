@@ -13,6 +13,7 @@ export default function ProfileManagement() {
   const [profileConfig, setProfileConfig] = useState(null)
   const [profiles, setProfiles] = useState([])
   const [snapshots, setSnapshots] = useState({})
+  const [initialLoading, setInitialLoading] = useState(true)
   const [loadingProfiles, setLoadingProfiles] = useState(false)
   const [disablingEmptyChannels, setDisablingEmptyChannels] = useState(false)
   const [refreshingProfiles, setRefreshingProfiles] = useState(false)
@@ -28,6 +29,7 @@ export default function ProfileManagement() {
 
   const loadProfileData = async () => {
     try {
+      setInitialLoading(true)
       const [profileConfigResponse, profilesResponse, snapshotsResponse] = await Promise.all([
         profileAPI.getConfig().catch(() => ({ data: null })),
         profileAPI.getProfiles().catch(() => ({ data: [] })),
@@ -43,6 +45,8 @@ export default function ProfileManagement() {
         description: "Failed to load profile configuration",
         variant: "destructive"
       })
+    } finally {
+      setInitialLoading(false)
     }
   }
 
@@ -231,6 +235,15 @@ export default function ProfileManagement() {
     }
   }
 
+  // Show loading spinner during initial load
+  if (initialLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-6">
       <Card>
@@ -241,8 +254,8 @@ export default function ProfileManagement() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
-          {/* Profile Diagnostics Section */}
-          {profiles.length === 0 && (
+          {/* Profile Diagnostics Section - Only show after initial load */}
+          {profiles.length === 0 && !initialLoading && (
             <Alert variant="destructive">
               <AlertCircle className="h-4 w-4" aria-hidden="true" />
               <AlertTitle>No Channel Profiles Found</AlertTitle>
