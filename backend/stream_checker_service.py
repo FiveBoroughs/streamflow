@@ -46,6 +46,9 @@ from dead_streams_tracker import DeadStreamsTracker
 # Import channel settings manager
 from channel_settings_manager import get_channel_settings_manager
 
+# Import profile config
+from profile_config import get_profile_config
+
 # Import centralized stream stats utilities
 from stream_stats_utils import (
     parse_bitrate_value,
@@ -1176,7 +1179,6 @@ class StreamCheckerService:
                 channel_ids = [ch['id'] for ch in channels if isinstance(ch, dict) and 'id' in ch]
                 
                 # Filter by profile if one is selected
-                from profile_config import get_profile_config
                 profile_config = get_profile_config()
                 
                 if profile_config.is_using_profile():
@@ -1187,11 +1189,10 @@ class StreamCheckerService:
                             profile_data = udi.get_profile_channels(selected_profile_id)
                             
                             # According to Dispatcharr API, profile_data.channels is a list of channel IDs
-                            profile_channel_ids = set()
-                            if profile_data and 'channels' in profile_data and isinstance(profile_data['channels'], list):
-                                for channel_id in profile_data['channels']:
-                                    if isinstance(channel_id, int):
-                                        profile_channel_ids.add(channel_id)
+                            profile_channel_ids = {
+                                ch_id for ch_id in profile_data.get('channels', []) 
+                                if isinstance(ch_id, int)
+                            }
                             
                             # Filter channels to only those in the profile
                             channels = [ch for ch in channels if ch.get('id') in profile_channel_ids]
