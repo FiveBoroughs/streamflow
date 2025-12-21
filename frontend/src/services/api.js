@@ -113,7 +113,12 @@ export const changelogAPI = {
 };
 
 export const deadStreamsAPI = {
-  getDeadStreams: (page = 1, per_page = 20) => api.get('/dead-streams', { params: { page, per_page } }),
+  getDeadStreams: (page = 1, per_page = 20) => {
+    // Ensure page and per_page are primitive numbers to avoid sending objects
+    const safePage = typeof page === 'number' ? page : parseInt(page) || 1;
+    const safePerPage = typeof per_page === 'number' ? per_page : parseInt(per_page) || 20;
+    return api.get('/dead-streams', { params: { page: safePage, per_page: safePerPage } });
+  },
   reviveStream: (streamUrl) => api.post('/dead-streams/revive', { stream_url: streamUrl }),
   clearAllDeadStreams: () => api.post('/dead-streams/clear'),
 };
@@ -157,7 +162,10 @@ export const profileAPI = {
   
   // Profile management
   getProfiles: () => api.get('/profiles'),
-  getProfileChannels: (profileId) => api.get(`/profiles/${profileId}/channels`),
+  getProfileChannels: (profileId, includeSnapshot = false) => {
+    const params = includeSnapshot ? { include_snapshot: 'true' } : {};
+    return api.get(`/profiles/${profileId}/channels`, { params });
+  },
   refreshProfiles: () => api.post('/profiles/refresh'),
   diagnoseProfiles: () => api.get('/profiles/diagnose'),
   

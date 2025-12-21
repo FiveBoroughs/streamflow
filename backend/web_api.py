@@ -27,6 +27,7 @@ from scheduling_service import get_scheduling_service
 from channel_settings_manager import get_channel_settings_manager
 from dispatcharr_config import get_dispatcharr_config
 from channel_order_manager import get_channel_order_manager
+from profile_config import ProfileConfig
 
 # Import UDI for direct data access
 from udi import get_udi_manager
@@ -1173,10 +1174,17 @@ def get_profile_channels(profile_id):
     Args:
         profile_id: Profile ID
         
+    Query Parameters:
+        include_snapshot: If 'true', also include channels from the profile snapshot
+                         even if they're currently disabled
+        
     Returns:
         JSON with profile and channels
     """
     try:
+        # Check if we should include snapshot channels
+        include_snapshot = request.args.get('include_snapshot', '').lower() == 'true'
+        
         # Get data from UDI cache
         udi = get_udi_manager()
         
@@ -1191,7 +1199,37 @@ def get_profile_channels(profile_id):
         if profile_channels_data:
             # Use cached data
             channels = profile_channels_data.get('channels', [])
-            logger.info(f"Returning {len(channels)} cached channel associations for profile {profile_id}")
+            
+            # If include_snapshot is requested, merge with snapshot channels
+            if include_snapshot:
+                profile_config = ProfileConfig()
+                snapshot = profile_config.get_snapshot(profile_id)
+                
+                if snapshot:
+                    snapshot_channel_ids = set(snapshot.get('channel_ids', []))
+                    # Get current channel IDs from the profile
+                    current_channel_ids = set()
+                    for ch in channels:
+                        # Channels can be integers or objects with channel_id
+                        if isinstance(ch, int):
+                            current_channel_ids.add(ch)
+                        elif isinstance(ch, dict):
+                            ch_id = ch.get('channel_id') or ch.get('id')
+                            if ch_id:
+                                current_channel_ids.add(ch_id)
+                    
+                    # Find channel IDs in snapshot but not in current channels
+                    missing_channel_ids = snapshot_channel_ids - current_channel_ids
+                    
+                    if missing_channel_ids:
+                        logger.info(f"Including {len(missing_channel_ids)} snapshot channels that are not currently in profile {profile_id}")
+                        # Add the missing channels to the list
+                        # Convert channels to list to make it mutable, then extend with missing IDs
+                        channels = list(channels)
+                        channels.extend(missing_channel_ids)
+            
+            logger.info(f"Returning {len(channels)} cached channel associations for profile {profile_id}" + 
+                       (f" (including snapshot channels)" if include_snapshot else ""))
             return jsonify({
                 'profile': profile,
                 'channels': channels
@@ -1481,9 +1519,21 @@ def get_changelog():
 def get_dead_streams():
     """Get dead streams statistics and list with pagination."""
     try:
-        # Get pagination parameters
-        page = int(request.args.get('page', 1))
-        per_page = int(request.args.get('per_page', DEAD_STREAMS_DEFAULT_PER_PAGE))
+        # Get pagination parameters with better error handling
+        page_param = request.args.get('page', '1')
+        per_page_param = request.args.get('per_page', str(DEAD_STREAMS_DEFAULT_PER_PAGE))
+        
+        try:
+            page = int(page_param)
+        except (ValueError, TypeError) as e:
+            logger.error(f"Invalid page parameter: {page_param} (type: {type(page_param).__name__}) - {str(e)}")
+            return jsonify({"error": f"Invalid page parameter: must be an integer"}), 400
+        
+        try:
+            per_page = int(per_page_param)
+        except (ValueError, TypeError) as e:
+            logger.error(f"Invalid per_page parameter: {per_page_param} (type: {type(per_page_param).__name__}) - {str(e)}")
+            return jsonify({"error": f"Invalid per_page parameter: must be an integer"}), 400
         
         # Validate pagination parameters
         if page < 1:

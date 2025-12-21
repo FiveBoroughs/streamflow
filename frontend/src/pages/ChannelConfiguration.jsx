@@ -763,16 +763,18 @@ export default function ChannelConfiguration() {
         // User is using a specific profile - fetch only enabled channels from that profile
         shouldFilterByProfile = true
         try {
-          const profileResponse = await profileAPI.getProfileChannels(profileConfig.selected_profile_id)
+          // Include snapshot channels so disabled channels (emptied by Dispatcharr) are still shown
+          // This allows users to force a channel check even if channels were auto-disabled
+          const profileResponse = await profileAPI.getProfileChannels(profileConfig.selected_profile_id, true)
           const profileData = profileResponse.data
           
           // Get all channels first
           const allChannelsResponse = await channelsAPI.getChannels()
           const allChannels = allChannelsResponse.data || []
           
-          // Filter to only include channels that are enabled in the profile
+          // Filter to only include channels that are enabled in the profile OR in the snapshot
           // According to Dispatcharr API, profileData.channels is a list of channel IDs (integers)
-          // Being in the profile means the channel is enabled
+          // Being in the profile means the channel is enabled (or in snapshot if include_snapshot=true)
           const enabledChannelIds = new Set()
           if (profileData && profileData.channels && Array.isArray(profileData.channels)) {
             for (const channelId of profileData.channels) {
@@ -796,7 +798,7 @@ export default function ChannelConfiguration() {
           } else {
             toast({
               title: "Profile Filter Active",
-              description: `Showing ${channelsToLoad.length} enabled channels from profile "${profileConfig.selected_profile_name}"`,
+              description: `Showing ${channelsToLoad.length} channels from profile "${profileConfig.selected_profile_name}" (including snapshot)`,
             })
           }
         } catch (err) {
