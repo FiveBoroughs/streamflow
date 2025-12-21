@@ -11,7 +11,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert.jsx'
 import { Badge } from '@/components/ui/badge.jsx'
 import { Progress } from '@/components/ui/progress.jsx'
 import { useToast } from '@/hooks/use-toast.js'
-import { setupAPI, automationAPI, channelsAPI, regexAPI, dispatcharrAPI, streamCheckerAPI, m3uAPI } from '@/services/api.js'
+import { setupAPI, automationAPI, channelsAPI, regexAPI, dispatcharrAPI, streamCheckerAPI, m3uAPI, profileAPI } from '@/services/api.js'
 import { CheckCircle2, Circle, AlertCircle, Edit, Trash2, Plus, Upload } from 'lucide-react'
 
 const STEPS = [

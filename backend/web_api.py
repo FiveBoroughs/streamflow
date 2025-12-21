@@ -101,7 +101,9 @@ def get_regex_matcher():
 def check_wizard_complete():
     """Check if the setup wizard has been completed.
     
-    Patterns are now optional - wizard can be completed without them.
+    Note: As of recent changes, regex patterns are now optional and not required
+    for wizard completion. This allows users to complete the wizard and start
+    using the system even if they haven't configured any channel patterns yet.
     """
     try:
         config_file = CONFIG_DIR / 'automation_config.json'
@@ -114,7 +116,6 @@ def check_wizard_complete():
         # Check if we can connect to Dispatcharr (optional - use cached result)
         # For startup, we'll accept the configuration exists as sufficient
         # The actual connection test will be done by the wizard
-        # Patterns are now optional and not required for wizard completion
         
         return True
     except Exception as e:
