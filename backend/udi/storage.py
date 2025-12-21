@@ -42,6 +42,8 @@ class UDIStorage:
         self.channel_groups_file = self.storage_dir / 'channel_groups.json'
         self.logos_file = self.storage_dir / 'logos.json'
         self.m3u_accounts_file = self.storage_dir / 'm3u_accounts.json'
+        self.channel_profiles_file = self.storage_dir / 'channel_profiles.json'
+        self.profile_channels_file = self.storage_dir / 'profile_channels.json'
         self.metadata_file = self.storage_dir / 'metadata.json'
         
         # Thread locks for each data type
@@ -50,6 +52,8 @@ class UDIStorage:
         self._channel_groups_lock = threading.Lock()
         self._logos_lock = threading.Lock()
         self._m3u_accounts_lock = threading.Lock()
+        self._channel_profiles_lock = threading.Lock()
+        self._profile_channels_lock = threading.Lock()
         self._metadata_lock = threading.Lock()
         
         logger.info(f"UDI storage initialized at {self.storage_dir}")
@@ -318,6 +322,89 @@ class UDIStorage:
             if success:
                 self._update_metadata('m3u_accounts_last_updated')
             return success
+            return success
+    
+    # Channel Profiles
+    def load_channel_profiles(self) -> List[Dict[str, Any]]:
+        """Load all channel profiles from storage.
+        
+        Returns:
+            List of channel profile dictionaries
+        """
+        with self._channel_profiles_lock:
+            data = self._load_json(self.channel_profiles_file)
+            return data if isinstance(data, list) else []
+    
+    def save_channel_profiles(self, profiles: List[Dict[str, Any]]) -> bool:
+        """Save channel profiles to storage.
+        
+        Args:
+            profiles: List of channel profile dictionaries
+            
+        Returns:
+            True if successful
+        """
+        with self._channel_profiles_lock:
+            success = self._save_json(self.channel_profiles_file, profiles)
+            if success:
+                self._update_metadata('channel_profiles_last_updated')
+            return success
+    
+    # Profile Channels (channel-profile associations)
+    def load_profile_channels(self) -> Dict[int, Dict[str, Any]]:
+        """Load profile channels data from storage.
+        
+        Returns:
+            Dictionary mapping profile_id to profile channel data
+        """
+        with self._profile_channels_lock:
+            data = self._load_json(self.profile_channels_file)
+            # Convert string keys back to integers
+            if isinstance(data, dict):
+                return {int(k): v for k, v in data.items() if k.isdigit() or isinstance(k, int)}
+            return {}
+    
+    def save_profile_channels(self, profile_channels: Dict[int, Dict[str, Any]]) -> bool:
+        """Save profile channels data to storage.
+        
+        Args:
+            profile_channels: Dictionary mapping profile_id to profile channel data
+            
+        Returns:
+            True if successful
+        """
+        with self._profile_channels_lock:
+            success = self._save_json(self.profile_channels_file, profile_channels)
+            if success:
+                self._update_metadata('profile_channels_last_updated')
+            return success
+    
+    def load_profile_channels_by_id(self, profile_id: int) -> Optional[Dict[str, Any]]:
+        """Load channel data for a specific profile.
+        
+        Args:
+            profile_id: The profile ID
+            
+        Returns:
+            Profile channel data or None
+        """
+        all_profile_channels = self.load_profile_channels()
+        return all_profile_channels.get(profile_id)
+    
+    def save_profile_channels_by_id(self, profile_id: int, channels_data: Dict[str, Any]) -> bool:
+        """Save channel data for a specific profile.
+        
+        Args:
+            profile_id: The profile ID
+            channels_data: Channel data for the profile
+            
+        Returns:
+            True if successful
+        """
+        with self._profile_channels_lock:
+            all_profile_channels = self.load_profile_channels()
+            all_profile_channels[profile_id] = channels_data
+            return self.save_profile_channels(all_profile_channels)
     
     # Metadata
     def load_metadata(self) -> Dict[str, Any]:

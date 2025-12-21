@@ -6,12 +6,13 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog.jsx'
 import { Input } from '@/components/ui/input.jsx'
 import { Label } from '@/components/ui/label.jsx'
+import { Switch } from '@/components/ui/switch.jsx'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover.jsx'
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command.jsx'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select.jsx'
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious, PaginationEllipsis } from '@/components/ui/pagination.jsx'
 import { useToast } from '@/hooks/use-toast.js'
-import { schedulingAPI, channelsAPI } from '@/services/api.js'
+import { schedulingAPI, channelsAPI, automationAPI } from '@/services/api.js'
 import { Plus, Trash2, Clock, Calendar, RefreshCw, Loader2, Settings, ChevronsUpDown, Check, Edit, Download, Upload, FileJson } from 'lucide-react'
 import { cn } from '@/lib/utils.js'
 
@@ -29,6 +30,8 @@ export default function Scheduling() {
   const [selectedProgram, setSelectedProgram] = useState(null)
   const [minutesBefore, setMinutesBefore] = useState(5)
   const [refreshInterval, setRefreshInterval] = useState(60)
+  const [validateExistingStreams, setValidateExistingStreams] = useState(false)
+  const [automationConfig, setAutomationConfig] = useState(null)
   
   // Pagination state for scheduled events
   const [currentPage, setCurrentPage] = useState(1)
@@ -86,11 +89,12 @@ export default function Scheduling() {
   const loadData = async () => {
     try {
       setLoading(true)
-      const [eventsResponse, channelsResponse, configResponse, rulesResponse] = await Promise.all([
+      const [eventsResponse, channelsResponse, configResponse, rulesResponse, autoConfigResponse] = await Promise.all([
         schedulingAPI.getEvents(),
         channelsAPI.getChannels(),
         schedulingAPI.getConfig(),
-        schedulingAPI.getAutoCreateRules()
+        schedulingAPI.getAutoCreateRules(),
+        automationAPI.getConfig()
       ])
       
       setEvents(eventsResponse.data || [])
@@ -98,6 +102,8 @@ export default function Scheduling() {
       setConfig(configResponse.data || {})
       setRefreshInterval(configResponse.data?.epg_refresh_interval_minutes || 60)
       setAutoCreateRules(rulesResponse.data || [])
+      setAutomationConfig(autoConfigResponse.data || {})
+      setValidateExistingStreams(autoConfigResponse.data?.validate_existing_streams === true)
     } catch (err) {
       console.error('Failed to load scheduling data:', err)
       toast({
@@ -399,9 +405,18 @@ export default function Scheduling() {
 
   const handleUpdateConfig = async () => {
     try {
+      // Update scheduling config (EPG refresh interval)
       await schedulingAPI.updateConfig({
         epg_refresh_interval_minutes: parseInt(refreshInterval)
       })
+      
+      // Update automation config (validate existing streams)
+      if (automationConfig) {
+        await automationAPI.updateConfig({
+          ...automationConfig,
+          validate_existing_streams: validateExistingStreams
+        })
+      }
       
       toast({
         title: "Success",
@@ -609,7 +624,7 @@ export default function Scheduling() {
               <DialogHeader>
                 <DialogTitle>Scheduling Configuration</DialogTitle>
                 <DialogDescription>
-                  Configure EPG data refresh interval
+                  Configure EPG data refresh and stream validation settings
                 </DialogDescription>
               </DialogHeader>
               <div className="space-y-4 py-4">
@@ -625,6 +640,23 @@ export default function Scheduling() {
                   />
                   <p className="text-sm text-muted-foreground">
                     How often to fetch fresh EPG data from Dispatcharr
+                  </p>
+                </div>
+                
+                <div className="space-y-2">
+                  <div className="flex items-center space-x-2">
+                    <Switch
+                      id="validate-existing-streams"
+                      checked={validateExistingStreams}
+                      onCheckedChange={setValidateExistingStreams}
+                    />
+                    <Label htmlFor="validate-existing-streams" className="cursor-pointer">
+                      Validate Existing Streams Against Regex
+                    </Label>
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    During playlist updates and matching periods, remove streams from channels that no longer match their regex patterns. 
+                    Useful when stream names change from the provider.
                   </p>
                 </div>
               </div>

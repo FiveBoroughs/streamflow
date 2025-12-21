@@ -46,6 +46,9 @@ from dead_streams_tracker import DeadStreamsTracker
 # Import channel settings manager
 from channel_settings_manager import get_channel_settings_manager
 
+# Import profile config
+from profile_config import get_profile_config
+
 # Import centralized stream stats utilities
 from stream_stats_utils import (
     parse_bitrate_value,
@@ -92,6 +95,7 @@ class StreamCheckConfig:
         'stream_analysis': {
             'ffmpeg_duration': 30,  # seconds to analyze each stream
             'timeout': 30,  # timeout for operations
+            'stream_startup_buffer': 10,  # seconds buffer for stream startup (max time before stream starts)
             'retries': 1,  # retry attempts
             'retry_delay': 10,  # seconds between retries
             'user_agent': 'VLC/3.0.14'  # user agent for ffmpeg/ffprobe
@@ -1076,6 +1080,7 @@ class StreamCheckerService:
         3. Reloads enabled M3U accounts
         4. Matches new streams with regex patterns (including previously dead ones)
         5. Checks every channel from every stream (bypassing 2-hour immunity)
+        6. Disables empty channels if configured
         
         During this operation, regular automated updates, matching, and checking are paused.
         """
@@ -1088,7 +1093,7 @@ class StreamCheckerService:
             logger.info("=" * 80)
             
             # Step 1: Refresh UDI cache to ensure we have current data from Dispatcharr
-            logger.info("Step 1/5: Refreshing UDI cache...")
+            logger.info("Step 1/6: Refreshing UDI cache...")
             try:
                 from udi import get_udi_manager
                 udi = get_udi_manager()
@@ -1101,7 +1106,7 @@ class StreamCheckerService:
                 logger.error(f"✗ Failed to refresh UDI cache: {e}")
             
             # Step 2: Clear ALL dead streams from tracker to give them a second chance
-            logger.info("Step 2/5: Clearing dead stream tracker to give all streams a second chance...")
+            logger.info("Step 2/6: Clearing dead stream tracker to give all streams a second chance...")
             try:
                 dead_count = len(self.dead_streams_tracker.get_dead_streams())
                 if dead_count > 0:
@@ -1115,7 +1120,7 @@ class StreamCheckerService:
             automation_manager = None
             
             # Step 3: Update M3U playlists
-            logger.info("Step 3/5: Updating M3U playlists...")
+            logger.info("Step 3/6: Updating M3U playlists...")
             try:
                 from automated_stream_manager import AutomatedStreamManager
                 automation_manager = AutomatedStreamManager()
@@ -1128,6 +1133,8 @@ class StreamCheckerService:
                 logger.error(f"✗ Failed to update M3U playlists: {e}")
             
             # Step 4: Match and assign streams (including previously dead ones since tracker was cleared)
+            # Note: Stream validation against regex is now done during matching periods (automation cycle)
+            # instead of during global checks, as per requirements
             logger.info("Step 4/5: Matching and assigning streams...")
             try:
                 if automation_manager is not None:
@@ -1144,6 +1151,8 @@ class StreamCheckerService:
             # Step 5: Check all channels (force check to bypass immunity)
             logger.info("Step 5/5: Queueing all channels for checking...")
             self._queue_all_channels(force_check=True)
+            
+            # Note: Empty channel disabling will be triggered after batch finalization
             
             logger.info("=" * 80)
             logger.info("GLOBAL ACTION INITIATED SUCCESSFULLY")
@@ -1168,6 +1177,31 @@ class StreamCheckerService:
             
             if channels:
                 channel_ids = [ch['id'] for ch in channels if isinstance(ch, dict) and 'id' in ch]
+                
+                # Filter by profile if one is selected
+                profile_config = get_profile_config()
+                
+                if profile_config.is_using_profile():
+                    selected_profile_id = profile_config.get_selected_profile()
+                    if selected_profile_id:
+                        try:
+                            # Get channels that are enabled in this profile from UDI
+                            profile_data = udi.get_profile_channels(selected_profile_id)
+                            
+                            # According to Dispatcharr API, profile_data.channels is a list of channel IDs
+                            profile_channel_ids = {
+                                ch_id for ch_id in profile_data.get('channels', []) 
+                                if isinstance(ch_id, int)
+                            }
+                            
+                            # Filter channels to only those in the profile
+                            channels = [ch for ch in channels if ch.get('id') in profile_channel_ids]
+                            channel_ids = [ch['id'] for ch in channels]
+                            
+                            profile_name = profile_config.get_config().get('selected_profile_name', 'Unknown')
+                            logger.info(f"Profile filter active: Using {len(channel_ids)} channels from profile '{profile_name}'")
+                        except Exception as e:
+                            logger.error(f"Failed to load profile channels, using all channels: {e}")
                 
                 # Filter channels by checking_mode setting (channel-level overrides group-level)
                 channel_settings = get_channel_settings_manager()
@@ -1268,6 +1302,37 @@ class StreamCheckerService:
             Dictionary with avg_resolution, avg_bitrate, and avg_fps
         """
         return calculate_channel_averages(analyzed_streams, dead_stream_ids)
+    
+    def _get_m3u_account_name(self, stream_id: int, udi=None) -> Optional[str]:
+        """Get the M3U account name for a stream.
+        
+        Args:
+            stream_id: The stream ID to look up
+            udi: Optional UDI manager instance (will fetch if not provided)
+            
+        Returns:
+            M3U account name or None if not found
+        """
+        try:
+            if udi is None:
+                udi = get_udi_manager()
+            
+            stream_data = udi.get_stream_by_id(stream_id)
+            if not stream_data:
+                return None
+            
+            m3u_account_id = stream_data.get('m3u_account')
+            if not m3u_account_id:
+                return None
+            
+            m3u_account = udi.get_m3u_account_by_id(m3u_account_id)
+            if not m3u_account:
+                return None
+            
+            return m3u_account.get('name', 'Unknown')
+        except Exception as e:
+            logger.debug(f"Could not fetch M3U account for stream {stream_id}: {e}")
+            return None
     
     
     def _update_stream_stats(self, stream_data: Dict) -> bool:
@@ -1431,12 +1496,34 @@ class StreamCheckerService:
                 
                 logger.info(f"Finalized batch changelog: {total_channels} channels, {streams_analyzed} streams analyzed in {duration_str}")
                 
+                # After batch finalization, trigger empty channel disabling if configured
+                self._trigger_empty_channel_disabling()
+                
             except Exception as e:
                 logger.error(f"Failed to finalize batch changelog: {e}", exc_info=True)
             finally:
                 # Reset batch tracking
                 self.batch_start_time = None
                 self.batch_changelog_entries = []
+    
+    def _trigger_empty_channel_disabling(self):
+        """Trigger empty channel disabling if configured.
+        
+        This method checks if empty channel management is enabled in the profile
+        configuration and triggers the disabling operation if so.
+        """
+        try:
+            from empty_channel_manager import trigger_empty_channel_disabling
+            
+            result = trigger_empty_channel_disabling()
+            if result:
+                disabled_count, total_checked = result
+                if disabled_count > 0:
+                    logger.info(f"Empty channel management: Disabled {disabled_count} empty channels (checked {total_checked} channels)")
+                else:
+                    logger.debug(f"Empty channel management: No empty channels found (checked {total_checked} channels)")
+        except Exception as e:
+            logger.error(f"Error triggering empty channel disabling: {e}", exc_info=True)
     
     def _check_channel(self, channel_id: int, skip_batch_changelog: bool = False):
         """Check and reorder streams for a specific channel.
@@ -1630,7 +1717,8 @@ class StreamCheckerService:
                     timeout=analysis_params.get('timeout', 30),
                     retries=analysis_params.get('retries', 1),
                     retry_delay=analysis_params.get('retry_delay', 10),
-                    user_agent=analysis_params.get('user_agent', 'VLC/3.0.14')
+                    user_agent=analysis_params.get('user_agent', 'VLC/3.0.14'),
+                    stream_startup_buffer=analysis_params.get('stream_startup_buffer', 10)
                 )
                 
                 # Process results - ALL checks are complete at this point
@@ -1808,6 +1896,9 @@ class StreamCheckerService:
                         extracted_stats = extract_stream_stats(analyzed)
                         formatted_stats = format_stream_stats_for_display(extracted_stats)
                         
+                        # Get M3U account name for this stream using helper method
+                        m3u_account_name = self._get_m3u_account_name(stream_id, udi)
+                        
                         stream_stat = {
                             'stream_id': stream_id,
                             'stream_name': analyzed.get('stream_name'),
@@ -1815,6 +1906,7 @@ class StreamCheckerService:
                             'fps': formatted_stats['fps'],
                             'video_codec': formatted_stats['video_codec'],
                             'bitrate': formatted_stats['bitrate'],
+                            'm3u_account': m3u_account_name
                         }
                         
                         # Mark dead streams as "dead" instead of showing score:0
@@ -2052,7 +2144,8 @@ class StreamCheckerService:
                     timeout=analysis_params.get('timeout', 30),
                     retries=analysis_params.get('retries', 1),
                     retry_delay=analysis_params.get('retry_delay', 10),
-                    user_agent=analysis_params.get('user_agent', 'VLC/3.0.14')
+                    user_agent=analysis_params.get('user_agent', 'VLC/3.0.14'),
+                    stream_startup_buffer=analysis_params.get('stream_startup_buffer', 10)
                 )
                 
                 # Update stream stats on dispatcharr with ffmpeg-extracted data
@@ -2165,7 +2258,8 @@ class StreamCheckerService:
                         timeout=analysis_params.get('timeout', 30),
                         retries=analysis_params.get('retries', 1),
                         retry_delay=analysis_params.get('retry_delay', 10),
-                        user_agent=analysis_params.get('user_agent', 'VLC/3.0.14')
+                        user_agent=analysis_params.get('user_agent', 'VLC/3.0.14'),
+                        stream_startup_buffer=analysis_params.get('stream_startup_buffer', 10)
                     )
                     self._update_stream_stats(analyzed)
                     score = self._calculate_stream_score(analyzed)
@@ -2259,6 +2353,9 @@ class StreamCheckerService:
                         extracted_stats = extract_stream_stats(analyzed)
                         formatted_stats = format_stream_stats_for_display(extracted_stats)
                         
+                        # Get M3U account name for this stream using helper method
+                        m3u_account_name = self._get_m3u_account_name(stream_id, udi)
+                        
                         stream_stat = {
                             'stream_id': stream_id,
                             'stream_name': analyzed.get('stream_name'),
@@ -2267,6 +2364,7 @@ class StreamCheckerService:
                             'video_codec': formatted_stats['video_codec'],
                             'audio_codec': formatted_stats['audio_codec'],
                             'bitrate': formatted_stats['bitrate'],
+                            'm3u_account': m3u_account_name
                         }
                         
                         # Mark dead streams as "dead" instead of showing score:0
@@ -2376,7 +2474,13 @@ class StreamCheckerService:
             self.progress.clear()
     
     def _calculate_stream_score(self, stream_data: Dict) -> float:
-        """Calculate a quality score for a stream based on analysis."""
+        """Calculate a quality score for a stream based on analysis.
+        
+        Applies M3U account priority bonuses according to priority_mode:
+        - "disabled": No priority bonus applied
+        - "same_resolution": Priority bonus applied only to streams with same resolution
+        - "all_streams": Priority bonus applied to all streams from higher priority accounts
+        """
         # Dead streams always get a score of 0
         if self._is_stream_dead(stream_data):
             return 0.0
@@ -2427,7 +2531,70 @@ class StreamCheckerService:
                 codec_score = 0.5
         score += codec_score * weights.get('codec', 0.10)
         
+        # Apply M3U account priority bonus if enabled
+        stream_id = stream_data.get('stream_id')
+        if stream_id:
+            priority_boost = self._get_priority_boost(stream_id, stream_data)
+            score += priority_boost
+        
         return round(score, 2)
+    
+    def _get_priority_boost(self, stream_id: int, stream_data: Dict) -> float:
+        """Calculate priority boost for a stream based on its M3U account priority.
+        
+        Args:
+            stream_id: The stream ID
+            stream_data: Stream data dictionary containing resolution and other info
+            
+        Returns:
+            Priority boost value (0.0 to 10.0+)
+        """
+        try:
+            # Get stream from UDI to find its M3U account
+            udi = get_udi_manager()
+            stream = udi.get_stream_by_id(stream_id)
+            if not stream:
+                return 0.0
+            
+            m3u_account_id = stream.get('m3u_account')
+            if not m3u_account_id:
+                return 0.0
+            
+            # Get M3U account to check priority settings
+            m3u_account = udi.get_m3u_account_by_id(m3u_account_id)
+            if not m3u_account:
+                return 0.0
+            
+            priority = m3u_account.get('priority', 0)
+            priority_mode = m3u_account.get('priority_mode', 'disabled')
+            
+            # If priority is 0 or mode is disabled, no boost
+            if priority == 0 or priority_mode == 'disabled':
+                return 0.0
+            
+            # For "all_streams" mode, apply full priority boost to all streams
+            if priority_mode == 'all_streams':
+                # Priority boost: each priority point adds 0.5 to the score
+                # This ensures higher priority accounts' streams rank higher
+                boost = priority * 0.5
+                logger.debug(f"Applying all_streams priority boost of {boost} to stream {stream_id} (priority: {priority})")
+                return boost
+            
+            # For "same_resolution" mode, we need to group streams by resolution
+            # and only apply priority within the same resolution group
+            # This is more complex and requires comparing with other streams
+            # For now, we apply a smaller boost that respects quality differences
+            elif priority_mode == 'same_resolution':
+                # Apply a smaller boost that won't override resolution differences
+                # but will prioritize within same resolution
+                boost = priority * 0.2
+                logger.debug(f"Applying same_resolution priority boost of {boost} to stream {stream_id} (priority: {priority})")
+                return boost
+            
+            return 0.0
+        except Exception as e:
+            logger.error(f"Error calculating priority boost for stream {stream_id}: {e}")
+            return 0.0
     
     def get_status(self) -> Dict:
         """Get current service status."""
@@ -2589,7 +2756,8 @@ class StreamCheckerService:
                     automation_manager = AutomatedStreamManager()
                     
                     # Run full discovery (this will add new matching streams but skip dead ones)
-                    assignments = automation_manager.discover_and_assign_streams(force=True)
+                    # Skip automatic check trigger since we'll perform the check explicitly in Step 5
+                    assignments = automation_manager.discover_and_assign_streams(force=True, skip_check_trigger=True)
                     if assignments:
                         logger.info(f"✓ Stream matching completed")
                     else:
@@ -2668,6 +2836,12 @@ class StreamCheckerService:
                 # Calculate score
                 score = self._calculate_stream_score(score_data)
                 
+                # Get M3U account name for this stream using helper method
+                m3u_account_name = None
+                m3u_account_id = stream.get('m3u_account')
+                if m3u_account_id:
+                    m3u_account_name = self._get_m3u_account_name(stream.get('id'), udi)
+                
                 check_stats['stream_details'].append({
                     'stream_id': stream.get('id'),
                     'stream_name': stream.get('name', 'Unknown'),
@@ -2675,7 +2849,8 @@ class StreamCheckerService:
                     'bitrate': formatted_stats['bitrate'],
                     'video_codec': formatted_stats['video_codec'],
                     'fps': formatted_stats['fps'],
-                    'score': score
+                    'score': score,
+                    'm3u_account': m3u_account_name
                 })
             
             # Calculate duration
@@ -2723,6 +2898,10 @@ class StreamCheckerService:
                     logger.warning(f"Failed to add changelog entry: {e}")
             
             logger.info(f"✓ Single channel check completed for {channel_name} in {duration_str}")
+            
+            # Trigger empty channel disabling if configured
+            # This ensures that if this channel became empty after checking, it gets disabled
+            self._trigger_empty_channel_disabling()
             
             return {
                 'success': True,

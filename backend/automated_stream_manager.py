@@ -428,6 +428,10 @@ class AutomatedStreamManager:
         # Cache for M3U accounts to avoid redundant API calls within a single automation cycle
         # This is cleared after each cycle completes
         self._m3u_accounts_cache = None
+        
+        # Cache for dead stream removal setting to avoid repeated file I/O
+        self._dead_stream_removal_enabled_cache = None
+        self._dead_stream_removal_cache_time = None
     
     def _load_config(self) -> Dict:
         """Load automation configuration."""
@@ -448,7 +452,8 @@ class AutomatedStreamManager:
                 "auto_playlist_update": True,
                 "auto_stream_discovery": True,
                 "changelog_tracking": True
-            }
+            },
+            "validate_existing_streams": False  # Validate existing streams in channels against regex patterns
         }
         
         self._save_config(default_config)
@@ -500,6 +505,44 @@ class AutomatedStreamManager:
             logger.info("Changes will take effect on next scheduled operation")
         else:
             logger.info("Automation configuration updated")
+    
+    def _is_dead_stream_removal_enabled(self) -> bool:
+        """Check if dead stream removal is enabled in stream checker config.
+        
+        Uses a 60-second cache to avoid repeated file I/O operations.
+        
+        Returns:
+            True if dead stream removal is enabled, False otherwise
+        """
+        import time
+        current_time = time.time()
+        
+        # Check if cache is still valid (60 seconds)
+        if (self._dead_stream_removal_cache_time is not None and 
+            current_time - self._dead_stream_removal_cache_time < 60 and
+            self._dead_stream_removal_enabled_cache is not None):
+            return self._dead_stream_removal_enabled_cache
+        
+        # Cache expired or not set, read from file
+        try:
+            stream_checker_config_file = CONFIG_DIR / 'stream_checker_config.json'
+            if stream_checker_config_file.exists():
+                with open(stream_checker_config_file, 'r') as f:
+                    config = json.load(f)
+                    enabled = config.get('dead_stream_handling', {}).get('enabled', True)
+            else:
+                # Default to True if config doesn't exist
+                enabled = True
+            
+            # Update cache
+            self._dead_stream_removal_enabled_cache = enabled
+            self._dead_stream_removal_cache_time = current_time
+            return enabled
+        except Exception as e:
+            logger.error(f"Error reading stream checker config: {e}")
+            # Default to True on error (conservative approach)
+            # Don't cache errors, try again next time
+            return True
     
     def refresh_playlists(self, force: bool = False) -> bool:
         """Refresh M3U playlists and track changes.
@@ -563,12 +606,15 @@ class AutomatedStreamManager:
             # This ensures deleted/added streams are reflected in the cache
             # Also refresh M3U accounts to detect any new accounts added in Dispatcharr
             # And refresh channel groups to detect any group changes (splits, merges, etc.)
+            # Profile refresh is critical: ensures channel profiles stay synced with Dispatcharr
+            # (deletions, modifications, new profiles) to prevent orphaned profile references
             logger.info("Refreshing UDI cache after playlist update...")
             udi = get_udi_manager()
             udi.refresh_m3u_accounts()  # Check for new M3U accounts
             udi.refresh_streams()
             udi.refresh_channels()
             udi.refresh_channel_groups()  # Check for new/updated channel groups
+            udi.refresh_channel_profiles()  # Sync profiles with Dispatcharr to prevent orphaned references
             logger.info("UDI cache refreshed successfully")
             
             # Trigger EPG refresh to pick up any EPG/tvg-id changes made in Dispatcharr
@@ -642,12 +688,14 @@ class AutomatedStreamManager:
                 })
             return False
     
-    def discover_and_assign_streams(self, force: bool = False) -> Dict[str, int]:
+    def discover_and_assign_streams(self, force: bool = False, skip_check_trigger: bool = False) -> Dict[str, int]:
         """Discover new streams and assign them to channels based on regex patterns.
         
         Args:
             force: If True, bypass the auto_stream_discovery feature flag check.
                    Used for manual/quick action triggers from the UI.
+            skip_check_trigger: If True, don't trigger immediate stream quality check.
+                   Used when the caller will handle the check itself (e.g., check_single_channel).
         """
         if not force and not self.config.get("enabled_features", {}).get("auto_stream_discovery", True):
             logger.info("Stream discovery is disabled in configuration")
@@ -820,12 +868,17 @@ class AutomatedStreamManager:
                 if not stream_name or not stream_id:
                     continue
                 
-                # Skip streams marked as dead in the tracker
+                # Skip streams marked as dead in the tracker (if dead stream removal is enabled)
                 # Dead streams should not be added to channels during subsequent matches
                 stream_url = stream.get('url', '')
                 if self.dead_streams_tracker and self.dead_streams_tracker.is_dead(stream_url):
-                    logger.debug(f"Skipping dead stream {stream_id}: {stream_name} (URL: {stream_url})")
-                    continue
+                    # Check if dead stream removal is enabled
+                    dead_stream_removal_enabled = self._is_dead_stream_removal_enabled()
+                    if dead_stream_removal_enabled:
+                        logger.debug(f"Skipping dead stream {stream_id}: {stream_name} (URL: {stream_url})")
+                        continue
+                    else:
+                        logger.debug(f"Including dead stream {stream_id}: {stream_name} (dead stream removal is disabled)")
                 
                 # Find matching channels
                 matching_channels = self.regex_matcher.match_stream_to_channels(stream_name)
@@ -930,7 +983,11 @@ class AutomatedStreamManager:
                             stream_checker.update_tracker.mark_channels_updated(channel_ids_to_mark, stream_counts=stream_counts)
                             logger.info(f"Marked {len(channel_ids_to_mark)} channels with new streams for stream quality checking")
                             # Trigger immediate check instead of waiting for scheduled interval
-                            stream_checker.trigger_check_updated_channels()
+                            # Skip if caller will handle the check (e.g., check_single_channel)
+                            if not skip_check_trigger:
+                                stream_checker.trigger_check_updated_channels()
+                            else:
+                                logger.debug("Skipping automatic check trigger (will be handled by caller)")
                         except Exception as sc_error:
                             logger.debug(f"Stream checker not available or error marking channels: {sc_error}")
                 except Exception as mark_error:
@@ -946,6 +1003,174 @@ class AutomatedStreamManager:
                     "error": str(e)
                 })
             return {}
+    
+    def validate_and_remove_non_matching_streams(self) -> Dict[str, Any]:
+        """
+        Validate existing streams in channels against regex patterns.
+        Remove streams that no longer match their channel's patterns.
+        
+        Returns:
+            Dict containing validation statistics:
+            - channels_checked: Number of channels checked
+            - streams_removed: Total streams removed
+            - channels_modified: Number of channels that had streams removed
+            - details: List of channel details with removed streams
+        """
+        log_function_call(logger, "validate_and_remove_non_matching_streams")
+        
+        if not self.config.get("validate_existing_streams", False):
+            logger.debug("Stream validation is disabled in config")
+            return {
+                "channels_checked": 0,
+                "streams_removed": 0,
+                "channels_modified": 0,
+                "details": []
+            }
+        
+        try:
+            logger.info("=" * 80)
+            logger.info("Starting validation of existing streams against regex patterns")
+            logger.info("=" * 80)
+            
+            udi = get_udi_manager()
+            all_channels = udi.get_all_channels()
+            
+            if not all_channels:
+                logger.info("No channels found")
+                return {
+                    "channels_checked": 0,
+                    "streams_removed": 0,
+                    "channels_modified": 0,
+                    "details": []
+                }
+            
+            # Get channel settings manager to respect matching mode settings
+            channel_settings = get_channel_settings_manager()
+            
+            # Filter channels with matching enabled (similar logic to match_streams_to_channels)
+            matching_enabled_channel_ids = []
+            for channel in all_channels:
+                channel_id = channel.get('id')
+                channel_group_id = channel.get('group')
+                
+                # Get effective settings
+                channel_explicit_settings = channel_settings.get_channel_settings(channel_id)
+                has_explicit_matching = 'matching_mode' in channel_explicit_settings
+                
+                if has_explicit_matching:
+                    if channel_settings.is_matching_enabled(channel_id):
+                        matching_enabled_channel_ids.append(channel_id)
+                else:
+                    if channel_settings.is_channel_enabled_by_group(channel_group_id, mode='matching'):
+                        matching_enabled_channel_ids.append(channel_id)
+            
+            validation_results = {
+                "channels_checked": 0,
+                "streams_removed": 0,
+                "channels_modified": 0,
+                "details": []
+            }
+            
+            # Get all streams from UDI for lookup
+            all_streams = udi.get_all_streams()
+            stream_lookup = {s['id']: s for s in all_streams if isinstance(s, dict) and 'id' in s}
+            
+            # Validate each channel's streams
+            for channel in all_channels:
+                channel_id = channel.get('id')
+                
+                # Skip channels with matching disabled
+                if channel_id not in matching_enabled_channel_ids:
+                    continue
+                
+                validation_results["channels_checked"] += 1
+                channel_name = channel.get('name', f'Channel {channel_id}')
+                
+                # Get streams for this channel
+                channel_streams = udi.get_channel_streams(channel_id)
+                if not channel_streams:
+                    continue
+                
+                streams_to_keep = []
+                streams_to_remove = []
+                
+                for stream in channel_streams:
+                    if not isinstance(stream, dict) or 'id' not in stream:
+                        continue
+                    
+                    stream_id = stream['id']
+                    stream_name = stream.get('name', '')
+                    
+                    # Look up full stream data
+                    full_stream = stream_lookup.get(stream_id)
+                    if not full_stream:
+                        logger.warning(f"Stream {stream_id} not found in UDI for channel {channel_name}")
+                        streams_to_keep.append(stream_id)
+                        continue
+                    
+                    # Check if stream matches any pattern for this channel
+                    matching_channels = self.regex_matcher.match_stream_to_channels(stream_name)
+                    
+                    if str(channel_id) in matching_channels:
+                        # Stream still matches, keep it
+                        streams_to_keep.append(stream_id)
+                    else:
+                        # Stream no longer matches, remove it
+                        streams_to_remove.append({
+                            "stream_id": stream_id,
+                            "stream_name": stream_name
+                        })
+                        logger.info(f"  Removing non-matching stream from {channel_name}: {stream_name}")
+                
+                # Update channel if streams need to be removed
+                if streams_to_remove:
+                    try:
+                        from api_utils import update_channel_streams
+                        success = update_channel_streams(channel_id, streams_to_keep)
+                        
+                        if success:
+                            validation_results["streams_removed"] += len(streams_to_remove)
+                            validation_results["channels_modified"] += 1
+                            validation_results["details"].append({
+                                "channel_id": channel_id,
+                                "channel_name": channel_name,
+                                "removed_count": len(streams_to_remove),
+                                "removed_streams": streams_to_remove[:10]  # Limit to first 10 for logging
+                            })
+                            
+                            # Refresh channel in UDI after update
+                            time.sleep(0.3)
+                            udi.refresh_channel_by_id(channel_id)
+                            
+                            logger.info(f"✓ Removed {len(streams_to_remove)} non-matching stream(s) from {channel_name}")
+                        else:
+                            logger.error(f"Failed to update channel {channel_name} after validation")
+                    except Exception as e:
+                        logger.error(f"Error removing streams from channel {channel_name}: {e}")
+            
+            logger.info(f"Stream validation completed: Checked {validation_results['channels_checked']} channels, " +
+                       f"removed {validation_results['streams_removed']} streams from {validation_results['channels_modified']} channels")
+            
+            # Add changelog entry if there were changes
+            if validation_results['streams_removed'] > 0 and self.config.get("enabled_features", {}).get("changelog_tracking", True):
+                self.changelog.add_entry("stream_validation", {
+                    "channels_checked": validation_results['channels_checked'],
+                    "streams_removed": validation_results['streams_removed'],
+                    "channels_modified": validation_results['channels_modified'],
+                    "timestamp": datetime.now().isoformat()
+                })
+            
+            return validation_results
+            
+        except Exception as e:
+            logger.error(f"Stream validation failed: {e}", exc_info=True)
+            return {
+                "channels_checked": 0,
+                "streams_removed": 0,
+                "channels_modified": 0,
+                "details": [],
+                "error": str(e)
+            }
     
     def should_run_playlist_update(self) -> bool:
         """Check if it's time to run playlist update."""
@@ -994,7 +1219,18 @@ class AutomatedStreamManager:
                 # Small delay to allow playlist processing
                 time.sleep(10)
                 
-                # 2. Discover and assign new streams (uses cached M3U accounts)
+                # 2. Validate existing streams against regex patterns (remove non-matching)
+                # This should happen during matching periods, not during stream checks
+                try:
+                    validation_results = self.validate_and_remove_non_matching_streams()
+                    if validation_results.get("streams_removed", 0) > 0:
+                        logger.info(f"✓ Removed {validation_results['streams_removed']} non-matching streams from {validation_results['channels_modified']} channels")
+                    else:
+                        logger.debug("No non-matching streams found to remove")
+                except Exception as e:
+                    logger.error(f"✗ Failed to validate streams against regex: {e}")
+                
+                # 3. Discover and assign new streams (uses cached M3U accounts)
                 assignments = self.discover_and_assign_streams()
             
             logger.info("Automation cycle completed")

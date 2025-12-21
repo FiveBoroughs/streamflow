@@ -11,7 +11,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert.jsx'
 import { Badge } from '@/components/ui/badge.jsx'
 import { Progress } from '@/components/ui/progress.jsx'
 import { useToast } from '@/hooks/use-toast.js'
-import { setupAPI, automationAPI, channelsAPI, regexAPI, dispatcharrAPI, streamCheckerAPI, m3uAPI } from '@/services/api.js'
+import { setupAPI, automationAPI, channelsAPI, regexAPI, dispatcharrAPI, streamCheckerAPI, m3uAPI, profileAPI } from '@/services/api.js'
 import { CheckCircle2, Circle, AlertCircle, Edit, Trash2, Plus, Upload } from 'lucide-react'
 
 const STEPS = [
@@ -132,6 +132,8 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
   })
 
   const [m3uAccounts, setM3uAccounts] = useState([])
+  const [profiles, setProfiles] = useState([])
+  const [profileConfig, setProfileConfig] = useState(null)
 
   useEffect(() => {
     if (initialSetupStatus) {
@@ -298,12 +300,20 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
   const loadChannelsAndPatterns = async () => {
     try {
       setLoading(true)
-      const [channelsResponse, patternsResponse, m3uResponse] = await Promise.all([
+      const [channelsResponse, patternsResponse, m3uResponse, profilesResponse, profileConfigResponse] = await Promise.all([
         channelsAPI.getChannels(),
         regexAPI.getPatterns(),
         m3uAPI.getAccounts().catch(err => {
           console.warn('Failed to load M3U accounts:', err)
+          return { data: { accounts: [] } }
+        }),
+        profileAPI.getProfiles().catch(err => {
+          console.warn('Failed to load profiles:', err)
           return { data: [] }
+        }),
+        profileAPI.getConfig().catch(err => {
+          console.warn('Failed to load profile config:', err)
+          return { data: null }
         })
       ])
       
@@ -311,7 +321,10 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
       // Extract just the patterns object, not the whole config structure
       const patternsData = patternsResponse.data?.patterns || {}
       setPatterns(patternsData)
-      setM3uAccounts(m3uResponse.data || [])
+      // API returns { accounts: [], global_priority_mode: '' }
+      setM3uAccounts(m3uResponse.data.accounts || [])
+      setProfiles(profilesResponse.data || [])
+      setProfileConfig(profileConfigResponse.data)
     } catch (err) {
       console.error('Failed to load channels and patterns:', err)
       toast({
@@ -434,10 +447,19 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
   const handleSaveAutomationConfig = async () => {
     try {
       setLoading(true)
-      await Promise.all([
+      
+      // Save all configurations
+      const savePromises = [
         automationAPI.updateConfig(config),
         streamCheckerAPI.updateConfig(streamCheckerConfig)
-      ])
+      ]
+      
+      // Save profile configuration if it exists
+      if (profileConfig) {
+        savePromises.push(profileAPI.updateConfig(profileConfig))
+      }
+      
+      await Promise.all(savePromises)
       
       toast({
         title: "Success",
@@ -834,6 +856,71 @@ export default function SetupWizard({ onComplete, setupStatus: initialSetupStatu
                   onCheckedChange={(checked) => setConfig({ ...config, autostart_automation: checked })}
                 />
               </div>
+
+              {/* M3U Account Configuration */}
+              {m3uAccounts && m3uAccounts.length > 0 && (
+                <div className="space-y-2 border-t pt-4 mt-4">
+                  <Label>M3U Account Settings</Label>
+                  <p className="text-xs text-muted-foreground mb-2">
+                    Enable or disable M3U accounts for stream discovery
+                  </p>
+                  <div className="space-y-2">
+                    {m3uAccounts.map((account) => (
+                      <div key={account.id} className="flex items-center justify-between">
+                        <span className="text-sm">{account.name || account.username || `Account ${account.id}`}</span>
+                        <Switch
+                          checked={config.enabled_m3u_accounts?.includes(account.id) || false}
+                          onCheckedChange={(checked) => {
+                            const currentAccounts = config.enabled_m3u_accounts || []
+                            const newAccounts = checked
+                              ? [...currentAccounts, account.id]
+                              : currentAccounts.filter(id => id !== account.id)
+                            setConfig({ ...config, enabled_m3u_accounts: newAccounts })
+                          }}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Profile Configuration */}
+              {profiles && profiles.length > 0 && (
+                <div className="space-y-2 border-t pt-4 mt-4">
+                  <Label htmlFor="selected_profile">Channel Profile</Label>
+                  <p className="text-xs text-muted-foreground mb-2">
+                    Select which channel profile to use (optional)
+                  </p>
+                  <Select
+                    value={profileConfig?.selected_profile_id?.toString() || 'none'}
+                    onValueChange={(value) => {
+                      if (value === 'none') {
+                        setProfileConfig({ ...profileConfig, selected_profile_id: null, selected_profile_name: null, use_profile: false })
+                      } else {
+                        const profile = profiles.find(p => p.id?.toString() === value)
+                        setProfileConfig({
+                          ...profileConfig,
+                          selected_profile_id: parseInt(value),
+                          selected_profile_name: profile?.name || 'Unknown',
+                          use_profile: true
+                        })
+                      }
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Use all channels (no profile)" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Use all channels (no profile)</SelectItem>
+                      {profiles.map((profile) => (
+                        <SelectItem key={profile.id} value={profile.id?.toString()}>
+                          {profile.name || `Profile ${profile.id}`}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
             </div>
           </div>
         )

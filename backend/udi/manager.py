@@ -37,6 +37,9 @@ from logging_config import setup_logging
 # Import at module level for better performance
 from dispatcharr_config import get_dispatcharr_config
 
+# Import M3U priority config for merging priority_mode
+from m3u_priority_config import get_m3u_priority_config
+
 logger = setup_logging(__name__)
 
 
@@ -72,12 +75,15 @@ class UDIManager:
         self._channel_groups_cache: List[Dict[str, Any]] = []
         self._logos_cache: List[Dict[str, Any]] = []
         self._m3u_accounts_cache: List[Dict[str, Any]] = []
+        self._channel_profiles_cache: List[Dict[str, Any]] = []
+        self._profile_channels_cache: Dict[int, Dict[str, Any]] = {}
         
         # Index caches for fast lookups
         self._channels_by_id: Dict[int, Dict[str, Any]] = {}
         self._streams_by_id: Dict[int, Dict[str, Any]] = {}
         self._streams_by_url: Dict[str, Dict[str, Any]] = {}
         self._valid_stream_ids: Set[int] = set()
+        self._profiles_by_id: Dict[int, Dict[str, Any]] = {}
         
         logger.info("UDI Manager created")
     
@@ -140,13 +146,15 @@ class UDIManager:
         self._channel_groups_cache = self.storage.load_channel_groups()
         self._logos_cache = self.storage.load_logos()
         self._m3u_accounts_cache = self.storage.load_m3u_accounts()
+        self._channel_profiles_cache = self.storage.load_channel_profiles()
+        self._profile_channels_cache = self.storage.load_profile_channels()
         
         # Build index caches
         self._build_indexes()
         
         # Mark caches as refreshed based on storage metadata
         metadata = self.storage.load_metadata()
-        for entity_type in ['channels', 'streams', 'channel_groups', 'logos', 'm3u_accounts']:
+        for entity_type in ['channels', 'streams', 'channel_groups', 'logos', 'm3u_accounts', 'channel_profiles']:
             timestamp_str = metadata.get(f'{entity_type}_last_updated')
             if timestamp_str:
                 try:
@@ -155,10 +163,21 @@ class UDIManager:
                 except ValueError:
                     pass
         
+        # Also mark profile_channels if present
+        profile_channels_timestamp = metadata.get('profile_channels_last_updated')
+        if profile_channels_timestamp:
+            try:
+                timestamp = datetime.fromisoformat(profile_channels_timestamp)
+                self.cache.mark_refreshed('profile_channels', timestamp)
+            except ValueError:
+                pass
+        
         logger.info(
             f"Loaded from storage: {len(self._channels_cache)} channels, "
             f"{len(self._streams_cache)} streams, {len(self._channel_groups_cache)} groups, "
-            f"{len(self._logos_cache)} logos, {len(self._m3u_accounts_cache)} M3U accounts"
+            f"{len(self._logos_cache)} logos, {len(self._m3u_accounts_cache)} M3U accounts, "
+            f"{len(self._channel_profiles_cache)} profiles, "
+            f"{len(self._profile_channels_cache)} profile channels"
         )
     
     def _build_indexes(self) -> None:
@@ -167,8 +186,17 @@ class UDIManager:
         self._streams_by_id = {st.get('id'): st for st in self._streams_cache if st.get('id') is not None}
         self._streams_by_url = {st.get('url'): st for st in self._streams_cache if st.get('url')}
         self._valid_stream_ids = set(self._streams_by_id.keys())
+        self._profiles_by_id = {p.get('id'): p for p in self._channel_profiles_cache if p.get('id') is not None}
     
     # === Data Access Methods ===
+    
+    def is_initialized(self) -> bool:
+        """Check if the UDI Manager has been initialized.
+        
+        Returns:
+            True if initialized, False otherwise
+        """
+        return self._initialized
     
     def get_channels(self) -> List[Dict[str, Any]]:
         """Get all channels.
@@ -323,17 +351,29 @@ class UDIManager:
         return None
     
     def get_m3u_accounts(self) -> List[Dict[str, Any]]:
-        """Get all M3U accounts.
+        """Get all M3U accounts with priority_mode merged from local config.
         
         Returns:
-            List of M3U account dictionaries
+            List of M3U account dictionaries with priority_mode included
         """
         self._ensure_initialized()
         logger.debug(f"Returning {len(self._m3u_accounts_cache)} M3U accounts from UDI cache")
-        return self._m3u_accounts_cache.copy()
+        accounts = self._m3u_accounts_cache.copy()
+        
+        # Merge priority_mode from local configuration
+        try:
+            priority_config = get_m3u_priority_config()
+            for account in accounts:
+                account_id = account.get('id')
+                if account_id:
+                    account['priority_mode'] = priority_config.get_priority_mode(account_id)
+        except Exception as e:
+            logger.error(f"Error merging priority_mode: {e}")
+        
+        return accounts
     
     def get_m3u_account_by_id(self, account_id: int) -> Optional[Dict[str, Any]]:
-        """Get a specific M3U account by ID.
+        """Get a specific M3U account by ID with priority_mode merged.
         
         Args:
             account_id: M3U account ID
@@ -347,15 +387,61 @@ class UDIManager:
         if hasattr(self.storage, 'get_m3u_account_by_id'):
             account = self.storage.get_m3u_account_by_id(account_id)
             if account:
+                # Merge priority_mode from local configuration
+                try:
+                    priority_config = get_m3u_priority_config()
+                    account['priority_mode'] = priority_config.get_priority_mode(account_id)
+                except Exception as e:
+                    logger.error(f"Error merging priority_mode: {e}")
                 return account
         
         # Fallback to in-memory cache
         for account in self._m3u_accounts_cache:
             if account.get('id') == account_id:
-                return account.copy()
+                result = account.copy()
+                # Merge priority_mode from local configuration
+                try:
+                    priority_config = get_m3u_priority_config()
+                    result['priority_mode'] = priority_config.get_priority_mode(account_id)
+                except Exception as e:
+                    logger.error(f"Error merging priority_mode: {e}")
+                return result
         
         logger.debug(f"M3U account {account_id} not found in UDI")
         return None
+    
+    def get_channel_profiles(self) -> List[Dict[str, Any]]:
+        """Get all channel profiles.
+        
+        Returns:
+            List of channel profile dictionaries
+        """
+        self._ensure_initialized()
+        return self._channel_profiles_cache.copy()
+    
+    def get_channel_profile_by_id(self, profile_id: int) -> Optional[Dict[str, Any]]:
+        """Get a specific channel profile by ID.
+        
+        Args:
+            profile_id: The profile ID
+            
+        Returns:
+            Profile dictionary or None if not found
+        """
+        self._ensure_initialized()
+        return self._profiles_by_id.get(profile_id)
+    
+    def get_profile_channels(self, profile_id: int) -> Optional[Dict[str, Any]]:
+        """Get channel associations for a specific profile.
+        
+        Args:
+            profile_id: The profile ID
+            
+        Returns:
+            Profile channel data or None if not cached
+        """
+        self._ensure_initialized()
+        return self._profile_channels_cache.get(profile_id)
     
     def has_custom_streams(self) -> bool:
         """Check if any custom streams exist.
@@ -391,6 +477,15 @@ class UDIManager:
             self._channel_groups_cache = data.get('channel_groups', [])
             self._logos_cache = data.get('logos', [])
             self._m3u_accounts_cache = data.get('m3u_accounts', [])
+            self._channel_profiles_cache = data.get('channel_profiles', [])
+            
+            # Fetch profile channels data for all profiles
+            profile_ids = [p.get('id') for p in self._channel_profiles_cache if p.get('id')]
+            if profile_ids:
+                logger.info(f"Fetching channel data for {len(profile_ids)} profiles...")
+                self._profile_channels_cache = self.fetcher.fetch_profile_channels(profile_ids)
+            else:
+                self._profile_channels_cache = {}
             
             # Build index caches
             self._build_indexes()
@@ -401,6 +496,8 @@ class UDIManager:
             self.storage.save_channel_groups(self._channel_groups_cache)
             self.storage.save_logos(self._logos_cache)
             self.storage.save_m3u_accounts(self._m3u_accounts_cache)
+            self.storage.save_channel_profiles(self._channel_profiles_cache)
+            self.storage.save_profile_channels(self._profile_channels_cache)
             
             # Update metadata
             now = datetime.now()
@@ -411,12 +508,14 @@ class UDIManager:
                 'channel_groups_last_updated': now.isoformat(),
                 'logos_last_updated': now.isoformat(),
                 'm3u_accounts_last_updated': now.isoformat(),
+                'channel_profiles_last_updated': now.isoformat(),
+                'profile_channels_last_updated': now.isoformat(),
                 'version': '1.0.0'
             }
             self.storage.save_metadata(metadata)
             
             # Mark all caches as refreshed
-            for entity_type in ['channels', 'streams', 'channel_groups', 'logos', 'm3u_accounts']:
+            for entity_type in ['channels', 'streams', 'channel_groups', 'logos', 'm3u_accounts', 'channel_profiles', 'profile_channels']:
                 self.cache.mark_refreshed(entity_type, now)
             
             logger.info("UDI data refresh complete")
@@ -547,6 +646,35 @@ class UDIManager:
             logger.error(f"Error refreshing M3U accounts: {e}")
             return False
     
+    def refresh_channel_profiles(self) -> bool:
+        """Refresh only channel profiles data and their channel associations.
+        
+        Returns:
+            True if refresh successful
+        """
+        logger.info("Refreshing channel profiles...")
+        try:
+            profiles = self.fetcher.fetch_channel_profiles()
+            self._channel_profiles_cache = profiles
+            self._profiles_by_id = {p.get('id'): p for p in profiles if p.get('id') is not None}
+            if hasattr(self.storage, 'save_channel_profiles'):
+                self.storage.save_channel_profiles(profiles)
+            self.cache.mark_refreshed('channel_profiles')
+            
+            # Also refresh profile channel associations
+            profile_ids = [p.get('id') for p in profiles if p.get('id')]
+            if profile_ids:
+                logger.info(f"Fetching channel data for {len(profile_ids)} profiles...")
+                self._profile_channels_cache = self.fetcher.fetch_profile_channels(profile_ids)
+                if hasattr(self.storage, 'save_profile_channels'):
+                    self.storage.save_profile_channels(self._profile_channels_cache)
+                self.cache.mark_refreshed('profile_channels')
+            
+            return True
+        except Exception as e:
+            logger.error(f"Error refreshing channel profiles: {e}")
+            return False
+    
     def invalidate_cache(self, entity_type: Optional[str] = None) -> None:
         """Invalidate cache for entity type(s).
         
@@ -579,7 +707,7 @@ class UDIManager:
                 if self._refresh_running:
                     try:
                         # Refresh data that needs updating based on TTL
-                        for entity_type in ['channels', 'streams', 'channel_groups', 'logos', 'm3u_accounts']:
+                        for entity_type in ['channels', 'streams', 'channel_groups', 'logos', 'm3u_accounts', 'channel_profiles']:
                             if self.cache.needs_refresh(entity_type):
                                 getattr(self, f'refresh_{entity_type}')()
                     except Exception as e:
@@ -673,7 +801,8 @@ class UDIManager:
                 'streams': len(self._streams_cache),
                 'channel_groups': len(self._channel_groups_cache),
                 'logos': len(self._logos_cache),
-                'm3u_accounts': len(self._m3u_accounts_cache)
+                'm3u_accounts': len(self._m3u_accounts_cache),
+                'channel_profiles': len(self._channel_profiles_cache)
             },
             'cache_status': self.cache.get_status(),
             'storage_path': str(self.storage.storage_dir)

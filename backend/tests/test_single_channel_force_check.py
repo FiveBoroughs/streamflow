@@ -194,11 +194,13 @@ class TestSingleChannelForceCheck(unittest.TestCase):
         # Call check_single_channel
         result = service.check_single_channel(channel_id=16)
         
-        # Verify that discover_and_assign_streams was called with force=True
+        # Verify that discover_and_assign_streams was called with force=True and skip_check_trigger=True
         mock_automation_instance.discover_and_assign_streams.assert_called_once()
         call_kwargs = mock_automation_instance.discover_and_assign_streams.call_args[1]
         assert call_kwargs.get('force') is True, \
             "discover_and_assign_streams should be called with force=True"
+        assert call_kwargs.get('skip_check_trigger') is True, \
+            "discover_and_assign_streams should be called with skip_check_trigger=True"
 
 
 if __name__ == '__main__':

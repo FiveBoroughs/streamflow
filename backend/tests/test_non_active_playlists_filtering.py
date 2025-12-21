@@ -19,11 +19,17 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 class TestNonActivePlaylistsFiltering(unittest.TestCase):
     """Test that non-active playlists are filtered out from the API response."""
     
+    @patch('m3u_priority_config.get_m3u_priority_config')
     @patch('api_utils.has_custom_streams')
     @patch('api_utils.get_m3u_accounts')
-    def test_filters_non_active_accounts(self, mock_get_accounts, mock_has_custom):
+    def test_filters_non_active_accounts(self, mock_get_accounts, mock_has_custom, mock_priority_config):
         """Test that accounts with is_active=False are filtered out."""
         from web_api import app
+        
+        # Mock priority config
+        mock_config = MagicMock()
+        mock_config.get_global_priority_mode.return_value = 'disabled'
+        mock_priority_config.return_value = mock_config
         
         # Mock M3U accounts with mixed active states
         mock_get_accounts.return_value = [
@@ -39,24 +45,34 @@ class TestNonActivePlaylistsFiltering(unittest.TestCase):
             response = client.get('/api/m3u-accounts')
             data = json.loads(response.data)
             
+            # Response should be an object with 'accounts' and 'global_priority_mode' keys
+            self.assertIn('accounts', data)
+            
             # Should only return the active accounts
-            self.assertEqual(len(data), 2)
-            account_ids = [acc['id'] for acc in data]
+            accounts = data['accounts']
+            self.assertEqual(len(accounts), 2)
+            account_ids = [acc['id'] for acc in accounts]
             self.assertIn(1, account_ids)
             self.assertIn(3, account_ids)
             self.assertNotIn(2, account_ids)
             
             # Verify inactive account is not in response
-            account_names = [acc['name'] for acc in data]
+            account_names = [acc['name'] for acc in accounts]
             self.assertIn('Active Provider', account_names)
             self.assertIn('Another Active', account_names)
             self.assertNotIn('Inactive Provider', account_names)
     
+    @patch('m3u_priority_config.get_m3u_priority_config')
     @patch('api_utils.has_custom_streams')
     @patch('api_utils.get_m3u_accounts')
-    def test_keeps_accounts_without_is_active_field(self, mock_get_accounts, mock_has_custom):
-        """Test that accounts without is_active field are kept (default to active)."""
+    def test_keeps_accounts_without_is_active_field(self, mock_get_accounts, mock_has_custom, mock_priority_config):
+        """Test that accounts without is_active field are filtered out (require explicit is_active=True)."""
         from web_api import app
+        
+        # Mock priority config
+        mock_config = MagicMock()
+        mock_config.get_global_priority_mode.return_value = 'disabled'
+        mock_priority_config.return_value = mock_config
         
         # Mock M3U accounts where some don't have is_active field
         mock_get_accounts.return_value = [
@@ -72,18 +88,29 @@ class TestNonActivePlaylistsFiltering(unittest.TestCase):
             response = client.get('/api/m3u-accounts')
             data = json.loads(response.data)
             
-            # Should return active and missing-field accounts, but not inactive
-            self.assertEqual(len(data), 2)
-            account_ids = [acc['id'] for acc in data]
+            # Response should be an object with 'accounts' and 'global_priority_mode' keys
+            self.assertIn('accounts', data)
+            
+            # Should return only explicitly active accounts (is_active=True)
+            # Missing is_active field is treated as not explicitly active, so filtered out
+            accounts = data['accounts']
+            self.assertEqual(len(accounts), 1)
+            account_ids = [acc['id'] for acc in accounts]
             self.assertIn(1, account_ids)
-            self.assertIn(2, account_ids)  # Should be kept (defaults to active)
-            self.assertNotIn(3, account_ids)
+            self.assertNotIn(2, account_ids)  # Filtered (missing is_active field)
+            self.assertNotIn(3, account_ids)  # Filtered (is_active=False)
     
+    @patch('m3u_priority_config.get_m3u_priority_config')
     @patch('api_utils.has_custom_streams')
     @patch('api_utils.get_m3u_accounts')
-    def test_filters_non_active_and_custom_accounts(self, mock_get_accounts, mock_has_custom):
+    def test_filters_non_active_and_custom_accounts(self, mock_get_accounts, mock_has_custom, mock_priority_config):
         """Test that both is_active=False and 'custom' name filtering work together."""
         from web_api import app
+        
+        # Mock priority config
+        mock_config = MagicMock()
+        mock_config.get_global_priority_mode.return_value = 'disabled'
+        mock_priority_config.return_value = mock_config
         
         # Mock M3U accounts with both inactive and custom accounts
         mock_get_accounts.return_value = [
@@ -100,19 +127,29 @@ class TestNonActivePlaylistsFiltering(unittest.TestCase):
             response = client.get('/api/m3u-accounts')
             data = json.loads(response.data)
             
+            # Response should be an object with 'accounts' and 'global_priority_mode' keys
+            self.assertIn('accounts', data)
+            
             # Should filter out both inactive (id=2) and custom (id=3) accounts
-            self.assertEqual(len(data), 2)
-            account_ids = [acc['id'] for acc in data]
+            accounts = data['accounts']
+            self.assertEqual(len(accounts), 2)
+            account_ids = [acc['id'] for acc in accounts]
             self.assertIn(1, account_ids)
             self.assertIn(4, account_ids)
             self.assertNotIn(2, account_ids)  # Filtered due to is_active=False
             self.assertNotIn(3, account_ids)  # Filtered due to name='custom' and no custom streams
     
+    @patch('m3u_priority_config.get_m3u_priority_config')
     @patch('api_utils.has_custom_streams')
     @patch('api_utils.get_m3u_accounts')
-    def test_keeps_inactive_custom_account_when_custom_streams_exist(self, mock_get_accounts, mock_has_custom):
+    def test_keeps_inactive_custom_account_when_custom_streams_exist(self, mock_get_accounts, mock_has_custom, mock_priority_config):
         """Test that even if 'custom' account is inactive, filtering by name still applies when custom streams exist."""
         from web_api import app
+        
+        # Mock priority config
+        mock_config = MagicMock()
+        mock_config.get_global_priority_mode.return_value = 'disabled'
+        mock_priority_config.return_value = mock_config
         
         # Mock accounts with inactive custom account
         mock_get_accounts.return_value = [
@@ -127,17 +164,27 @@ class TestNonActivePlaylistsFiltering(unittest.TestCase):
             response = client.get('/api/m3u-accounts')
             data = json.loads(response.data)
             
+            # Response should be an object with 'accounts' and 'global_priority_mode' keys
+            self.assertIn('accounts', data)
+            
             # Even though custom streams exist, inactive custom account should be filtered
             # due to is_active=False (is_active filtering happens first)
-            self.assertEqual(len(data), 1)
-            self.assertEqual(data[0]['id'], 1)
-            self.assertEqual(data[0]['name'], 'Active Provider')
+            accounts = data['accounts']
+            self.assertEqual(len(accounts), 1)
+            self.assertEqual(accounts[0]['id'], 1)
+            self.assertEqual(accounts[0]['name'], 'Active Provider')
     
+    @patch('m3u_priority_config.get_m3u_priority_config')
     @patch('api_utils.has_custom_streams')
     @patch('api_utils.get_m3u_accounts')
-    def test_all_accounts_inactive(self, mock_get_accounts, mock_has_custom):
+    def test_all_accounts_inactive(self, mock_get_accounts, mock_has_custom, mock_priority_config):
         """Test edge case where all accounts are inactive."""
         from web_api import app
+        
+        # Mock priority config
+        mock_config = MagicMock()
+        mock_config.get_global_priority_mode.return_value = 'disabled'
+        mock_priority_config.return_value = mock_config
         
         # Mock all accounts as inactive
         mock_get_accounts.return_value = [
@@ -152,8 +199,12 @@ class TestNonActivePlaylistsFiltering(unittest.TestCase):
             response = client.get('/api/m3u-accounts')
             data = json.loads(response.data)
             
+            # Response should be an object with 'accounts' and 'global_priority_mode' keys
+            self.assertIn('accounts', data)
+            
             # Should return empty list
-            self.assertEqual(len(data), 0)
+            accounts = data['accounts']
+            self.assertEqual(len(accounts), 0)
 
 
 if __name__ == '__main__':

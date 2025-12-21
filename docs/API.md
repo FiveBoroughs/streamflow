@@ -756,3 +756,221 @@ Manually trigger an immediate EPG refresh, bypassing the configured interval. Th
 - Constants defined for timeouts and delays
 - Critical error handling with graceful shutdown
 - Automatically starts with Flask app (when wizard is complete)
+
+## Channel Profile Endpoints
+
+### Get All Profiles
+```
+GET /api/profiles
+```
+Get all available channel profiles from Dispatcharr.
+
+**Response:**
+```json
+[
+  {
+    "id": 1,
+    "name": "Family Profile",
+    "channels": "..."
+  },
+  {
+    "id": 2,
+    "name": "Sports Profile",
+    "channels": "..."
+  }
+]
+```
+
+### Refresh Profiles
+```
+POST /api/profiles/refresh
+```
+Force a refresh of channel profiles from Dispatcharr API. Use this when profiles are not appearing or to fetch newly created profiles.
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Successfully refreshed 3 channel profiles",
+  "profile_count": 3,
+  "profiles": [...]
+}
+```
+
+**Error Response:**
+```json
+{
+  "success": false,
+  "message": "Failed to refresh channel profiles"
+}
+```
+
+### Diagnose Profile Fetching
+```
+GET /api/profiles/diagnose
+```
+Get detailed diagnostic information about profile fetching status. Useful for troubleshooting when profiles are not appearing.
+
+**Response:**
+```json
+{
+  "udi_initialized": true,
+  "dispatcharr_configured": true,
+  "dispatcharr_base_url": "http://dispatcharr:9191",
+  "cache_profile_count": 0,
+  "storage_profile_count": 0,
+  "last_refresh_time": null,
+  "profiles_in_cache": [],
+  "diagnosis": "No profiles found",
+  "possible_causes": [
+    "No channel profiles have been created in Dispatcharr yet",
+    "Profile fetch failed during initialization",
+    "Authentication issue preventing API access",
+    "Network connectivity problem"
+  ],
+  "recommended_actions": [
+    "Create channel profiles in Dispatcharr web UI (Channels > Profiles)",
+    "Click 'Refresh Profiles' button to force a refresh",
+    "Check Dispatcharr logs for errors",
+    "Verify DISPATCHARR_BASE_URL, DISPATCHARR_USER, and DISPATCHARR_PASS in .env"
+  ]
+}
+```
+
+### Get Profile Channels
+```
+GET /api/profiles/{profile_id}/channels
+```
+Get channels for a specific profile from Dispatcharr, including their enabled/disabled status.
+
+**Response:**
+```json
+{
+  "profile": {
+    "id": 1,
+    "name": "Family Profile",
+    "channels": "..."
+  },
+  "channels": [
+    {
+      "channel_id": 1,
+      "enabled": true
+    },
+    {
+      "channel_id": 2,
+      "enabled": false
+    },
+    {
+      "channel_id": 3,
+      "enabled": true
+    }
+  ]
+}
+```
+
+**Notes:**
+- The `channels` array contains channel-profile associations
+- Each channel object has `channel_id` and `enabled` properties
+- The frontend uses this to filter which channels to display when a profile filter is active
+- If Dispatcharr's profile data cannot be parsed, falls back to returning all channels as enabled
+
+### Create Profile Snapshot
+```
+POST /api/profiles/{profile_id}/snapshot
+```
+Create a snapshot of the current channels in a profile. This records which channels should be in the profile for later re-enabling.
+
+**Response:**
+```json
+{
+  "message": "Snapshot created successfully",
+  "snapshot": {
+    "profile_id": 1,
+    "profile_name": "Family Profile",
+    "channel_ids": [1, 2, 3, 4, 5],
+    "created_at": "2025-12-16T12:00:00",
+    "channel_count": 5
+  }
+}
+```
+
+### Get Profile Snapshot
+```
+GET /api/profiles/{profile_id}/snapshot
+```
+Retrieve the snapshot for a specific profile.
+
+**Response:**
+```json
+{
+  "profile_id": 1,
+  "profile_name": "Family Profile",
+  "channel_ids": [1, 2, 3, 4, 5],
+  "created_at": "2025-12-16T12:00:00",
+  "channel_count": 5
+}
+```
+
+### Delete Profile Snapshot
+```
+DELETE /api/profiles/{profile_id}/snapshot
+```
+Delete the snapshot for a specific profile.
+
+**Response:**
+```json
+{
+  "message": "Snapshot deleted successfully"
+}
+```
+
+### Get All Snapshots
+```
+GET /api/profiles/snapshots
+```
+Get all profile snapshots.
+
+**Response:**
+```json
+{
+  "1": {
+    "profile_id": 1,
+    "profile_name": "Family Profile",
+    "channel_ids": [1, 2, 3, 4, 5],
+    "created_at": "2025-12-16T12:00:00",
+    "channel_count": 5
+  },
+  "2": {
+    "profile_id": 2,
+    "profile_name": "Sports Profile",
+    "channel_ids": [10, 11, 12],
+    "created_at": "2025-12-16T13:00:00",
+    "channel_count": 3
+  }
+}
+```
+
+### Disable Empty Channels in Profile
+```
+POST /api/profiles/{profile_id}/disable-empty-channels
+```
+Disable channels with no working streams in a specific profile.
+
+**Response:**
+```json
+{
+  "message": "Disabled 3 empty channels",
+  "disabled_count": 3,
+  "total_checked": 50
+}
+```
+
+**How It Works:**
+1. Fetches all channels from UDI cache
+2. For each channel, checks if all associated streams are marked as dead
+3. Channels with no streams or all dead streams are considered "empty"
+4. Uses Dispatcharr API to disable empty channels in the target profile
+5. Preserves channel data - only changes enabled/disabled status in profile
+
+See [CHANNEL_PROFILES_FEATURE.md](CHANNEL_PROFILES_FEATURE.md) for complete documentation and troubleshooting guide.
+

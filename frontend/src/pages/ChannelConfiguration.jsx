@@ -10,8 +10,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs.jsx'
 import { Alert, AlertDescription } from '@/components/ui/alert.jsx'
 import { useToast } from '@/hooks/use-toast.js'
-import { channelsAPI, regexAPI, streamCheckerAPI, channelSettingsAPI, channelOrderAPI, groupSettingsAPI } from '@/services/api.js'
+import { channelsAPI, regexAPI, streamCheckerAPI, channelSettingsAPI, channelOrderAPI, groupSettingsAPI, profileAPI, m3uAPI } from '@/services/api.js'
 import { CheckCircle, Edit, Plus, Trash2, Loader2, Search, X, Download, Upload, GripVertical, Save, RotateCcw, ArrowUpDown } from 'lucide-react'
+import ProfileManagement from '@/components/ProfileManagement.jsx'
 import {
   DndContext,
   closestCenter,
@@ -513,6 +514,183 @@ function GroupCard({ group, channels, groupSettings, onUpdateSettings }) {
   )
 }
 
+// M3U Priority Management Component
+function M3UPriorityManagement() {
+  const [accounts, setAccounts] = useState([])
+  const [globalPriorityMode, setGlobalPriorityMode] = useState('disabled')
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const { toast } = useToast()
+
+  useEffect(() => {
+    loadAccounts()
+  }, [])
+
+  const loadAccounts = async () => {
+    try {
+      setLoading(true)
+      const response = await m3uAPI.getAccounts()
+      // API returns { accounts: [], global_priority_mode: '' }
+      if (response.data && Array.isArray(response.data.accounts)) {
+        setAccounts(response.data.accounts)
+        setGlobalPriorityMode(response.data.global_priority_mode || 'disabled')
+      } else {
+        // Fallback for backwards compatibility if API returns array directly
+        setAccounts(Array.isArray(response.data) ? response.data : [])
+      }
+    } catch (err) {
+      console.error('Failed to load M3U accounts:', err)
+      toast({
+        title: "Error",
+        description: "Failed to load M3U accounts",
+        variant: "destructive"
+      })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handlePriorityChange = async (accountId, field, value) => {
+    try {
+      setSaving(true)
+      await m3uAPI.updateAccountPriority(accountId, { [field]: value })
+      
+      // Update local state
+      setAccounts(prev => prev.map(acc => 
+        acc.id === accountId ? { ...acc, [field]: value } : acc
+      ))
+      
+      toast({
+        title: "Success",
+        description: "M3U account priority updated successfully"
+      })
+    } catch (err) {
+      console.error('Failed to update priority:', err)
+      toast({
+        title: "Error",
+        description: err.response?.data?.error || "Failed to update priority",
+        variant: "destructive"
+      })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleGlobalPriorityModeChange = async (value) => {
+    try {
+      setSaving(true)
+      await m3uAPI.updateGlobalPriorityMode({ priority_mode: value })
+      
+      setGlobalPriorityMode(value)
+      
+      toast({
+        title: "Success",
+        description: "Global priority mode updated successfully"
+      })
+    } catch (err) {
+      console.error('Failed to update global priority mode:', err)
+      toast({
+        title: "Error",
+        description: err.response?.data?.error || "Failed to update global priority mode",
+        variant: "destructive"
+      })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    )
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>M3U Account Priority System</CardTitle>
+        <CardDescription>
+          Configure stream selection priority for your M3U accounts. Higher priority accounts' streams will be preferred during stream matching.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        {accounts.length === 0 ? (
+          <Alert>
+            <AlertDescription>
+              No enabled M3U accounts found. Add and enable M3U accounts in Dispatcharr to configure their priority.
+            </AlertDescription>
+          </Alert>
+        ) : (
+          <>
+            {/* Global Priority Mode Selector */}
+            <div className="space-y-3 rounded-lg border p-4 bg-muted/50">
+              <Label htmlFor="global-priority-mode" className="text-base font-semibold">Global Priority Mode</Label>
+              <Select
+                value={globalPriorityMode}
+                onValueChange={handleGlobalPriorityModeChange}
+                disabled={saving}
+              >
+                <SelectTrigger id="global-priority-mode">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="disabled">Disabled</SelectItem>
+                  <SelectItem value="same_resolution">Same Resolution Only</SelectItem>
+                  <SelectItem value="all_streams">All Streams</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                {globalPriorityMode === 'disabled' && 'Priority system is disabled. Streams are selected based on quality only.'}
+                {globalPriorityMode === 'same_resolution' && 'Priority applied within same resolution groups. Among streams with the same resolution, prefer streams from higher priority accounts.'}
+                {globalPriorityMode === 'all_streams' && 'Priority applied to all streams. Always prefer streams from higher priority accounts, even if lower quality.'}
+              </p>
+            </div>
+
+            {/* Account Priority Table */}
+            <div className="space-y-4">
+              <div className="rounded-lg border">
+                <div className="grid grid-cols-2 gap-4 p-4 bg-muted font-medium text-sm">
+                  <div>Account Name</div>
+                  <div>Priority (0-100)</div>
+                </div>
+                {accounts.map((account) => (
+                  <div key={account.id} className="grid grid-cols-2 gap-4 p-4 border-t items-center">
+                    <div className="font-medium">{account.name}</div>
+                    <div>
+                      <Input
+                        type="number"
+                        min="0"
+                        max="100"
+                        value={account.priority || 0}
+                        onChange={(e) => handlePriorityChange(account.id, 'priority', parseInt(e.target.value) || 0)}
+                        disabled={saving || globalPriorityMode === 'disabled'}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <Alert>
+              <AlertDescription>
+                <strong>How it works:</strong>
+                <ul className="list-disc list-inside mt-2 space-y-1">
+                  <li><strong>Disabled:</strong> Priority values are ignored, streams are selected based on quality only</li>
+                  <li><strong>Same Resolution Only:</strong> Among streams with the same resolution, prefer streams from higher priority accounts</li>
+                  <li><strong>All Streams:</strong> Always prefer streams from higher priority accounts, even if lower quality</li>
+                </ul>
+                <p className="mt-2"><strong>Note:</strong> Only enabled M3U accounts are shown in this list.</p>
+              </AlertDescription>
+            </Alert>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
 export default function ChannelConfiguration() {
   const [channels, setChannels] = useState([])
   const [patterns, setPatterns] = useState({})
@@ -569,8 +747,78 @@ export default function ChannelConfiguration() {
   const loadData = async () => {
     try {
       setLoading(true)
-      const [channelsResponse, patternsResponse, settingsResponse, groupsResponse, groupSettingsResponse, orderResponse] = await Promise.all([
-        channelsAPI.getChannels(),
+      
+      // First, load profile configuration to see if we should filter channels
+      const profileConfigResponse = await profileAPI.getConfig().catch((err) => {
+        console.error('Failed to load profile configuration:', err)
+        return { data: null }
+      })
+      const profileConfig = profileConfigResponse.data
+      
+      // Determine which channels to load
+      let channelsToLoad = []
+      let shouldFilterByProfile = false
+      
+      if (profileConfig?.use_profile && profileConfig?.selected_profile_id) {
+        // User is using a specific profile - fetch only enabled channels from that profile
+        shouldFilterByProfile = true
+        try {
+          // Include snapshot channels so disabled channels (emptied by Dispatcharr) are still shown
+          // This allows users to force a channel check even if channels were auto-disabled
+          const profileResponse = await profileAPI.getProfileChannels(profileConfig.selected_profile_id, true)
+          const profileData = profileResponse.data
+          
+          // Get all channels first
+          const allChannelsResponse = await channelsAPI.getChannels()
+          const allChannels = allChannelsResponse.data || []
+          
+          // Filter to only include channels that are enabled in the profile OR in the snapshot
+          // According to Dispatcharr API, profileData.channels is a list of channel IDs (integers)
+          // Being in the profile means the channel is enabled (or in snapshot if include_snapshot=true)
+          const enabledChannelIds = new Set()
+          if (profileData && profileData.channels && Array.isArray(profileData.channels)) {
+            for (const channelId of profileData.channels) {
+              // Channels are just integers (channel IDs)
+              if (typeof channelId === 'number') {
+                enabledChannelIds.add(channelId)
+              }
+            }
+          }
+          
+          channelsToLoad = allChannels.filter(ch => enabledChannelIds.has(ch.id))
+          
+          // If no channels are found, it might be that profile channel data is not cached
+          // Show a message prompting user to refresh profiles
+          if (channelsToLoad.length === 0 && allChannels.length > 0) {
+            toast({
+              title: "No Channels in Profile",
+              description: `No enabled channels found in profile "${profileConfig.selected_profile_name}". Try refreshing profiles in the Profile Management section.`,
+              variant: "default"
+            })
+          } else {
+            toast({
+              title: "Profile Filter Active",
+              description: `Showing ${channelsToLoad.length} channels from profile "${profileConfig.selected_profile_name}" (including snapshot)`,
+            })
+          }
+        } catch (err) {
+          console.error('Failed to load profile channels:', err)
+          toast({
+            title: "Warning",
+            description: "Failed to filter by profile, showing all channels",
+            variant: "destructive"
+          })
+          // Fall back to loading all channels
+          const channelsResponse = await channelsAPI.getChannels()
+          channelsToLoad = channelsResponse.data || []
+        }
+      } else {
+        // Not using a specific profile - load all channels
+        const channelsResponse = await channelsAPI.getChannels()
+        channelsToLoad = channelsResponse.data || []
+      }
+      
+      const [patternsResponse, settingsResponse, groupsResponse, groupSettingsResponse, orderResponse] = await Promise.all([
         regexAPI.getPatterns(),
         channelSettingsAPI.getAllSettings(),
         channelsAPI.getGroups(),
@@ -578,14 +826,14 @@ export default function ChannelConfiguration() {
         channelOrderAPI.getOrder().catch(() => ({ data: { order: [] } })) // Handle case where no order is saved
       ])
       
-      setChannels(channelsResponse.data)
+      setChannels(channelsToLoad)
       setPatterns(patternsResponse.data.patterns || {})
       setChannelSettings(settingsResponse.data || {})
       setGroups(groupsResponse.data || [])
       setGroupSettings(groupSettingsResponse.data || {})
       
       // Initialize ordered channels
-      const channelData = channelsResponse.data || []
+      const channelData = channelsToLoad
       const savedOrder = orderResponse.data?.order || []
       
       let orderedList = []
@@ -595,10 +843,10 @@ export default function ChannelConfiguration() {
         // Create a map for quick lookup
         const channelMap = new Map(channelData.map(ch => [ch.id, ch]))
         
-        // First, add channels in the saved order
+        // First, add channels in the saved order (only if they're in our filtered list)
         orderedList = savedOrder
           .map(id => channelMap.get(id))
-          .filter(ch => ch !== undefined) // Filter out any channels that no longer exist
+          .filter(ch => ch !== undefined) // Filter out any channels that don't exist or are filtered out
         
         // Then add any new channels that weren't in the saved order (sorted by channel number)
         const orderedIds = new Set(orderedList.map(ch => ch.id))
@@ -958,7 +1206,8 @@ export default function ChannelConfiguration() {
   }
 
   // Filter channels based on search query and group settings
-  const filteredChannels = channels.filter(channel => {
+  // Use orderedChannels as the base to ensure consistent ordering between tabs
+  const filteredChannels = orderedChannels.filter(channel => {
     // First check group visibility
     if (!isChannelVisibleByGroup(channel)) return false
     
@@ -1198,10 +1447,12 @@ export default function ChannelConfiguration() {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <TabsList className="grid w-full grid-cols-3">
+        <TabsList className="grid w-full grid-cols-5">
           <TabsTrigger value="regex">Regex Configuration</TabsTrigger>
           <TabsTrigger value="groups">Group Management</TabsTrigger>
           <TabsTrigger value="ordering">Channel Order</TabsTrigger>
+          <TabsTrigger value="profiles">Profiles</TabsTrigger>
+          <TabsTrigger value="m3u-priority">M3U Priority</TabsTrigger>
         </TabsList>
         
         <TabsContent value="regex" className="space-y-6">
@@ -1758,6 +2009,16 @@ export default function ChannelConfiguration() {
               </Button>
             </div>
           )}
+        </TabsContent>
+        
+        {/* Profiles Tab */}
+        <TabsContent value="profiles" className="space-y-6">
+          <ProfileManagement />
+        </TabsContent>
+
+        {/* M3U Priority Tab */}
+        <TabsContent value="m3u-priority" className="space-y-6">
+          <M3UPriorityManagement />
         </TabsContent>
       </Tabs>
 

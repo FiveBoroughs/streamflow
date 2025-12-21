@@ -436,6 +436,95 @@ class UDIFetcher:
             return accounts
         return []
     
+    def fetch_channel_profiles(self) -> List[Dict[str, Any]]:
+        """Fetch all channel profiles from Dispatcharr.
+        
+        Returns:
+            List of channel profile dictionaries
+        """
+        if not self.base_url:
+            logger.error("DISPATCHARR_BASE_URL not set")
+            return []
+        
+        url = f"{self.base_url}/api/channels/profiles/"
+        logger.debug(f"Fetching channel profiles from {url}")
+        profiles = self._fetch_url(url)
+        
+        if profiles is None:
+            logger.error("Failed to fetch channel profiles - received None response")
+            return []
+        
+        if isinstance(profiles, list):
+            logger.info(f"Successfully fetched {len(profiles)} channel profiles")
+            if len(profiles) > 0:
+                logger.debug(f"Sample profile: {profiles[0]}")
+            return profiles
+        
+        logger.warning(f"Unexpected response type for channel profiles: {type(profiles).__name__}")
+        logger.debug(f"Response content: {profiles}")
+        return []
+    
+    def fetch_channel_profile_by_id(self, profile_id: int) -> Optional[Dict[str, Any]]:
+        """Fetch a specific channel profile by ID.
+        
+        Args:
+            profile_id: The profile ID
+            
+        Returns:
+            Profile dictionary or None
+        """
+        if not self.base_url:
+            return None
+        
+        url = f"{self.base_url}/api/channels/profiles/{profile_id}/"
+        return self._fetch_url(url)
+    
+    def fetch_profile_channels(self, profile_ids: List[int]) -> Dict[int, Dict[str, Any]]:
+        """Fetch channel associations for multiple profiles.
+        
+        Args:
+            profile_ids: List of profile IDs to fetch channels for
+            
+        Returns:
+            Dictionary mapping profile_id to profile channel data
+        """
+        if not self.base_url:
+            logger.error("DISPATCHARR_BASE_URL not set")
+            return {}
+        
+        profile_channels = {}
+        for profile_id in profile_ids:
+            try:
+                url = f"{self.base_url}/api/channels/profiles/{profile_id}/"
+                logger.debug(f"Fetching channels for profile {profile_id} from {url}")
+                profile_data = self._fetch_url(url)
+                
+                if profile_data:
+                    # Parse the channels field
+                    channels_data = profile_data.get('channels', '')
+                    
+                    # Try to parse if it's a JSON string
+                    if isinstance(channels_data, str) and channels_data.strip():
+                        try:
+                            channels_data = json.loads(channels_data)
+                        except json.JSONDecodeError as e:
+                            logger.warning(f"Could not parse channels for profile {profile_id}: {e}")
+                            channels_data = []
+                    elif not isinstance(channels_data, list):
+                        channels_data = []
+                    
+                    profile_channels[profile_id] = {
+                        'profile': profile_data,
+                        'channels': channels_data
+                    }
+                    logger.debug(f"Fetched {len(channels_data)} channel associations for profile {profile_id}")
+            except Exception as e:
+                logger.error(f"Error fetching channels for profile {profile_id}: {e}")
+                continue
+        
+        logger.info(f"Fetched channel data for {len(profile_channels)} profiles")
+        return profile_channels
+    
     def refresh_all(self) -> Dict[str, List[Dict[str, Any]]]:
         """Fetch all data from Dispatcharr.
         
@@ -449,13 +538,15 @@ class UDIFetcher:
             'streams': self.fetch_streams(),
             'channel_groups': self.fetch_channel_groups(),
             'logos': self.fetch_logos(),
-            'm3u_accounts': self.fetch_m3u_accounts()
+            'm3u_accounts': self.fetch_m3u_accounts(),
+            'channel_profiles': self.fetch_channel_profiles()
         }
         
         logger.info(
             f"Full refresh complete: {len(data['channels'])} channels, "
             f"{len(data['streams'])} streams, {len(data['channel_groups'])} groups, "
-            f"{len(data['logos'])} logos, {len(data['m3u_accounts'])} M3U accounts"
+            f"{len(data['logos'])} logos, {len(data['m3u_accounts'])} M3U accounts, "
+            f"{len(data['channel_profiles'])} channel profiles"
         )
         
         return data

@@ -3,14 +3,15 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button.jsx'
 import { Badge } from '@/components/ui/badge.jsx'
 import { Progress } from '@/components/ui/progress.jsx'
-import { Alert, AlertDescription } from '@/components/ui/alert.jsx'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert.jsx'
 import { Label } from '@/components/ui/label.jsx'
 import { Input } from '@/components/ui/input.jsx'
 import { Switch } from '@/components/ui/switch.jsx'
 import { Separator } from '@/components/ui/separator.jsx'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs.jsx'
+import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from '@/components/ui/pagination.jsx'
 import { useToast } from '@/hooks/use-toast.js'
-import { streamCheckerAPI } from '@/services/api.js'
+import { streamCheckerAPI, deadStreamsAPI } from '@/services/api.js'
 import { 
   Activity, 
   CheckCircle2, 
@@ -25,6 +26,10 @@ import {
   List
 } from 'lucide-react'
 
+// Pagination constants
+const DEAD_STREAMS_PER_PAGE = 20
+const PAGINATION_MAX_VISIBLE_PAGES = 5
+
 export default function StreamChecker() {
   const [status, setStatus] = useState(null)
   const [progress, setProgress] = useState(null)
@@ -33,6 +38,16 @@ export default function StreamChecker() {
   const [actionLoading, setActionLoading] = useState('')
   const [configEditing, setConfigEditing] = useState(false)
   const [editedConfig, setEditedConfig] = useState(null)
+  const [deadStreams, setDeadStreams] = useState([])
+  const [deadStreamsLoading, setDeadStreamsLoading] = useState(false)
+  const [deadStreamsPagination, setDeadStreamsPagination] = useState({
+    page: 1,
+    per_page: DEAD_STREAMS_PER_PAGE,
+    total_pages: 0,
+    has_next: false,
+    has_prev: false
+  })
+  const [totalDeadStreams, setTotalDeadStreams] = useState(0)
   const { toast } = useToast()
 
   useEffect(() => {
@@ -153,6 +168,85 @@ export default function StreamChecker() {
       current[safeKeys[safeKeys.length - 1]] = value
       return newConfig
     })
+  }
+
+  const loadDeadStreams = async (page = deadStreamsPagination.page) => {
+    try {
+      setDeadStreamsLoading(true)
+      const response = await deadStreamsAPI.getDeadStreams(page, deadStreamsPagination.per_page)
+      const deadStreamsData = response.data.dead_streams || []
+      const paginationData = response.data.pagination || {}
+      
+      // Validate that backend returned the page we requested
+      if (paginationData.page && paginationData.page !== page) {
+        // Page mismatch - backend returned different page than requested
+        // This could happen if the requested page is out of bounds
+        toast({
+          title: "Warning",
+          description: `Requested page ${page} but received page ${paginationData.page}`,
+          variant: "default"
+        })
+      }
+      
+      setDeadStreams(deadStreamsData)
+      setTotalDeadStreams(response.data.total_dead_streams || 0)
+      setDeadStreamsPagination({
+        page: paginationData.page || page,
+        per_page: paginationData.per_page || deadStreamsPagination.per_page,
+        total_pages: paginationData.total_pages || 0,
+        has_next: paginationData.has_next || false,
+        has_prev: paginationData.has_prev || false
+      })
+    } catch (err) {
+      console.error('Failed to load dead streams:', err)
+      toast({
+        title: "Error",
+        description: "Failed to load dead streams",
+        variant: "destructive"
+      })
+    } finally {
+      setDeadStreamsLoading(false)
+    }
+  }
+
+  const handleReviveStream = async (streamUrl) => {
+    try {
+      setActionLoading(`revive-${streamUrl}`)
+      await deadStreamsAPI.reviveStream(streamUrl)
+      toast({
+        title: "Success",
+        description: "Stream revived successfully"
+      })
+      await loadDeadStreams()
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err.response?.data?.error || "Failed to revive stream",
+        variant: "destructive"
+      })
+    } finally {
+      setActionLoading('')
+    }
+  }
+
+  const handleClearAllDeadStreams = async () => {
+    try {
+      setActionLoading('clear-all-dead')
+      const response = await deadStreamsAPI.clearAllDeadStreams()
+      toast({
+        title: "Success",
+        description: response.data.message || "All dead streams cleared"
+      })
+      await loadDeadStreams()
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err.response?.data?.error || "Failed to clear dead streams",
+        variant: "destructive"
+      })
+    } finally {
+      setActionLoading('')
+    }
   }
 
   if (loading) {
@@ -369,10 +463,11 @@ export default function StreamChecker() {
 
               {/* Tabs for Configuration Sections */}
               <Tabs defaultValue="analysis" className="w-full">
-                <TabsList className="grid w-full grid-cols-3">
+                <TabsList className="grid w-full grid-cols-4">
                   <TabsTrigger value="analysis">Stream Analysis</TabsTrigger>
                   <TabsTrigger value="concurrent">Concurrent Checking</TabsTrigger>
                   <TabsTrigger value="scoring">Stream Scoring Weights</TabsTrigger>
+                  <TabsTrigger value="dead-streams">Dead Streams</TabsTrigger>
                 </TabsList>
 
                 {/* Stream Analysis Tab */}
@@ -406,7 +501,23 @@ export default function StreamChecker() {
                         max={300}
                       />
                       <p className="text-xs text-muted-foreground">
-                        Timeout for stream operations
+                        Base timeout for stream operations (does not include duration or startup buffer)
+                      </p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="stream_startup_buffer">Stream Startup Buffer (seconds)</Label>
+                      <Input
+                        id="stream_startup_buffer"
+                        type="number"
+                        value={editedConfig?.stream_analysis?.stream_startup_buffer || 10}
+                        onChange={(e) => updateConfigValue('stream_analysis.stream_startup_buffer', parseInt(e.target.value))}
+                        disabled={!configEditing}
+                        min={5}
+                        max={120}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Maximum time to wait for stream to start (actual timeout = timeout + duration + buffer)
                       </p>
                     </div>
 
@@ -587,6 +698,284 @@ export default function StreamChecker() {
                       onCheckedChange={(checked) => updateConfigValue('scoring.prefer_h265', checked)}
                       disabled={!configEditing}
                     />
+                  </div>
+                </TabsContent>
+
+                {/* Dead Streams Tab */}
+                <TabsContent value="dead-streams" className="space-y-4">
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="space-y-0.5">
+                        <Label htmlFor="dead_stream_enabled">Enable Dead Stream Removal</Label>
+                        <p className="text-sm text-muted-foreground">
+                          Automatically remove streams that are detected as dead or below quality thresholds
+                        </p>
+                      </div>
+                      <Switch
+                        id="dead_stream_enabled"
+                        checked={editedConfig?.dead_stream_handling?.enabled !== false}
+                        onCheckedChange={(checked) => updateConfigValue('dead_stream_handling.enabled', checked)}
+                        disabled={!configEditing}
+                      />
+                    </div>
+
+                    {editedConfig?.dead_stream_handling?.enabled !== false && (
+                      <>
+                        <div className="space-y-4 pt-4 border-t">
+                          <h4 className="font-medium">Quality Thresholds</h4>
+                          <p className="text-sm text-muted-foreground">
+                            Streams below these thresholds will be considered dead and removed. Set to 0 to disable a specific threshold.
+                          </p>
+
+                          <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                              <Label htmlFor="min_resolution_width">Minimum Width (pixels)</Label>
+                              <Input
+                                id="min_resolution_width"
+                                type="number"
+                                min="0"
+                                step="1"
+                                value={editedConfig?.dead_stream_handling?.min_resolution_width ?? 0}
+                                onChange={(e) => updateConfigValue('dead_stream_handling.min_resolution_width', parseInt(e.target.value) || 0)}
+                                disabled={!configEditing}
+                              />
+                              <p className="text-sm text-muted-foreground">
+                                e.g., 1280 for 720p minimum (0 = no minimum)
+                              </p>
+                            </div>
+
+                            <div className="space-y-2">
+                              <Label htmlFor="min_resolution_height">Minimum Height (pixels)</Label>
+                              <Input
+                                id="min_resolution_height"
+                                type="number"
+                                min="0"
+                                step="1"
+                                value={editedConfig?.dead_stream_handling?.min_resolution_height ?? 0}
+                                onChange={(e) => updateConfigValue('dead_stream_handling.min_resolution_height', parseInt(e.target.value) || 0)}
+                                disabled={!configEditing}
+                              />
+                              <p className="text-sm text-muted-foreground">
+                                e.g., 720 for 720p minimum (0 = no minimum)
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="space-y-2">
+                            <Label htmlFor="min_bitrate_kbps">Minimum Bitrate (kbps)</Label>
+                            <Input
+                              id="min_bitrate_kbps"
+                              type="number"
+                              min="0"
+                              step="100"
+                              value={editedConfig?.dead_stream_handling?.min_bitrate_kbps ?? 0}
+                              onChange={(e) => updateConfigValue('dead_stream_handling.min_bitrate_kbps', parseInt(e.target.value) || 0)}
+                              disabled={!configEditing}
+                            />
+                            <p className="text-sm text-muted-foreground">
+                              e.g., 1000 for 1 Mbps minimum (0 = no minimum)
+                            </p>
+                          </div>
+
+                          <div className="space-y-2">
+                            <Label htmlFor="min_score">Minimum Quality Score</Label>
+                            <Input
+                              id="min_score"
+                              type="number"
+                              min="0"
+                              max="100"
+                              step="1"
+                              value={editedConfig?.dead_stream_handling?.min_score ?? 0}
+                              onChange={(e) => updateConfigValue('dead_stream_handling.min_score', parseInt(e.target.value) || 0)}
+                              disabled={!configEditing}
+                            />
+                            <p className="text-sm text-muted-foreground">
+                              Overall quality score from 0-100 (0 = no minimum)
+                            </p>
+                          </div>
+                        </div>
+
+                        <Alert>
+                          <AlertCircle className="h-4 w-4" />
+                          <AlertTitle>Important</AlertTitle>
+                          <AlertDescription>
+                            Streams with 0x0 resolution or 0 bitrate are always considered dead, regardless of these settings.
+                            These thresholds provide additional quality controls beyond basic dead stream detection.
+                          </AlertDescription>
+                        </Alert>
+                      </>
+                    )}
+
+                    {/* Dead Streams List */}
+                    <Separator className="my-6" />
+                    
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h4 className="font-medium">Dead Streams List</h4>
+                          <p className="text-sm text-muted-foreground">
+                            View and manage streams that have been marked as dead
+                          </p>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={loadDeadStreams}
+                            disabled={deadStreamsLoading}
+                          >
+                            {deadStreamsLoading ? (
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            ) : (
+                              <RefreshCw className="mr-2 h-4 w-4" />
+                            )}
+                            Refresh
+                          </Button>
+                          {deadStreams.length > 0 && (
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              onClick={handleClearAllDeadStreams}
+                              disabled={actionLoading === 'clear-all-dead'}
+                            >
+                              {actionLoading === 'clear-all-dead' ? (
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              ) : (
+                                <Trash2 className="mr-2 h-4 w-4" />
+                              )}
+                              Clear All
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+
+                      {deadStreamsLoading ? (
+                        <div className="flex items-center justify-center py-8">
+                          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                        </div>
+                      ) : deadStreams.length === 0 ? (
+                        <Alert>
+                          <CheckCircle2 className="h-4 w-4" />
+                          <AlertTitle>No Dead Streams</AlertTitle>
+                          <AlertDescription>
+                            No streams are currently marked as dead. This is good news!
+                          </AlertDescription>
+                        </Alert>
+                      ) : (
+                        <>
+                          <div className="space-y-2">
+                            {deadStreams.map((stream) => (
+                              <Card key={stream.url} className="p-4">
+                                <div className="flex items-start justify-between gap-4">
+                                  <div className="flex-1 space-y-1">
+                                    <div className="flex items-center gap-2">
+                                      <Badge variant="destructive">Dead</Badge>
+                                      <span className="font-medium">{stream.stream_name}</span>
+                                    </div>
+                                    <div className="text-sm text-muted-foreground space-y-1">
+                                      <div className="flex items-center gap-2">
+                                        <span className="font-mono text-xs">{stream.url}</span>
+                                      </div>
+                                      {stream.marked_dead_at && (
+                                        <div className="flex items-center gap-2">
+                                          <Clock className="h-3 w-3" />
+                                          <span>Marked dead: {new Date(stream.marked_dead_at).toLocaleString()}</span>
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => handleReviveStream(stream.url)}
+                                    disabled={actionLoading === `revive-${stream.url}`}
+                                  >
+                                    {actionLoading === `revive-${stream.url}` ? (
+                                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                    ) : (
+                                      <CheckCircle2 className="mr-2 h-4 w-4" />
+                                    )}
+                                    Revive
+                                  </Button>
+                                </div>
+                              </Card>
+                            ))}
+                          </div>
+                          
+                          {/* Pagination */}
+                          {deadStreamsPagination.total_pages > 1 && (
+                            <div className="flex flex-col items-center gap-2 pt-4">
+                              <div className="text-sm text-muted-foreground">
+                                Showing page {deadStreamsPagination.page} of {deadStreamsPagination.total_pages} ({totalDeadStreams} total)
+                              </div>
+                              <Pagination>
+                                <PaginationContent>
+                                  <PaginationItem>
+                                    <PaginationPrevious 
+                                      onClick={() => deadStreamsPagination.has_prev && loadDeadStreams(deadStreamsPagination.page - 1)}
+                                      className={!deadStreamsPagination.has_prev ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
+                                    />
+                                  </PaginationItem>
+                                  
+                                  {/* Show page numbers with smart windowing */}
+                                  {(() => {
+                                    const currentPage = deadStreamsPagination.page
+                                    const totalPages = deadStreamsPagination.total_pages
+                                    const maxVisiblePages = PAGINATION_MAX_VISIBLE_PAGES
+                                    let startPage, endPage
+                                    
+                                    if (totalPages <= maxVisiblePages) {
+                                      // Show all pages if total is less than max
+                                      startPage = 1
+                                      endPage = totalPages
+                                    } else {
+                                      // Calculate range to show current page in the middle when possible
+                                      const halfVisible = Math.floor(maxVisiblePages / 2)
+                                      
+                                      if (currentPage <= halfVisible + 1) {
+                                        // Near the start
+                                        startPage = 1
+                                        endPage = maxVisiblePages
+                                      } else if (currentPage >= totalPages - halfVisible) {
+                                        // Near the end
+                                        startPage = totalPages - maxVisiblePages + 1
+                                        endPage = totalPages
+                                      } else {
+                                        // In the middle
+                                        startPage = currentPage - halfVisible
+                                        endPage = currentPage + halfVisible
+                                      }
+                                    }
+                                    
+                                    return Array.from({ length: endPage - startPage + 1 }, (_, i) => {
+                                      const pageNum = startPage + i
+                                      return (
+                                        <PaginationItem key={pageNum}>
+                                          <PaginationLink
+                                            onClick={() => loadDeadStreams(pageNum)}
+                                            isActive={pageNum === currentPage}
+                                            className="cursor-pointer"
+                                          >
+                                            {pageNum}
+                                          </PaginationLink>
+                                        </PaginationItem>
+                                      )
+                                    })
+                                  })()}
+                                  
+                                  <PaginationItem>
+                                    <PaginationNext 
+                                      onClick={() => deadStreamsPagination.has_next && loadDeadStreams(deadStreamsPagination.page + 1)}
+                                      className={!deadStreamsPagination.has_next ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
+                                    />
+                                  </PaginationItem>
+                                </PaginationContent>
+                              </Pagination>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
                   </div>
                 </TabsContent>
               </Tabs>

@@ -86,6 +86,8 @@ export const streamAPI = {
 
 export const m3uAPI = {
   getAccounts: () => api.get('/m3u-accounts'),
+  updateAccountPriority: (accountId, data) => api.patch(`/m3u-accounts/${accountId}/priority`, data),
+  updateGlobalPriorityMode: (data) => api.put('/m3u-priority/global-mode', data),
 };
 
 export const streamCheckerAPI = {
@@ -111,7 +113,14 @@ export const changelogAPI = {
 };
 
 export const deadStreamsAPI = {
-  getDeadStreams: () => api.get('/dead-streams'),
+  getDeadStreams: (page = 1, per_page = 20) => {
+    // Ensure page and per_page are primitive numbers to avoid sending objects
+    const safePage = typeof page === 'number' ? page : parseInt(page) || 1;
+    const safePerPage = typeof per_page === 'number' ? per_page : parseInt(per_page) || 20;
+    return api.get('/dead-streams', { params: { page: safePage, per_page: safePerPage } });
+  },
+  reviveStream: (streamUrl) => api.post('/dead-streams/revive', { stream_url: streamUrl }),
+  clearAllDeadStreams: () => api.post('/dead-streams/clear'),
 };
 
 export const setupAPI = {
@@ -144,4 +153,28 @@ export const schedulingAPI = {
 
 export const versionAPI = {
   getVersion: () => api.get('/version'),
+};
+
+export const profileAPI = {
+  // Profile configuration
+  getConfig: () => api.get('/profile-config'),
+  updateConfig: (config) => api.put('/profile-config', config),
+  
+  // Profile management
+  getProfiles: () => api.get('/profiles'),
+  getProfileChannels: (profileId, includeSnapshot = false) => {
+    const params = includeSnapshot ? { include_snapshot: 'true' } : {};
+    return api.get(`/profiles/${profileId}/channels`, { params });
+  },
+  refreshProfiles: () => api.post('/profiles/refresh'),
+  diagnoseProfiles: () => api.get('/profiles/diagnose'),
+  
+  // Snapshot management
+  createSnapshot: (profileId) => api.post(`/profiles/${profileId}/snapshot`),
+  getSnapshot: (profileId) => api.get(`/profiles/${profileId}/snapshot`),
+  deleteSnapshot: (profileId) => api.delete(`/profiles/${profileId}/snapshot`),
+  getAllSnapshots: () => api.get('/profiles/snapshots'),
+  
+  // Actions
+  disableEmptyChannels: (profileId) => api.post(`/profiles/${profileId}/disable-empty-channels`),
 };

@@ -27,6 +27,7 @@ from scheduling_service import get_scheduling_service
 from channel_settings_manager import get_channel_settings_manager
 from dispatcharr_config import get_dispatcharr_config
 from channel_order_manager import get_channel_order_manager
+from profile_config import ProfileConfig
 
 # Import UDI for direct data access
 from udi import get_udi_manager
@@ -57,6 +58,10 @@ logger = setup_logging(__name__)
 CONFIG_DIR = Path(os.environ.get('CONFIG_DIR', '/app/data'))
 CONCURRENT_STREAMS_GLOBAL_LIMIT_KEY = 'concurrent_streams.global_limit'
 CONCURRENT_STREAMS_ENABLED_KEY = 'concurrent_streams.enabled'
+
+# Dead streams pagination constants
+DEAD_STREAMS_DEFAULT_PER_PAGE = 20
+DEAD_STREAMS_MAX_PER_PAGE = 100
 
 # EPG refresh processor constants
 EPG_REFRESH_INITIAL_DELAY_SECONDS = 5  # Delay before first EPG refresh
@@ -95,22 +100,18 @@ def get_regex_matcher():
     return regex_matcher
 
 def check_wizard_complete():
-    """Check if the setup wizard has been completed."""
+    """Check if the setup wizard has been completed.
+    
+    Note: As of recent changes, regex patterns are now optional and not required
+    for wizard completion. This allows users to complete the wizard and start
+    using the system even if they haven't configured any channel patterns yet.
+    """
     try:
         config_file = CONFIG_DIR / 'automation_config.json'
         regex_file = CONFIG_DIR / 'channel_regex_config.json'
         
         # Check if configuration files exist
         if not config_file.exists() or not regex_file.exists():
-            return False
-        
-        # Check if we have patterns configured
-        if regex_file.exists():
-            matcher = get_regex_matcher()
-            patterns = matcher.get_patterns()
-            if not patterns.get('patterns'):
-                return False
-        else:
             return False
         
         # Check if we can connect to Dispatcharr (optional - use cached result)
@@ -935,6 +936,557 @@ def test_regex_pattern_live():
         logger.error(f"Error testing regex patterns live: {e}")
         return jsonify({"error": str(e)}), 500
 
+# ============================================================
+# PROFILE CONFIGURATION API ENDPOINTS
+# ============================================================
+
+@app.route('/api/profile-config', methods=['GET'])
+@log_function_call
+def get_profile_config():
+    """Get the current profile configuration.
+    
+    Returns:
+        JSON with profile configuration
+    """
+    try:
+        from profile_config import get_profile_config
+        profile_config = get_profile_config()
+        
+        config = profile_config.get_config()
+        
+        return jsonify(config)
+    except Exception as e:
+        logger.error(f"Error getting profile config: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/profile-config', methods=['PUT'])
+@log_function_call
+def update_profile_config():
+    """Update profile configuration.
+    
+    Expects JSON with configuration options:
+    - selected_profile_id: Profile ID to use (null for general)
+    - selected_profile_name: Profile name (for display)
+    - dead_streams.enabled: Enable empty channel management
+    - dead_streams.target_profile_id: Profile to disable channels in
+    - dead_streams.target_profile_name: Profile name
+    - dead_streams.use_snapshot: Use snapshot for re-enabling
+    
+    Returns:
+        JSON with result
+    """
+    try:
+        from profile_config import get_profile_config
+        profile_config = get_profile_config()
+        
+        data = request.get_json()
+        
+        # Update selected profile
+        if 'selected_profile_id' in data or 'use_profile' in data:
+            # Get the profile IDs from the request, defaulting to current values if not provided
+            profile_id = data.get('selected_profile_id')
+            profile_name = data.get('selected_profile_name')
+            
+            # If use_profile is explicitly set to False, clear the selected profile
+            if 'use_profile' in data and not data['use_profile']:
+                profile_id = None
+                profile_name = None
+            
+            profile_config.set_selected_profile(profile_id, profile_name)
+        
+        # Update dead stream config
+        if 'dead_streams' in data:
+            ds_config = data['dead_streams']
+            profile_config.set_dead_stream_config(
+                enabled=ds_config.get('enabled'),
+                target_profile_id=ds_config.get('target_profile_id'),
+                target_profile_name=ds_config.get('target_profile_name'),
+                use_snapshot=ds_config.get('use_snapshot')
+            )
+        
+        return jsonify({"message": "Profile configuration updated successfully"})
+    except Exception as e:
+        logger.error(f"Error updating profile config: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/profiles', methods=['GET'])
+@log_function_call
+def get_profiles():
+    """Get all available channel profiles from Dispatcharr.
+    
+    Returns:
+        JSON list of profiles
+    """
+    try:
+        # Get profiles from UDI
+        udi = get_udi_manager()
+        profiles = udi.get_channel_profiles()
+        
+        logger.info(f"Returning {len(profiles)} channel profiles")
+        if len(profiles) == 0:
+            logger.warning("No channel profiles found in UDI cache")
+        
+        return jsonify(profiles)
+    except Exception as e:
+        logger.error(f"Error getting profiles: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/profiles/refresh', methods=['POST'])
+@log_function_call
+def refresh_profiles():
+    """Force refresh channel profiles from Dispatcharr API.
+    
+    This endpoint can be used to manually trigger a profile refresh
+    when profiles are not appearing in the UI.
+    
+    Returns:
+        JSON with refresh status and profile count
+    """
+    try:
+        udi = get_udi_manager()
+        logger.info("Forcing channel profiles refresh...")
+        
+        success = udi.refresh_channel_profiles()
+        
+        if success:
+            profiles = udi.get_channel_profiles()
+            return jsonify({
+                "success": True,
+                "message": f"Successfully refreshed {len(profiles)} channel profiles",
+                "profile_count": len(profiles),
+                "profiles": profiles
+            })
+        else:
+            return jsonify({
+                "success": False,
+                "message": "Failed to refresh channel profiles"
+            }), 500
+            
+    except Exception as e:
+        logger.error(f"Error refreshing profiles: {e}", exc_info=True)
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+@app.route('/api/profiles/diagnose', methods=['GET'])
+@log_function_call
+def diagnose_profiles():
+    """Diagnostic endpoint to check profile fetching status.
+    
+    Returns detailed information about:
+    - UDI initialization status
+    - Profile cache contents
+    - Dispatcharr API connectivity
+    - Recent refresh attempts
+    
+    Returns:
+        JSON with diagnostic information
+    """
+    try:
+        udi = get_udi_manager()
+        
+        # Check if UDI is initialized
+        is_initialized = udi.is_initialized()
+        
+        # Get current profile cache
+        profiles = udi.get_channel_profiles()
+        
+        # Check Dispatcharr configuration
+        from dispatcharr_config import get_dispatcharr_config
+        config = get_dispatcharr_config()
+        is_configured = config.is_configured()
+        base_url = config.get_base_url()
+        
+        # Check if profiles exist in storage
+        try:
+            storage_profiles = udi.storage.load_channel_profiles()
+            storage_count = len(storage_profiles) if storage_profiles else 0
+        except Exception as e:
+            storage_count = f"Error: {e}"
+        
+        # Get last refresh time
+        last_refresh = udi.cache.get_last_refresh('channel_profiles')
+        
+        diagnostic_info = {
+            "udi_initialized": is_initialized,
+            "dispatcharr_configured": is_configured,
+            "dispatcharr_base_url": base_url,
+            "cache_profile_count": len(profiles),
+            "storage_profile_count": storage_count,
+            "last_refresh_time": last_refresh.isoformat() if last_refresh else None,
+            "profiles_in_cache": profiles
+        }
+        
+        if len(profiles) == 0:
+            diagnostic_info["diagnosis"] = "No profiles found"
+            diagnostic_info["possible_causes"] = [
+                "No channel profiles have been created in Dispatcharr yet",
+                "Profile fetch failed during initialization",
+                "Authentication issue preventing API access",
+                "Network connectivity problem"
+            ]
+            diagnostic_info["recommended_actions"] = [
+                "Create channel profiles in Dispatcharr web UI (Channels > Profiles)",
+                "Click 'Refresh Profiles' button to force a refresh",
+                "Check Dispatcharr logs for errors",
+                "Verify DISPATCHARR_BASE_URL, DISPATCHARR_USER, and DISPATCHARR_PASS in .env"
+            ]
+        
+        return jsonify(diagnostic_info)
+        
+    except Exception as e:
+        logger.error(f"Error in profile diagnostics: {e}", exc_info=True)
+        return jsonify({
+            "error": str(e),
+            "message": "Failed to run profile diagnostics"
+        }), 500
+
+
+def _get_all_channels_as_enabled():
+    """Helper function to get all channels formatted with enabled=True.
+    
+    This is used as a fallback when profile channel parsing fails.
+    
+    Returns:
+        List of channel dicts in format [{channel_id, enabled}, ...]
+    """
+    udi = get_udi_manager()
+    all_channels = udi.get_channels()
+    return [
+        {'channel_id': ch['id'], 'enabled': True}
+        for ch in all_channels if ch.get('id')
+    ]
+
+
+@app.route('/api/profiles/<int:profile_id>/channels', methods=['GET'])
+@log_function_call
+def get_profile_channels(profile_id):
+    """Get channels for a specific profile from UDI cache.
+    
+    Uses cached data from UDI instead of making direct API calls to Dispatcharr.
+    The cache is updated when playlists are refreshed.
+    
+    Args:
+        profile_id: Profile ID
+        
+    Query Parameters:
+        include_snapshot: If 'true', also include channels from the profile snapshot
+                         even if they're currently disabled
+        
+    Returns:
+        JSON with profile and channels
+    """
+    try:
+        # Check if we should include snapshot channels
+        include_snapshot = request.args.get('include_snapshot', '').lower() == 'true'
+        
+        # Get data from UDI cache
+        udi = get_udi_manager()
+        
+        # Get profile info
+        profile = udi.get_channel_profile_by_id(profile_id)
+        if not profile:
+            return jsonify({"error": f"Profile {profile_id} not found in UDI cache"}), 404
+        
+        # Get cached profile channels
+        profile_channels_data = udi.get_profile_channels(profile_id)
+        
+        if profile_channels_data:
+            # Use cached data
+            channels = profile_channels_data.get('channels', [])
+            
+            # If include_snapshot is requested, merge with snapshot channels
+            if include_snapshot:
+                profile_config = ProfileConfig()
+                snapshot = profile_config.get_snapshot(profile_id)
+                
+                if snapshot:
+                    snapshot_channel_ids = set(snapshot.get('channel_ids', []))
+                    # Get current channel IDs from the profile
+                    current_channel_ids = set()
+                    for ch in channels:
+                        # Channels can be integers or objects with channel_id
+                        if isinstance(ch, int):
+                            current_channel_ids.add(ch)
+                        elif isinstance(ch, dict):
+                            ch_id = ch.get('channel_id') or ch.get('id')
+                            if ch_id:
+                                current_channel_ids.add(ch_id)
+                    
+                    # Find channel IDs in snapshot but not in current channels
+                    missing_channel_ids = snapshot_channel_ids - current_channel_ids
+                    
+                    if missing_channel_ids:
+                        logger.info(f"Including {len(missing_channel_ids)} snapshot channels that are not currently in profile {profile_id}")
+                        # Add the missing channels to the list
+                        # Convert channels to list to make it mutable, then extend with missing IDs
+                        channels = list(channels)
+                        channels.extend(missing_channel_ids)
+            
+            logger.info(f"Returning {len(channels)} cached channel associations for profile {profile_id}" + 
+                       (f" (including snapshot channels)" if include_snapshot else ""))
+            return jsonify({
+                'profile': profile,
+                'channels': channels
+            })
+        else:
+            # If not in cache yet (e.g., first load), fall back to direct API call
+            # This will only happen once until the next playlist refresh
+            logger.warning(f"Profile channels not in UDI cache for profile {profile_id}, making direct API call")
+            base_url = _get_base_url()
+            if not base_url:
+                return jsonify({"error": "Dispatcharr base URL not configured"}), 500
+            
+            # Import here to avoid circular dependency
+            from udi.fetcher import _get_auth_headers
+            
+            # Get profile details directly from Dispatcharr
+            profile_url = f"{base_url}/api/channels/profiles/{profile_id}/"
+            resp = requests.get(profile_url, headers=_get_auth_headers(), timeout=30)
+            resp.raise_for_status()
+            profile_data = resp.json()
+            
+            # Parse the channels field
+            channels_data = profile_data.get('channels', '')
+            
+            # Try to parse if it's a JSON string
+            if isinstance(channels_data, str) and channels_data.strip():
+                try:
+                    channels_data = json.loads(channels_data)
+                except json.JSONDecodeError as e:
+                    logger.warning(f"Could not parse profile.channels as JSON: {e}")
+                    channels_data = []
+            elif not isinstance(channels_data, list):
+                channels_data = []
+            
+            # Return the data and cache it for future use
+            profile_channels_to_cache = {
+                'profile': profile_data,
+                'channels': channels_data
+            }
+            # Store in UDI for future use
+            udi.storage.save_profile_channels_by_id(profile_id, profile_channels_to_cache)
+            udi._profile_channels_cache[profile_id] = profile_channels_to_cache
+            
+            return jsonify(profile_channels_to_cache)
+    
+    except Exception as e:
+        logger.error(f"Error fetching profile channels: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/profiles/<int:profile_id>/snapshot', methods=['POST'])
+@log_function_call
+def create_profile_snapshot(profile_id):
+    """Create a snapshot of the current channels in a profile.
+    
+    This records which channels are in the profile so we can re-enable them
+    after they've been filled back again.
+    
+    Args:
+        profile_id: Profile ID
+        
+    Returns:
+        JSON with result
+    """
+    try:
+        from profile_config import get_profile_config
+        
+        # Get profile info from UDI
+        udi = get_udi_manager()
+        profile = udi.get_channel_profile_by_id(profile_id)
+        
+        if not profile:
+            return jsonify({"error": "Profile not found"}), 404
+        
+        # Get channels for this profile - only enabled channels
+        # First try to get from cache
+        profile_channels_data = udi.get_profile_channels(profile_id)
+        
+        if profile_channels_data:
+            # Use cached data
+            # The 'channels' field is a list of channel IDs (integers)
+            # Being in the profile means the channel is enabled
+            channels = profile_channels_data.get('channels', [])
+            
+            # Ensure channels is a list and contains integers
+            if isinstance(channels, list):
+                channel_ids = [ch for ch in channels if isinstance(ch, int)]
+            else:
+                logger.warning(f"Unexpected channels data type: {type(channels)}")
+                channel_ids = []
+            
+            logger.info(f"Creating snapshot with {len(channel_ids)} enabled channels from cache")
+        else:
+            # Fall back to direct API call if not in cache
+            logger.info("Profile channels not in cache, fetching from Dispatcharr API")
+            base_url = _get_base_url()
+            if not base_url:
+                return jsonify({"error": "Dispatcharr base URL not configured"}), 500
+            
+            from udi.fetcher import _get_auth_headers
+            
+            # Get profile details directly from Dispatcharr
+            profile_url = f"{base_url}/api/channels/profiles/{profile_id}/"
+            resp = requests.get(profile_url, headers=_get_auth_headers(), timeout=30)
+            resp.raise_for_status()
+            profile_data = resp.json()
+            
+            # Parse the channels field
+            # According to swagger.json, this is a JSON string containing a list of channel IDs
+            channels_data = profile_data.get('channels', '')
+            
+            # Try to parse if it's a JSON string
+            if isinstance(channels_data, str) and channels_data.strip():
+                try:
+                    channels_data = json.loads(channels_data)
+                except json.JSONDecodeError as e:
+                    logger.warning(f"Could not parse profile.channels as JSON: {e}")
+                    channels_data = []
+            elif not isinstance(channels_data, list):
+                channels_data = []
+            
+            # channels_data is a list of channel IDs (integers)
+            # Being in the profile means the channel is enabled
+            if isinstance(channels_data, list):
+                channel_ids = [ch for ch in channels_data if isinstance(ch, int)]
+            else:
+                logger.warning(f"Unexpected channels_data type: {type(channels_data)}")
+                channel_ids = []
+            
+            logger.info(f"Creating snapshot with {len(channel_ids)} enabled channels from API")
+        
+        # Create snapshot
+        profile_config = get_profile_config()
+        success = profile_config.create_snapshot(
+            profile_id,
+            profile.get('name', 'Unknown'),
+            channel_ids
+        )
+        
+        if success:
+            snapshot = profile_config.get_snapshot(profile_id)
+            return jsonify({
+                "message": "Snapshot created successfully",
+                "snapshot": snapshot
+            })
+        else:
+            return jsonify({"error": "Failed to create snapshot"}), 500
+            
+    except Exception as e:
+        logger.error(f"Error creating profile snapshot: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/profiles/<int:profile_id>/snapshot', methods=['GET'])
+@log_function_call
+def get_profile_snapshot(profile_id):
+    """Get the snapshot for a profile.
+    
+    Args:
+        profile_id: Profile ID
+        
+    Returns:
+        JSON with snapshot data
+    """
+    try:
+        from profile_config import get_profile_config
+        profile_config = get_profile_config()
+        
+        snapshot = profile_config.get_snapshot(profile_id)
+        
+        if snapshot:
+            return jsonify(snapshot)
+        else:
+            return jsonify({"message": "No snapshot found for this profile"}), 404
+            
+    except Exception as e:
+        logger.error(f"Error getting profile snapshot: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/profiles/<int:profile_id>/snapshot', methods=['DELETE'])
+@log_function_call
+def delete_profile_snapshot(profile_id):
+    """Delete the snapshot for a profile.
+    
+    Args:
+        profile_id: Profile ID
+        
+    Returns:
+        JSON with result
+    """
+    try:
+        from profile_config import get_profile_config
+        profile_config = get_profile_config()
+        
+        success = profile_config.delete_snapshot(profile_id)
+        
+        if success:
+            return jsonify({"message": "Snapshot deleted successfully"})
+        else:
+            return jsonify({"error": "Failed to delete snapshot"}), 500
+            
+    except Exception as e:
+        logger.error(f"Error deleting profile snapshot: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/profiles/snapshots', methods=['GET'])
+@log_function_call
+def get_all_snapshots():
+    """Get all profile snapshots.
+    
+    Returns:
+        JSON with all snapshots
+    """
+    try:
+        from profile_config import get_profile_config
+        profile_config = get_profile_config()
+        
+        snapshots = profile_config.get_all_snapshots()
+        
+        return jsonify(snapshots)
+    except Exception as e:
+        logger.error(f"Error getting snapshots: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/profiles/<int:profile_id>/disable-empty-channels', methods=['POST'])
+@log_function_call
+def disable_empty_channels_in_profile_endpoint(profile_id):
+    """Disable channels with no streams in a specific profile.
+    
+    This removes channels from the profile if they have no working streams.
+    Uses the dead_streams_tracker to identify empty channels.
+    
+    Args:
+        profile_id: Profile ID
+        
+    Returns:
+        JSON with result and count of disabled channels
+    """
+    try:
+        from empty_channel_manager import disable_empty_channels_in_profile
+        
+        disabled_count, total_checked = disable_empty_channels_in_profile(profile_id)
+        
+        return jsonify({
+            "message": f"Disabled {disabled_count} empty channels",
+            "disabled_count": disabled_count,
+            "total_checked": total_checked
+        })
+        
+    except Exception as e:
+        logger.error(f"Error disabling empty channels: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route('/api/changelog', methods=['GET'])
 def get_changelog():
     """Get recent changelog entries from both automation and stream checker."""
@@ -965,8 +1517,30 @@ def get_changelog():
 
 @app.route('/api/dead-streams', methods=['GET'])
 def get_dead_streams():
-    """Get dead streams statistics and list."""
+    """Get dead streams statistics and list with pagination."""
     try:
+        # Get pagination parameters with better error handling
+        page_param = request.args.get('page', '1')
+        per_page_param = request.args.get('per_page', str(DEAD_STREAMS_DEFAULT_PER_PAGE))
+        
+        try:
+            page = int(page_param)
+        except (ValueError, TypeError) as e:
+            logger.error(f"Invalid page parameter: {page_param} (type: {type(page_param).__name__}) - {str(e)}")
+            return jsonify({"error": f"Invalid page parameter: must be an integer"}), 400
+        
+        try:
+            per_page = int(per_page_param)
+        except (ValueError, TypeError) as e:
+            logger.error(f"Invalid per_page parameter: {per_page_param} (type: {type(per_page_param).__name__}) - {str(e)}")
+            return jsonify({"error": f"Invalid per_page parameter: must be an integer"}), 400
+        
+        # Validate pagination parameters
+        if page < 1:
+            page = 1
+        if per_page < 1 or per_page > DEAD_STREAMS_MAX_PER_PAGE:
+            per_page = DEAD_STREAMS_DEFAULT_PER_PAGE
+        
         checker = get_stream_checker_service()
         if not checker or not checker.dead_streams_tracker:
             return jsonify({"error": "Dead streams tracker not available"}), 503
@@ -986,12 +1560,70 @@ def get_dead_streams():
         # Sort by marked_dead_at (newest first)
         dead_streams_list.sort(key=lambda x: x.get('marked_dead_at', ''), reverse=True)
         
+        # Calculate pagination
+        total_count = len(dead_streams_list)
+        start_index = (page - 1) * per_page
+        end_index = start_index + per_page
+        paginated_streams = dead_streams_list[start_index:end_index]
+        total_pages = (total_count + per_page - 1) // per_page
+        
         return jsonify({
-            "total_dead_streams": len(dead_streams_list),
-            "dead_streams": dead_streams_list
+            "total_dead_streams": total_count,
+            "dead_streams": paginated_streams,
+            "pagination": {
+                "page": page,
+                "per_page": per_page,
+                "total_pages": total_pages,
+                "has_next": end_index < total_count,
+                "has_prev": page > 1
+            }
         })
     except Exception as e:
         logger.error(f"Error getting dead streams: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/dead-streams/revive', methods=['POST'])
+def revive_dead_stream():
+    """Mark a stream as alive (remove from dead streams)."""
+    try:
+        data = request.json
+        stream_url = data.get('stream_url')
+        
+        if not stream_url:
+            return jsonify({"error": "stream_url is required"}), 400
+        
+        checker = get_stream_checker_service()
+        if not checker or not checker.dead_streams_tracker:
+            return jsonify({"error": "Dead streams tracker not available"}), 503
+        
+        success = checker.dead_streams_tracker.mark_as_alive(stream_url)
+        
+        if success:
+            return jsonify({"success": True, "message": "Stream marked as alive"})
+        else:
+            return jsonify({"error": "Failed to mark stream as alive"}), 500
+    except Exception as e:
+        logger.error(f"Error reviving dead stream: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/dead-streams/clear', methods=['POST'])
+def clear_all_dead_streams():
+    """Clear all dead streams from the tracker."""
+    try:
+        checker = get_stream_checker_service()
+        if not checker or not checker.dead_streams_tracker:
+            return jsonify({"error": "Dead streams tracker not available"}), 503
+        
+        dead_count = len(checker.dead_streams_tracker.get_dead_streams())
+        checker.dead_streams_tracker.clear_all_dead_streams()
+        
+        return jsonify({
+            "success": True,
+            "message": f"Cleared {dead_count} dead stream(s)",
+            "cleared_count": dead_count
+        })
+    except Exception as e:
+        logger.error(f"Error clearing dead streams: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/channel-settings', methods=['GET'])
@@ -1321,16 +1953,23 @@ def refresh_playlist():
 
 @app.route('/api/m3u-accounts', methods=['GET'])
 def get_m3u_accounts_endpoint():
-    """Get all M3U accounts from Dispatcharr, filtering out 'custom' account if no custom streams exist and non-active accounts."""
+    """Get all M3U accounts from Dispatcharr, filtering out 'custom' account if no custom streams exist and non-active accounts.
+    
+    Also merges priority_mode settings from local configuration and returns global priority mode.
+    """
     try:
         from api_utils import get_m3u_accounts, has_custom_streams
+        from m3u_priority_config import get_m3u_priority_config
+        
         accounts = get_m3u_accounts()
         
         if accounts is None:
             return jsonify({"error": "Failed to fetch M3U accounts"}), 500
         
         # Filter out non-active accounts per Dispatcharr API spec
-        accounts = [acc for acc in accounts if acc.get('is_active', True)]
+        # Only show enabled/active playlists in the priority UI
+        # Filter explicitly for is_active == True to avoid showing inactive accounts
+        accounts = [acc for acc in accounts if acc.get('is_active') is True]
         
         # Check if there are any custom streams using efficient method
         has_custom = has_custom_streams()
@@ -1345,9 +1984,120 @@ def get_m3u_accounts_endpoint():
                 if acc.get('name', '').lower() != 'custom'
             ]
         
-        return jsonify(accounts)
+        # Get global priority mode
+        priority_config = get_m3u_priority_config()
+        global_priority_mode = priority_config.get_global_priority_mode()
+        
+        # Return accounts with global priority mode
+        return jsonify({
+            "accounts": accounts,
+            "global_priority_mode": global_priority_mode
+        })
     except Exception as e:
         logger.error(f"Error fetching M3U accounts: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/m3u-accounts/<int:account_id>/priority', methods=['PATCH'])
+@log_function_call
+def update_m3u_account_priority(account_id):
+    """Update M3U account priority settings.
+    
+    This endpoint:
+    - Updates the 'priority' field in Dispatcharr via API
+    - Stores the 'priority_mode' field locally (StreamFlow-specific)
+    
+    Request body:
+        {
+            "priority": int (0-100) - optional, updates Dispatcharr
+            "priority_mode": str ("disabled", "same_resolution", "all_streams") - optional, stored locally
+        }
+    """
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+        
+        # Update priority in Dispatcharr if provided
+        if 'priority' in data:
+            priority = data.get('priority', 0)
+            if not isinstance(priority, int) or priority < 0:
+                return jsonify({"error": "Priority must be a non-negative integer"}), 400
+            
+            # Update via Dispatcharr API
+            from api_utils import _get_base_url, _get_auth_headers
+            base_url = _get_base_url()
+            headers = _get_auth_headers()
+            
+            if not base_url or not headers:
+                return jsonify({"error": "Dispatcharr not configured"}), 500
+            
+            # PATCH request to update priority
+            url = f"{base_url}/api/m3u/accounts/{account_id}/"
+            resp = requests.patch(
+                url,
+                headers=headers,
+                json={"priority": priority},
+                timeout=10
+            )
+            
+            if resp.status_code not in [200, 201]:
+                logger.error(f"Failed to update priority in Dispatcharr: {resp.status_code} - {resp.text}")
+                return jsonify({"error": f"Failed to update priority: {resp.text}"}), resp.status_code
+            
+            logger.info(f"Updated priority for M3U account {account_id} to {priority} in Dispatcharr")
+        
+        # Store priority_mode locally (StreamFlow-specific configuration)
+        if 'priority_mode' in data:
+            priority_mode = data.get('priority_mode', 'disabled')
+            from m3u_priority_config import get_m3u_priority_config
+            
+            priority_config = get_m3u_priority_config()
+            if not priority_config.set_priority_mode(account_id, priority_mode):
+                return jsonify({"error": "Failed to save priority_mode"}), 500
+            
+            logger.info(f"Updated priority_mode for M3U account {account_id} to {priority_mode}")
+        
+        # Refresh UDI to get updated data from Dispatcharr
+        if 'priority' in data:
+            udi = get_udi_manager()
+            udi.refresh_m3u_accounts()
+        
+        return jsonify({"message": "M3U account priority updated successfully"})
+        
+    except Exception as e:
+        logger.error(f"Error updating M3U account priority: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/m3u-priority/global-mode', methods=['PUT'])
+@log_function_call
+def update_global_priority_mode():
+    """Update the global priority mode for all M3U accounts.
+    
+    Request body:
+        {
+            "priority_mode": str ("disabled", "same_resolution", "all_streams")
+        }
+    """
+    try:
+        data = request.get_json()
+        
+        if not data or 'priority_mode' not in data:
+            return jsonify({"error": "priority_mode is required"}), 400
+        
+        priority_mode = data.get('priority_mode')
+        
+        from m3u_priority_config import get_m3u_priority_config
+        priority_config = get_m3u_priority_config()
+        
+        if not priority_config.set_global_priority_mode(priority_mode):
+            return jsonify({"error": "Failed to save global priority_mode"}), 500
+        
+        logger.info(f"Updated global priority_mode to {priority_mode}")
+        return jsonify({"message": "Global priority mode updated successfully", "priority_mode": priority_mode})
+        
+    except Exception as e:
+        logger.error(f"Error updating global priority mode: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/setup-wizard', methods=['GET'])
@@ -1393,10 +2143,11 @@ def get_setup_wizard_status():
                 except:
                     pass
         
+        # Patterns are now optional - wizard can be completed without them
         status["setup_complete"] = all([
             status["automation_config_exists"],
             status["regex_config_exists"],
-            status["has_patterns"],
+            # Removed has_patterns requirement - it's now optional
             status["has_channels"],
             status["dispatcharr_connection"]
         ])
@@ -1563,38 +2314,38 @@ def test_dispatcharr_connection():
                     return jsonify({
                         "success": False,
                         "error": "Authentication successful but failed to fetch channels"
-                    })
+                    }), 400
             else:
                 return jsonify({
                     "success": False,
                     "error": "No token received from Dispatcharr"
-                })
+                }), 400
         except requests.exceptions.Timeout:
             return jsonify({
                 "success": False,
                 "error": "Connection timeout. Please check the URL and network connectivity."
-            })
+            }), 400
         except requests.exceptions.ConnectionError:
             return jsonify({
                 "success": False,
                 "error": "Could not connect to Dispatcharr. Please check the URL."
-            })
+            }), 400
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 401:
                 return jsonify({
                     "success": False,
                     "error": "Invalid username or password"
-                })
+                }), 401
             else:
                 return jsonify({
                     "success": False,
                     "error": f"HTTP error: {e.response.status_code}"
-                })
+                }), 400
         except Exception as e:
             return jsonify({
                 "success": False,
                 "error": f"Connection failed: {str(e)}"
-            })
+            }), 400
             
     except Exception as e:
         logger.error(f"Error testing Dispatcharr connection: {e}")

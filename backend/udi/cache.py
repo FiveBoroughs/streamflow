@@ -12,12 +12,17 @@ from logging_config import setup_logging
 logger = setup_logging(__name__)
 
 
+# Valid entity types for caching
+VALID_ENTITY_TYPES = ['channels', 'streams', 'channel_groups', 'logos', 'm3u_accounts', 'channel_profiles']
+
+
 # Default TTL values in seconds
 DEFAULT_CHANNELS_TTL = 300  # 5 minutes
 DEFAULT_STREAMS_TTL = 300  # 5 minutes
 DEFAULT_CHANNEL_GROUPS_TTL = 3600  # 1 hour
 DEFAULT_LOGOS_TTL = 3600  # 1 hour
 DEFAULT_M3U_ACCOUNTS_TTL = 3600  # 1 hour
+DEFAULT_CHANNEL_PROFILES_TTL = 3600  # 1 hour
 
 
 class UDICache:
@@ -29,7 +34,8 @@ class UDICache:
         streams_ttl: int = DEFAULT_STREAMS_TTL,
         channel_groups_ttl: int = DEFAULT_CHANNEL_GROUPS_TTL,
         logos_ttl: int = DEFAULT_LOGOS_TTL,
-        m3u_accounts_ttl: int = DEFAULT_M3U_ACCOUNTS_TTL
+        m3u_accounts_ttl: int = DEFAULT_M3U_ACCOUNTS_TTL,
+        channel_profiles_ttl: int = DEFAULT_CHANNEL_PROFILES_TTL
     ):
         """Initialize cache settings.
         
@@ -39,13 +45,15 @@ class UDICache:
             channel_groups_ttl: TTL in seconds for channel groups cache
             logos_ttl: TTL in seconds for logos cache
             m3u_accounts_ttl: TTL in seconds for M3U accounts cache
+            channel_profiles_ttl: TTL in seconds for channel profiles cache
         """
         self.ttl = {
             'channels': channels_ttl,
             'streams': streams_ttl,
             'channel_groups': channel_groups_ttl,
             'logos': logos_ttl,
-            'm3u_accounts': m3u_accounts_ttl
+            'm3u_accounts': m3u_accounts_ttl,
+            'channel_profiles': channel_profiles_ttl
         }
         
         # Track when each entity type was last refreshed
@@ -54,7 +62,8 @@ class UDICache:
             'streams': None,
             'channel_groups': None,
             'logos': None,
-            'm3u_accounts': None
+            'm3u_accounts': None,
+            'channel_profiles': None
         }
         
         # Track when cache was manually invalidated
@@ -63,14 +72,15 @@ class UDICache:
             'streams': False,
             'channel_groups': False,
             'logos': False,
-            'm3u_accounts': False
+            'm3u_accounts': False,
+            'channel_profiles': False
         }
     
     def mark_refreshed(self, entity_type: str, timestamp: Optional[datetime] = None) -> None:
         """Mark an entity type as having been refreshed.
         
         Args:
-            entity_type: One of 'channels', 'streams', 'channel_groups', 'logos', 'm3u_accounts'
+            entity_type: One of the valid entity types (see VALID_ENTITY_TYPES constant)
             timestamp: When the refresh occurred (defaults to now)
         """
         if entity_type not in self.ttl:
@@ -88,7 +98,7 @@ class UDICache:
         """Invalidate cache for a specific entity type.
         
         Args:
-            entity_type: One of 'channels', 'streams', 'channel_groups', 'logos', 'm3u_accounts'
+            entity_type: One of the valid entity types (see VALID_ENTITY_TYPES constant)
         """
         if entity_type not in self.ttl:
             logger.warning(f"Unknown entity type: {entity_type}")
@@ -107,7 +117,7 @@ class UDICache:
         """Check if cache is valid for an entity type.
         
         Args:
-            entity_type: One of 'channels', 'streams', 'channel_groups', 'logos', 'm3u_accounts'
+            entity_type: One of the valid entity types (see VALID_ENTITY_TYPES constant)
             
         Returns:
             True if cache is valid, False if expired or invalidated
@@ -135,7 +145,7 @@ class UDICache:
         """Check if an entity type needs to be refreshed.
         
         Args:
-            entity_type: One of 'channels', 'streams', 'channel_groups', 'logos', 'm3u_accounts'
+            entity_type: One of the valid entity types (see VALID_ENTITY_TYPES constant)
             
         Returns:
             True if refresh is needed
@@ -146,7 +156,7 @@ class UDICache:
         """Get the last refresh time for an entity type.
         
         Args:
-            entity_type: One of 'channels', 'streams', 'channel_groups', 'logos', 'm3u_accounts'
+            entity_type: One of the valid entity types (see VALID_ENTITY_TYPES constant)
             
         Returns:
             Datetime of last refresh or None
@@ -157,7 +167,7 @@ class UDICache:
         """Get seconds until cache expires for an entity type.
         
         Args:
-            entity_type: One of 'channels', 'streams', 'channel_groups', 'logos', 'm3u_accounts'
+            entity_type: One of the valid entity types (see VALID_ENTITY_TYPES constant)
             
         Returns:
             Seconds until expiry, 0 if already expired, None if never refreshed
@@ -179,7 +189,7 @@ class UDICache:
         """Update the TTL for an entity type.
         
         Args:
-            entity_type: One of 'channels', 'streams', 'channel_groups', 'logos', 'm3u_accounts'
+            entity_type: One of the valid entity types (see VALID_ENTITY_TYPES constant)
             ttl_seconds: New TTL in seconds
         """
         if entity_type not in self.ttl:

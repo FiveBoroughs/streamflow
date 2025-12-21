@@ -127,11 +127,13 @@ class TestSingleChannelCheckIntegration(unittest.TestCase):
         self.assertTrue(mock_refresh.called, "Playlist refresh should have been called")
         mock_refresh.assert_called_with(account_id=1)
         
-        # b) Stream matching was called with force=True (Step 4)
+        # b) Stream matching was called with force=True and skip_check_trigger=True (Step 4)
         mock_automation_instance.discover_and_assign_streams.assert_called_once()
         call_kwargs = mock_automation_instance.discover_and_assign_streams.call_args[1]
         self.assertTrue(call_kwargs.get('force'),
             "Stream matching should be forced")
+        self.assertTrue(call_kwargs.get('skip_check_trigger'),
+            "Stream matching should skip automatic check trigger")
         
         # c) Force check was performed (Step 5)
         service._check_channel.assert_called_once_with(16, skip_batch_changelog=True)

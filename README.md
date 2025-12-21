@@ -28,6 +28,7 @@ See [Deployment Guide](docs/DEPLOYMENT.md) for detailed instructions.
 - **5 Pipeline Modes**: Choose the automation level that fits your needs (from continuous checking to scheduled-only)
 - **Parallel Stream Checking**: Thread-based parallel stream analysis with configurable worker pool
 - **Per-Account Stream Limits**: Intelligent concurrent stream limiting respects M3U provider limits while maximizing parallelism
+- **Channel Profile Management**: Select specific Dispatcharr profiles, manage dead streams, and use snapshots for automatic re-enabling
 - **Automated M3U Playlist Management**: Refresh playlists every 5 minutes (configurable)
 - **Stream Quality Checking**: Analyze streams for bitrate, resolution, FPS, codec quality, and errors
 - **Automatic Stream Reordering**: Best quality streams moved to the top
@@ -56,6 +57,7 @@ All configuration stored in JSON files in `/app/data` (Docker volume):
 - `automation_config.json` - Automation settings (intervals, features)
 - `stream_checker_config.json` - Pipeline mode, scheduling, and stream checking parameters
 - `channel_regex_config.json` - Regex patterns for stream assignment
+- `profile_config.json` - Channel profile configuration and snapshots
 - `channel_updates.json` - Channel update tracking
 - `changelog.json` - Activity history
 
@@ -90,6 +92,7 @@ docs/
 - [Deployment Guide](docs/DEPLOYMENT.md) - Installation and deployment instructions
 - [API Documentation](docs/API.md) - REST API endpoints and usage
 - [Features](docs/FEATURES.md) - Detailed feature descriptions
+- [Channel Profiles](docs/CHANNEL_PROFILES_FEATURE.md) - Profile management and dead stream handling
 - [Concurrent Stream Limits](docs/CONCURRENT_STREAM_LIMITS.md) - Per-account stream limiting
 - [Pipeline System](docs/PIPELINE_SYSTEM.md) - Automation pipeline modes
 - [Debug Mode Guide](docs/DEBUG_MODE.md) - Troubleshooting with enhanced logging
