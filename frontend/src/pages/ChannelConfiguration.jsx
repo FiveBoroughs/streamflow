@@ -772,7 +772,7 @@ export default function ChannelConfiguration() {
           
           // Filter to only include channels that are enabled in the profile
           const enabledChannelIds = new Set()
-          if (profileData && profileData.channels) {
+          if (profileData && profileData.channels && Array.isArray(profileData.channels)) {
             for (const ch of profileData.channels) {
               if (ch.enabled && ch.channel_id) {
                 enabledChannelIds.add(ch.channel_id)
@@ -782,10 +782,20 @@ export default function ChannelConfiguration() {
           
           channelsToLoad = allChannels.filter(ch => enabledChannelIds.has(ch.id))
           
-          toast({
-            title: "Profile Filter Active",
-            description: `Showing ${channelsToLoad.length} enabled channels from profile "${profileConfig.selected_profile_name}"`,
-          })
+          // If no channels are found, it might be that profile channel data is not cached
+          // Show a message prompting user to refresh profiles
+          if (channelsToLoad.length === 0 && allChannels.length > 0) {
+            toast({
+              title: "No Channels in Profile",
+              description: `No enabled channels found in profile "${profileConfig.selected_profile_name}". Try refreshing profiles in the Profile Management section.`,
+              variant: "default"
+            })
+          } else {
+            toast({
+              title: "Profile Filter Active",
+              description: `Showing ${channelsToLoad.length} enabled channels from profile "${profileConfig.selected_profile_name}"`,
+            })
+          }
         } catch (err) {
           console.error('Failed to load profile channels:', err)
           toast({
