@@ -27,6 +27,7 @@ from scheduling_service import get_scheduling_service
 from channel_settings_manager import get_channel_settings_manager
 from dispatcharr_config import get_dispatcharr_config
 from channel_order_manager import get_channel_order_manager
+from match_profiles_manager import get_match_profiles_manager
 
 # Import UDI for direct data access
 from udi import get_udi_manager
@@ -2616,7 +2617,7 @@ def list_match_profiles():
         JSON array of match profiles
     """
     try:
-        from match_profiles_manager import get_match_profiles_manager
+
         manager = get_match_profiles_manager()
         profiles = manager.list_profiles()
         return jsonify([p.to_dict() for p in profiles]), 200
@@ -2637,7 +2638,7 @@ def get_match_profile(profile_id):
         JSON object with profile data
     """
     try:
-        from match_profiles_manager import get_match_profiles_manager
+
         manager = get_match_profiles_manager()
         profile = manager.get_profile(profile_id)
         
@@ -2675,7 +2676,7 @@ def create_match_profile():
         JSON object with created profile
     """
     try:
-        from match_profiles_manager import get_match_profiles_manager
+
         data = request.get_json()
         
         if not data or 'name' not in data:
@@ -2714,7 +2715,7 @@ def update_match_profile(profile_id):
         JSON object with updated profile
     """
     try:
-        from match_profiles_manager import get_match_profiles_manager
+
         data = request.get_json()
         
         if not data:
@@ -2750,7 +2751,7 @@ def delete_match_profile(profile_id):
         JSON with success message
     """
     try:
-        from match_profiles_manager import get_match_profiles_manager
+
         manager = get_match_profiles_manager()
         
         if not manager.delete_profile(profile_id):
@@ -2784,7 +2785,7 @@ def test_match_profile(profile_id):
         JSON with test results
     """
     try:
-        from match_profiles_manager import get_match_profiles_manager
+
         manager = get_match_profiles_manager()
         
         profile = manager.get_profile(profile_id)

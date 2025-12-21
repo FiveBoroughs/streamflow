@@ -413,7 +413,7 @@ class UDIStorage:
             profile_data: Updated profile data
             
         Returns:
-            True if successful
+            True if successful, False if profile not found
         """
         with self._match_profiles_lock:
             profiles = self._load_json(self.match_profiles_file) or []
@@ -425,7 +425,8 @@ class UDIStorage:
                     break
             
             if not updated:
-                profiles.append(profile_data)
+                logger.warning(f"Match profile {profile_id} not found for update")
+                return False
             
             return self._save_json(self.match_profiles_file, profiles)
     

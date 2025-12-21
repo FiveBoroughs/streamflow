@@ -11,6 +11,7 @@ Supports:
 
 import re
 import json
+import threading
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 from datetime import datetime
@@ -301,13 +302,14 @@ class MatchProfilesManager:
         }
 
 
-# Global instance
+# Global instance and lock for thread-safe singleton
 _match_profiles_manager = None
+_manager_lock = threading.Lock()
 
 
 def get_match_profiles_manager(storage: Optional[UDIStorage] = None) -> MatchProfilesManager:
     """
-    Get the global MatchProfilesManager instance.
+    Get the global MatchProfilesManager instance (thread-safe singleton).
     
     Args:
         storage: Optional UDIStorage instance
@@ -317,5 +319,8 @@ def get_match_profiles_manager(storage: Optional[UDIStorage] = None) -> MatchPro
     """
     global _match_profiles_manager
     if _match_profiles_manager is None:
-        _match_profiles_manager = MatchProfilesManager(storage)
+        with _manager_lock:
+            # Double-check locking pattern
+            if _match_profiles_manager is None:
+                _match_profiles_manager = MatchProfilesManager(storage)
     return _match_profiles_manager
