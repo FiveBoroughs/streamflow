@@ -2603,6 +2603,219 @@ def trigger_epg_refresh():
         return jsonify({"error": str(e)}), 500
 
 
+# ============================================================================
+# Match Profiles API Endpoints
+# ============================================================================
+
+@app.route('/api/match-profiles', methods=['GET'])
+@log_function_call
+def list_match_profiles():
+    """Get all match profiles.
+    
+    Returns:
+        JSON array of match profiles
+    """
+    try:
+        from match_profiles_manager import get_match_profiles_manager
+        manager = get_match_profiles_manager()
+        profiles = manager.list_profiles()
+        return jsonify([p.to_dict() for p in profiles]), 200
+    except Exception as e:
+        logger.error(f"Error listing match profiles: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/match-profiles/<int:profile_id>', methods=['GET'])
+@log_function_call
+def get_match_profile(profile_id):
+    """Get a specific match profile.
+    
+    Args:
+        profile_id: The profile ID
+        
+    Returns:
+        JSON object with profile data
+    """
+    try:
+        from match_profiles_manager import get_match_profiles_manager
+        manager = get_match_profiles_manager()
+        profile = manager.get_profile(profile_id)
+        
+        if not profile:
+            return jsonify({"error": "Profile not found"}), 404
+        
+        return jsonify(profile.to_dict()), 200
+    except Exception as e:
+        logger.error(f"Error getting match profile {profile_id}: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/match-profiles', methods=['POST'])
+@log_function_call
+def create_match_profile():
+    """Create a new match profile.
+    
+    Request body:
+        {
+            "name": "Profile Name",
+            "description": "Optional description",
+            "steps": [
+                {
+                    "id": "step1",
+                    "type": "regex_name",
+                    "pattern": ".*ESPN.*",
+                    "variables": {},
+                    "enabled": true,
+                    "order": 0
+                }
+            ]
+        }
+        
+    Returns:
+        JSON object with created profile
+    """
+    try:
+        from match_profiles_manager import get_match_profiles_manager
+        data = request.get_json()
+        
+        if not data or 'name' not in data:
+            return jsonify({"error": "Missing required field: name"}), 400
+        
+        manager = get_match_profiles_manager()
+        profile = manager.create_profile(
+            name=data['name'],
+            description=data.get('description'),
+            steps=data.get('steps', [])
+        )
+        
+        return jsonify(profile.to_dict()), 201
+    except Exception as e:
+        logger.error(f"Error creating match profile: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/match-profiles/<int:profile_id>', methods=['PUT', 'PATCH'])
+@log_function_call
+def update_match_profile(profile_id):
+    """Update a match profile.
+    
+    Args:
+        profile_id: The profile ID
+        
+    Request body:
+        {
+            "name": "Updated Name",
+            "description": "Updated description",
+            "steps": [...],
+            "enabled": true
+        }
+        
+    Returns:
+        JSON object with updated profile
+    """
+    try:
+        from match_profiles_manager import get_match_profiles_manager
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+        
+        manager = get_match_profiles_manager()
+        profile = manager.update_profile(
+            profile_id=profile_id,
+            name=data.get('name'),
+            description=data.get('description'),
+            steps=data.get('steps'),
+            enabled=data.get('enabled')
+        )
+        
+        if not profile:
+            return jsonify({"error": "Profile not found"}), 404
+        
+        return jsonify(profile.to_dict()), 200
+    except Exception as e:
+        logger.error(f"Error updating match profile {profile_id}: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/match-profiles/<int:profile_id>', methods=['DELETE'])
+@log_function_call
+def delete_match_profile(profile_id):
+    """Delete a match profile.
+    
+    Args:
+        profile_id: The profile ID
+        
+    Returns:
+        JSON with success message
+    """
+    try:
+        from match_profiles_manager import get_match_profiles_manager
+        manager = get_match_profiles_manager()
+        
+        if not manager.delete_profile(profile_id):
+            return jsonify({"error": "Profile not found"}), 404
+        
+        return jsonify({"message": "Profile deleted successfully"}), 200
+    except Exception as e:
+        logger.error(f"Error deleting match profile {profile_id}: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/match-profiles/<int:profile_id>/test', methods=['POST'])
+@log_function_call
+def test_match_profile(profile_id):
+    """Test a match profile against stream data.
+    
+    Args:
+        profile_id: The profile ID
+        
+    Request body:
+        {
+            "stream_name": "ESPN HD",
+            "stream_url": "http://example.com/stream",
+            "stream_tvg_id": "ESPN.us",
+            "channel_name": "Sports",
+            "channel_group": "Sports Channels",
+            "m3u_account_name": "Primary Provider"
+        }
+        
+    Returns:
+        JSON with test results
+    """
+    try:
+        from match_profiles_manager import get_match_profiles_manager
+        manager = get_match_profiles_manager()
+        
+        profile = manager.get_profile(profile_id)
+        if not profile:
+            return jsonify({"error": "Profile not found"}), 404
+        
+        data = request.get_json() or {}
+        
+        # Apply variables if provided
+        if any(k in data for k in ['channel_name', 'channel_group', 'm3u_account_name']):
+            profile = manager.apply_profile_to_variables(
+                profile,
+                channel_name=data.get('channel_name', ''),
+                channel_group=data.get('channel_group', ''),
+                m3u_account_name=data.get('m3u_account_name', '')
+            )
+        
+        # Test against stream data
+        result = manager.test_profile_against_stream(
+            profile,
+            stream_name=data.get('stream_name', ''),
+            stream_url=data.get('stream_url', ''),
+            stream_tvg_id=data.get('stream_tvg_id', '')
+        )
+        
+        return jsonify(result), 200
+    except Exception as e:
+        logger.error(f"Error testing match profile {profile_id}: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 # Serve React app for all frontend routes (catch-all - must be last!)
 @app.route('/<path:path>')
 def serve_frontend(path):
