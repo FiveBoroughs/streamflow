@@ -771,11 +771,14 @@ export default function ChannelConfiguration() {
           const allChannels = allChannelsResponse.data || []
           
           // Filter to only include channels that are enabled in the profile
+          // According to Dispatcharr API, profileData.channels is a list of channel IDs (integers)
+          // Being in the profile means the channel is enabled
           const enabledChannelIds = new Set()
           if (profileData && profileData.channels && Array.isArray(profileData.channels)) {
-            for (const ch of profileData.channels) {
-              if (ch.enabled && ch.channel_id) {
-                enabledChannelIds.add(ch.channel_id)
+            for (const channelId of profileData.channels) {
+              // Channels are just integers (channel IDs)
+              if (typeof channelId === 'number') {
+                enabledChannelIds.add(channelId)
               }
             }
           }

@@ -1271,13 +1271,18 @@ def create_profile_snapshot(profile_id):
         profile_channels_data = udi.get_profile_channels(profile_id)
         
         if profile_channels_data:
-            # Use cached data - filter for enabled channels only
+            # Use cached data
+            # The 'channels' field is a list of channel IDs (integers)
+            # Being in the profile means the channel is enabled
             channels = profile_channels_data.get('channels', [])
-            channel_ids = [
-                ch.get('channel_id') 
-                for ch in channels 
-                if ch.get('enabled', False) and ch.get('channel_id')
-            ]
+            
+            # Ensure channels is a list and contains integers
+            if isinstance(channels, list):
+                channel_ids = [ch for ch in channels if isinstance(ch, int)]
+            else:
+                logger.warning(f"Unexpected channels data type: {type(channels)}")
+                channel_ids = []
+            
             logger.info(f"Creating snapshot with {len(channel_ids)} enabled channels from cache")
         else:
             # Fall back to direct API call if not in cache
@@ -1295,6 +1300,7 @@ def create_profile_snapshot(profile_id):
             profile_data = resp.json()
             
             # Parse the channels field
+            # According to swagger.json, this is a JSON string containing a list of channel IDs
             channels_data = profile_data.get('channels', '')
             
             # Try to parse if it's a JSON string
@@ -1307,12 +1313,14 @@ def create_profile_snapshot(profile_id):
             elif not isinstance(channels_data, list):
                 channels_data = []
             
-            # Filter for enabled channels only
-            channel_ids = [
-                ch.get('channel_id') 
-                for ch in channels_data 
-                if ch.get('enabled', False) and ch.get('channel_id')
-            ]
+            # channels_data is a list of channel IDs (integers)
+            # Being in the profile means the channel is enabled
+            if isinstance(channels_data, list):
+                channel_ids = [ch for ch in channels_data if isinstance(ch, int)]
+            else:
+                logger.warning(f"Unexpected channels_data type: {type(channels_data)}")
+                channel_ids = []
+            
             logger.info(f"Creating snapshot with {len(channel_ids)} enabled channels from API")
         
         # Create snapshot
