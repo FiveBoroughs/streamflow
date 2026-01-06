@@ -91,44 +91,35 @@ class TestTokenValidation(unittest.TestCase):
         result = _validate_token('some_token')
         self.assertFalse(result)
     
-    @patch('api_utils._validate_token')
     @patch('api_utils.login')
     @patch('api_utils.os.getenv')
-    def test_get_auth_headers_uses_valid_token(self, mock_getenv, mock_login, mock_validate):
-        """Test that _get_auth_headers uses existing valid token without logging in."""
+    def test_get_auth_headers_uses_existing_token(self, mock_getenv, mock_login):
+        """Test that _get_auth_headers uses existing token without validating or logging in."""
         from api_utils import _get_auth_headers
         
-        # Mock that we have a valid token
-        mock_getenv.return_value = 'valid_token_123'
-        mock_validate.return_value = True
+        # Mock that we have a token
+        mock_getenv.return_value = 'existing_token_123'
         
         headers = _get_auth_headers()
         
-        # Verify token is used
-        self.assertEqual(headers['Authorization'], 'Bearer valid_token_123')
+        # Verify token is used directly
+        self.assertEqual(headers['Authorization'], 'Bearer existing_token_123')
         
-        # Verify login was NOT called
+        # Verify login was NOT called (token validation only happens on 401)
         mock_login.assert_not_called()
-        
-        # Verify validate was called once
-        mock_validate.assert_called_once_with('valid_token_123')
     
-    @patch('api_utils._validate_token')
     @patch('api_utils.login')
     @patch('api_utils.load_dotenv')
     @patch('api_utils.env_path')
     @patch('api_utils.os.getenv')
-    def test_get_auth_headers_refreshes_invalid_token(self, mock_getenv, mock_env_path, 
-                                                       mock_load_dotenv, mock_login, mock_validate):
-        """Test that _get_auth_headers logs in when token is invalid."""
+    def test_get_auth_headers_logs_in_when_no_token(self, mock_getenv, mock_env_path, 
+                                                       mock_load_dotenv, mock_login):
+        """Test that _get_auth_headers logs in only when no token exists."""
         from api_utils import _get_auth_headers
         
-        # Mock environment: first call has invalid token, second call has new token
-        token_calls = ['invalid_token_old', 'new_valid_token']
+        # Mock environment: first call has no token, second call (after login) has new token
+        token_calls = [None, 'new_valid_token']
         mock_getenv.side_effect = token_calls
-        
-        # Mock validation: first call returns False (invalid), validate is not called again
-        mock_validate.return_value = False
         
         # Mock successful login
         mock_login.return_value = True
@@ -138,14 +129,144 @@ class TestTokenValidation(unittest.TestCase):
         
         headers = _get_auth_headers()
         
-        # Verify login WAS called
+        # Verify login WAS called because token was missing
         mock_login.assert_called_once()
-        
-        # Verify validation was called once for the invalid token
-        mock_validate.assert_called_once_with('invalid_token_old')
         
         # Verify new token is used
         self.assertEqual(headers['Authorization'], 'Bearer new_valid_token')
+
+
+class TestTokenValidationCaching(unittest.TestCase):
+    """Test token validation caching functionality to reduce API calls."""
+    
+    def setUp(self):
+        """Set up test fixtures."""
+        # Clear the token validation cache before each test
+        import api_utils
+        api_utils._token_validation_cache.clear()
+        
+    def tearDown(self):
+        """Clean up after tests."""
+        # Clear the token validation cache after each test
+        import api_utils
+        api_utils._token_validation_cache.clear()
+    
+    @patch('api_utils.requests.get')
+    @patch('api_utils.os.getenv')
+    def test_token_validation_cache_prevents_duplicate_api_calls(self, mock_getenv, mock_get):
+        """Test that cached token validation prevents redundant API calls."""
+        from api_utils import _validate_token, _token_validation_cache
+        
+        # Mock environment variables
+        mock_getenv.side_effect = lambda key: {
+            'DISPATCHARR_BASE_URL': 'http://test.com',
+            'TOKEN_VALIDATION_TTL': '60'
+        }.get(key)
+        
+        # Mock successful API response
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_get.return_value = mock_response
+        
+        # First call should make an API request
+        result1 = _validate_token('valid_token_123')
+        self.assertTrue(result1)
+        self.assertEqual(mock_get.call_count, 1)
+        
+        # Second call should use cache (no additional API request)
+        result2 = _validate_token('valid_token_123')
+        self.assertTrue(result2)
+        self.assertEqual(mock_get.call_count, 1)  # Still only 1 call
+        
+        # Third call should also use cache
+        result3 = _validate_token('valid_token_123')
+        self.assertTrue(result3)
+        self.assertEqual(mock_get.call_count, 1)  # Still only 1 call
+    
+    @patch('api_utils.time.time')
+    @patch('api_utils.requests.get')
+    @patch('api_utils.os.getenv')
+    def test_token_validation_cache_expires(self, mock_getenv, mock_get, mock_time):
+        """Test that token validation cache expires after TTL."""
+        from api_utils import _validate_token, _token_validation_cache, TOKEN_VALIDATION_TTL
+        
+        # Mock environment variables
+        mock_getenv.side_effect = lambda key: {
+            'DISPATCHARR_BASE_URL': 'http://test.com',
+            'TOKEN_VALIDATION_TTL': '60'
+        }.get(key)
+        
+        # Mock successful API response
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_get.return_value = mock_response
+        
+        # First call at time 0
+        mock_time.return_value = 0
+        result1 = _validate_token('valid_token_123')
+        self.assertTrue(result1)
+        self.assertEqual(mock_get.call_count, 1)
+        
+        # Second call at time 30 (within TTL) - should use cache
+        mock_time.return_value = 30
+        result2 = _validate_token('valid_token_123')
+        self.assertTrue(result2)
+        self.assertEqual(mock_get.call_count, 1)
+        
+        # Third call at time 61 (after TTL) - should make new API call
+        mock_time.return_value = 61
+        result3 = _validate_token('valid_token_123')
+        self.assertTrue(result3)
+        self.assertEqual(mock_get.call_count, 2)
+    
+    @patch('api_utils.time.time')
+    @patch('api_utils.requests.get')
+    @patch('api_utils.os.getenv')
+    def test_failed_validation_clears_cache(self, mock_getenv, mock_get, mock_time):
+        """Test that failed validation clears the cache."""
+        from api_utils import _validate_token, _token_validation_cache
+        
+        # Mock environment variables
+        mock_getenv.side_effect = lambda key: {
+            'DISPATCHARR_BASE_URL': 'http://test.com',
+            'TOKEN_VALIDATION_TTL': '60'
+        }.get(key)
+        
+        # First call at time 0 - successful
+        mock_time.return_value = 0
+        mock_response_success = Mock()
+        mock_response_success.status_code = 200
+        mock_get.return_value = mock_response_success
+        
+        result1 = _validate_token('valid_token_123')
+        self.assertTrue(result1)
+        self.assertIn('valid_token_123', _token_validation_cache)
+        
+        # Second call at time 61 (after TTL) - failed (401)
+        mock_time.return_value = 61
+        mock_response_fail = Mock()
+        mock_response_fail.status_code = 401
+        mock_get.return_value = mock_response_fail
+        
+        result2 = _validate_token('valid_token_123')
+        self.assertFalse(result2)
+        # Cache should be cleared on failure
+        self.assertNotIn('valid_token_123', _token_validation_cache)
+    
+    def test_clear_token_validation_cache(self):
+        """Test that _clear_token_validation_cache clears all cached tokens."""
+        from api_utils import _clear_token_validation_cache, _token_validation_cache
+        
+        # Add some tokens to cache
+        _token_validation_cache['token1'] = 100
+        _token_validation_cache['token2'] = 200
+        
+        self.assertEqual(len(_token_validation_cache), 2)
+        
+        # Clear cache
+        _clear_token_validation_cache()
+        
+        self.assertEqual(len(_token_validation_cache), 0)
 
 
 class TestProgressTracking(unittest.TestCase):

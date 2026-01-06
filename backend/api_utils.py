@@ -3,16 +3,34 @@ API utilities for interacting with the Dispatcharr API.
 
 This module provides authentication, request handling, and helper functions
 for communicating with the Dispatcharr API endpoints.
+
+Data access is handled through the Universal Data Index (UDI) system,
+which serves as a single source of truth for all Dispatcharr data.
+Write operations (PATCH, POST, DELETE) still use direct API calls.
 """
 
 import os
 import json
-import logging
 import sys
+import time
 from typing import Dict, List, Optional, Any, Tuple
 import requests
 from pathlib import Path
 from dotenv import load_dotenv, set_key
+
+from logging_config import (
+    setup_logging, log_function_call, log_function_return,
+    log_exception, log_api_request, log_api_response
+)
+
+# Import UDI Manager for data access
+from udi import get_udi_manager
+
+# Import Dispatcharr configuration manager
+from dispatcharr_config import get_dispatcharr_config
+
+# Setup logging for this module
+logger = setup_logging(__name__)
 
 env_path = Path('.') / '.env'
 
@@ -20,20 +38,35 @@ env_path = Path('.') / '.env'
 # This allows fallback to .env file while supporting env vars
 if env_path.exists():
     load_dotenv(dotenv_path=env_path)
+    logger.debug(f"Loaded environment from {env_path}")
+
+# Token validation cache - stores last validated token and timestamp
+# This reduces redundant API calls for token validation
+_token_validation_cache: Dict[str, float] = {}
+# Default TTL for token validation cache (in seconds)
+# Token validation result is cached for this duration to reduce API calls
+TOKEN_VALIDATION_TTL = int(os.getenv("TOKEN_VALIDATION_TTL", "60"))
 
 
 def _get_base_url() -> Optional[str]:
     """
-    Get the base URL from environment variables.
+    Get the base URL from configuration.
+    
+    Priority: Environment variable > Config file
     
     Returns:
         Optional[str]: The Dispatcharr base URL or None if not set.
     """
-    return os.getenv("DISPATCHARR_BASE_URL")
+    config = get_dispatcharr_config()
+    return config.get_base_url()
 
 def _validate_token(token: str) -> bool:
     """
     Validate if a token is still valid by making a test API request.
+    
+    Uses a cache to avoid redundant API calls for token validation.
+    The cache TTL is controlled by TOKEN_VALIDATION_TTL environment variable
+    (default: 60 seconds).
     
     Args:
         token: The authentication token to validate
@@ -41,11 +74,29 @@ def _validate_token(token: str) -> bool:
     Returns:
         bool: True if token is valid, False otherwise
     """
+    global _token_validation_cache
+    
+    log_function_call(logger, "_validate_token", token="<redacted>")
     base_url = _get_base_url()
     if not base_url or not token:
+        logger.debug("Validation failed: missing base_url or token")
         return False
     
+    # Check cache first - if token was recently validated, skip API call
+    cache_check_start = time.time()
+    cached_time = _token_validation_cache.get(token)
+    if cached_time is not None:
+        age = cache_check_start - cached_time
+        if age < TOKEN_VALIDATION_TTL:
+            cache_elapsed = time.time() - cache_check_start
+            logger.debug(f"Token validation cached (age: {age:.1f}s, TTL: {TOKEN_VALIDATION_TTL}s)")
+            log_function_return(logger, "_validate_token", "cached", cache_elapsed)
+            return True
+        else:
+            logger.debug(f"Token validation cache expired (age: {age:.1f}s, TTL: {TOKEN_VALIDATION_TTL}s)")
+    
     try:
+        start_time = time.time()
         # Make a lightweight API call to validate token
         test_url = f"{base_url}/api/channels/channels/"
         headers = {
@@ -53,70 +104,115 @@ def _validate_token(token: str) -> bool:
             "Accept": "application/json",
             "Content-Type": "application/json"
         }
+        log_api_request(logger, "GET", test_url, params={'page_size': 1})
         resp = requests.get(test_url, headers=headers, timeout=5, params={'page_size': 1})
-        return resp.status_code == 200
-    except Exception:
+        elapsed = time.time() - start_time
+        log_api_response(logger, "GET", test_url, resp.status_code, elapsed)
+        
+        result = resp.status_code == 200
+        
+        # Cache successful validation using start_time as the reference point
+        if result:
+            _token_validation_cache[token] = start_time
+            logger.debug(f"Token validation successful, cached for {TOKEN_VALIDATION_TTL}s")
+        else:
+            # Clear cache on failed validation
+            _token_validation_cache.pop(token, None)
+        
+        log_function_return(logger, "_validate_token", result, elapsed)
+        return result
+    except Exception as e:
+        # Clear cache on error
+        _token_validation_cache.pop(token, None)
+        log_exception(logger, e, "_validate_token")
         return False
+
+
+def _clear_token_validation_cache() -> None:
+    """
+    Clear the token validation cache.
+    
+    This should be called when the token changes (e.g., after login or token refresh)
+    to ensure the new token is properly validated.
+    """
+    global _token_validation_cache
+    _token_validation_cache.clear()
+    logger.debug("Token validation cache cleared")
+
 
 def login() -> bool:
     """
     Log into Dispatcharr and save the token to .env file.
     
-    Authenticates with Dispatcharr using credentials from environment
-    variables. Stores the received token in .env file if it exists,
-    otherwise stores it in memory.
+    Authenticates with Dispatcharr using credentials from configuration
+    (JSON file or environment variables). Stores the received token in 
+    .env file if it exists, otherwise stores it in memory.
     
     Returns:
         bool: True if login successful, False otherwise.
     """
-    username = os.getenv("DISPATCHARR_USER")
-    password = os.getenv("DISPATCHARR_PASS")
-    base_url = _get_base_url()
+    log_function_call(logger, "login")
+    config = get_dispatcharr_config()
+    username = config.get_username()
+    password = config.get_password()
+    base_url = config.get_base_url()
 
     if not all([username, password, base_url]):
-        logging.error(
+        logger.error(
             "DISPATCHARR_USER, DISPATCHARR_PASS, and "
-            "DISPATCHARR_BASE_URL must be set in the .env file."
+            "DISPATCHARR_BASE_URL must be configured."
         )
         return False
 
     login_url = f"{base_url}/api/accounts/token/"
-    logging.info(f"Attempting to log in to {base_url}...")
+    logger.info(f"Attempting to log in to {base_url}...")
 
     try:
+        start_time = time.time()
+        log_api_request(logger, "POST", login_url, json={"username": username, "password": "***"})
         resp = requests.post(
             login_url,
             headers={"Content-Type": "application/json"},
-            json={"username": username, "password": password}
+            json={"username": username, "password": password},
+            timeout=10
         )
+        elapsed = time.time() - start_time
+        log_api_response(logger, "POST", login_url, resp.status_code, elapsed)
+        
         resp.raise_for_status()
         data = resp.json()
         token = data.get("access") or data.get("token")
 
         if token:
+            logger.debug(f"Received token (length: {len(token)})")
+            # Clear old token validation cache before saving new token
+            _clear_token_validation_cache()
             # Save token to .env if exists, else store in memory
             if env_path.exists():
                 set_key(env_path, "DISPATCHARR_TOKEN", token)
-                logging.info("Login successful. Token saved.")
+                logger.info("Login successful. Token saved.")
             else:
                 # Token needs refresh on restart when no .env file
                 os.environ["DISPATCHARR_TOKEN"] = token
-                logging.info(
+                logger.info(
                     "Login successful. Token stored in memory."
                 )
+            log_function_return(logger, "login", True, elapsed)
             return True
         else:
-            logging.error(
+            logger.error(
                 "Login failed: No access token found in response."
             )
+            logger.debug(f"Response data: {data}")
             return False
     except requests.exceptions.RequestException as e:
-        logging.error(f"Login failed: {e}")
+        log_exception(logger, e, "login")
         if hasattr(e, 'response') and e.response is not None:
-            logging.error(f"Response content: {e.response.text}")
+            logger.error(f"Response content: {e.response.text}")
         return False
-    except json.JSONDecodeError:
-        logging.error(
+    except json.JSONDecodeError as e:
+        log_exception(logger, e, "login - JSON decode")
+        logger.error(
             "Login failed: Invalid JSON response from server."
         )
         return False
@@ -126,7 +222,9 @@ def _get_auth_headers() -> Dict[str, str]:
     Get authorization headers for API requests.
     
     Retrieves the authentication token from environment variables.
-    If no token is found or token is invalid, attempts to log in first.
+    If no token is found, attempts to log in first. Token validation
+    is not done proactively - invalid tokens are handled by the 401
+    retry logic in API request functions.
     
     Returns:
         Dict[str, str]: Dictionary containing authorization headers.
@@ -134,39 +232,40 @@ def _get_auth_headers() -> Dict[str, str]:
     Raises:
         SystemExit: If login fails or token cannot be retrieved.
     """
+    log_function_call(logger, "_get_auth_headers")
     current_token = os.getenv("DISPATCHARR_TOKEN")
     
-    # If token exists, validate it before using
-    if current_token and _validate_token(current_token):
-        logging.debug("Using existing valid token")
+    # If token exists, use it directly (validation happens on 401 response)
+    if current_token:
+        logger.debug("Using existing token")
+        log_function_return(logger, "_get_auth_headers", "<headers with token>")
         return {
             "Authorization": f"Bearer {current_token}",
             "Accept": "application/json",
             "Content-Type": "application/json"
         }
     
-    # Token is missing or invalid, need to login
-    if current_token:
-        logging.info("Existing token is invalid. Attempting to log in...")
-    else:
-        logging.info("DISPATCHARR_TOKEN not found. Attempting to log in...")
+    # Token is missing, need to login
+    logger.info("DISPATCHARR_TOKEN not found. Attempting to log in...")
     
     if login():
         # Reload from .env file only if it exists
         if env_path.exists():
             load_dotenv(dotenv_path=env_path, override=True)
+            logger.debug("Reloaded environment variables after login")
         current_token = os.getenv("DISPATCHARR_TOKEN")
         if not current_token:
-            logging.error(
+            logger.error(
                 "Login succeeded, but token not found. Aborting."
             )
             sys.exit(1)
     else:
-        logging.error(
+        logger.error(
             "Login failed. Check credentials. Aborting."
         )
         sys.exit(1)
 
+    log_function_return(logger, "_get_auth_headers", "<headers with token>")
     return {
         "Authorization": f"Bearer {current_token}",
         "Accept": "application/json",
@@ -183,15 +282,15 @@ def _refresh_token() -> bool:
     Returns:
         bool: True if refresh successful, False otherwise.
     """
-    logging.info("Token expired or invalid. Attempting to refresh...")
+    logger.info("Token expired or invalid. Attempting to refresh...")
     if login():
         # Reload from .env file only if it exists
         if env_path.exists():
             load_dotenv(dotenv_path=env_path, override=True)
-        logging.info("Token refreshed successfully.")
+        logger.info("Token refreshed successfully.")
         return True
     else:
-        logging.error("Token refresh failed.")
+        logger.error("Token refresh failed.")
         return False
 
 def fetch_data_from_url(url: str) -> Optional[Any]:
@@ -208,24 +307,50 @@ def fetch_data_from_url(url: str) -> Optional[Any]:
     Returns:
         Optional[Any]: JSON response data if successful, None otherwise.
     """
+    log_function_call(logger, "fetch_data_from_url", url=url[:80] if len(url) > 80 else url)
+    start_time = time.time()
+    
     try:
-        resp = requests.get(url, headers=_get_auth_headers())
+        log_api_request(logger, "GET", url)
+        resp = requests.get(url, headers=_get_auth_headers(), timeout=30)
+        elapsed = time.time() - start_time
+        log_api_response(logger, "GET", url, resp.status_code, elapsed)
+        
         resp.raise_for_status()
-        return resp.json()
+        data = resp.json()
+        
+        # Log summary of response data
+        if isinstance(data, dict):
+            logger.debug(f"Response contains dict with {len(data)} keys")
+        elif isinstance(data, list):
+            logger.debug(f"Response contains list with {len(data)} items")
+        
+        log_function_return(logger, "fetch_data_from_url", f"<data: {type(data).__name__}>", elapsed)
+        return data
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 401:
+            logger.debug("Got 401 response, attempting token refresh")
             if _refresh_token():
-                logging.info("Retrying request with new token...")
-                resp = requests.get(url, headers=_get_auth_headers())
+                logger.info("Retrying request with new token...")
+                retry_start = time.time()
+                log_api_request(logger, "GET", url)
+                resp = requests.get(url, headers=_get_auth_headers(), timeout=30)
+                retry_elapsed = time.time() - retry_start
+                log_api_response(logger, "GET", url, resp.status_code, retry_elapsed)
+                
                 resp.raise_for_status()
-                return resp.json()
+                data = resp.json()
+                total_elapsed = time.time() - start_time
+                log_function_return(logger, "fetch_data_from_url", f"<data: {type(data).__name__}>", total_elapsed)
+                return data
             else:
+                logger.error("Token refresh failed")
                 return None
         else:
-            logging.error(f"Error fetching data from {url}: {e}")
+            log_exception(logger, e, f"fetch_data_from_url ({url})")
             return None
     except requests.exceptions.RequestException as e:
-        logging.error(f"Error fetching data from {url}: {e}")
+        log_exception(logger, e, f"fetch_data_from_url ({url})")
         return None
 
 def patch_request(url: str, payload: Dict[str, Any]) -> requests.Response:
@@ -248,28 +373,28 @@ def patch_request(url: str, payload: Dict[str, Any]) -> requests.Response:
     """
     try:
         resp = requests.patch(
-            url, json=payload, headers=_get_auth_headers()
+            url, json=payload, headers=_get_auth_headers(), timeout=30
         )
         resp.raise_for_status()
         return resp
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 401:
             if _refresh_token():
-                logging.info("Retrying PATCH request with new token...")
+                logger.info("Retrying PATCH request with new token...")
                 resp = requests.patch(
-                    url, json=payload, headers=_get_auth_headers()
+                    url, json=payload, headers=_get_auth_headers(), timeout=30
                 )
                 resp.raise_for_status()
                 return resp
             else:
                 raise
         else:
-            logging.error(
+            logger.error(
                 f"Error patching data to {url}: {e.response.text}"
             )
             raise
     except requests.exceptions.RequestException as e:
-        logging.error(f"Error patching data to {url}: {e}")
+        logger.error(f"Error patching data to {url}: {e}")
         raise
 
 def post_request(url: str, payload: Dict[str, Any]) -> requests.Response:
@@ -292,33 +417,33 @@ def post_request(url: str, payload: Dict[str, Any]) -> requests.Response:
     """
     try:
         resp = requests.post(
-            url, json=payload, headers=_get_auth_headers()
+            url, json=payload, headers=_get_auth_headers(), timeout=30
         )
         resp.raise_for_status()
         return resp
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 401:
             if _refresh_token():
-                logging.info("Retrying POST request with new token...")
+                logger.info("Retrying POST request with new token...")
                 resp = requests.post(
-                    url, json=payload, headers=_get_auth_headers()
+                    url, json=payload, headers=_get_auth_headers(), timeout=30
                 )
                 resp.raise_for_status()
                 return resp
             else:
                 raise
         else:
-            logging.error(
+            logger.error(
                 f"Error posting data to {url}: {e.response.text}"
             )
             raise
     except requests.exceptions.RequestException as e:
-        logging.error(f"Error posting data to {url}: {e}")
+        logger.error(f"Error posting data to {url}: {e}")
         raise
 
 def fetch_channel_streams(channel_id: int) -> Optional[List[Dict[str, Any]]]:
     """
-    Fetch streams for a given channel ID.
+    Fetch streams for a given channel ID from the UDI cache.
     
     Parameters:
         channel_id (int): The ID of the channel.
@@ -326,11 +451,15 @@ def fetch_channel_streams(channel_id: int) -> Optional[List[Dict[str, Any]]]:
     Returns:
         Optional[List[Dict[str, Any]]]: List of stream objects or None.
     """
-    url = (
-        f"{_get_base_url()}/api/channels/channels/{channel_id}/"
-        f"streams/"
-    )
-    return fetch_data_from_url(url)
+    udi = get_udi_manager()
+    streams = udi.get_channel_streams(channel_id)
+    if streams:
+        return streams
+    # Return empty list if channel exists but has no streams
+    channel = udi.get_channel_by_id(channel_id)
+    if channel is not None:
+        return []
+    return None
 
 
 def update_channel_streams(
@@ -367,7 +496,7 @@ def update_channel_streams(
     
     non_existent_count = original_count - len(filtered_stream_ids)
     if non_existent_count > 0:
-        logging.warning(
+        logger.warning(
             f"Filtered out {non_existent_count} non-existent stream(s) for channel {channel_id}"
         )
     
@@ -375,7 +504,7 @@ def update_channel_streams(
     if not allow_dead_streams:
         filtered_stream_ids, dead_count = filter_dead_streams(filtered_stream_ids)
         if dead_count > 0:
-            logging.warning(
+            logger.warning(
                 f"Filtered out {dead_count} dead stream(s) for channel {channel_id}"
             )
     
@@ -385,20 +514,20 @@ def update_channel_streams(
     try:
         response = patch_request(url, data)
         if response and response.status_code in [200, 204]:
-            logging.info(
+            logger.info(
                 f"Successfully updated channel {channel_id} with "
                 f"{len(filtered_stream_ids)} streams"
             )
             return True
         else:
             status = response.status_code if response else 'None'
-            logging.warning(
+            logger.warning(
                 f"Unexpected response for channel {channel_id}: "
                 f"{status}"
             )
             return False
     except Exception as e:
-        logging.error(
+        logger.error(
             f"Failed to update channel {channel_id} streams: {e}"
         )
         raise
@@ -430,30 +559,29 @@ def refresh_m3u_playlists(
     
     try:
         resp = post_request(url, {})
-        logging.info("M3U refresh initiated successfully")
+        logger.info("M3U refresh initiated successfully")
         return resp
     except Exception as e:
-        logging.error(f"Failed to refresh M3U playlists: {e}")
+        logger.error(f"Failed to refresh M3U playlists: {e}")
         raise
 
 
 def get_m3u_accounts() -> Optional[List[Dict[str, Any]]]:
     """
-    Fetch all M3U accounts.
+    Fetch all M3U accounts from the UDI cache.
     
     Returns:
         Optional[List[Dict[str, Any]]]: List of M3U account objects
-            or None if request fails.
+            or None if not available.
     """
-    url = f"{_get_base_url()}/api/m3u/accounts/"
-    return fetch_data_from_url(url)
+    logger.debug("get_m3u_accounts() called - fetching from UDI cache")
+    udi = get_udi_manager()
+    accounts = udi.get_m3u_accounts()
+    return accounts if accounts else None
 
 def get_streams(log_result: bool = True) -> List[Dict[str, Any]]:
     """
-    Fetch all available streams with pagination support.
-    
-    Fetches all streams from the Dispatcharr API, handling pagination
-    automatically. Uses page_size=100 to minimize API calls.
+    Fetch all available streams from the UDI cache.
     
     Parameters:
         log_result (bool): Whether to log the number of fetched streams.
@@ -462,35 +590,14 @@ def get_streams(log_result: bool = True) -> List[Dict[str, Any]]:
     Returns:
         List[Dict[str, Any]]: List of all stream objects.
     """
-    base_url = _get_base_url()
-    # Use page_size parameter to maximize streams per request
-    url = f"{base_url}/api/channels/streams/?page_size=100"
-    
-    all_streams: List[Dict[str, Any]] = []
-    
-    while url:
-        response = fetch_data_from_url(url)
-        if not response:
-            break
-        
-        # Handle paginated response
-        if isinstance(response, dict) and 'results' in response:
-            all_streams.extend(response.get('results', []))
-            url = response.get('next')  # Get next page URL
-        else:
-            # If response is list (non-paginated), use it directly
-            if isinstance(response, list):
-                all_streams.extend(response)
-            break
-    
-    if log_result:
-        logging.info(f"Fetched {len(all_streams)} total streams")
-    return all_streams
+    udi = get_udi_manager()
+    streams = udi.get_streams(log_result=log_result)
+    return streams
 
 
 def get_valid_stream_ids() -> set:
     """
-    Get a set of all valid stream IDs that currently exist in Dispatcharr.
+    Get a set of all valid stream IDs from the UDI cache.
     
     This is used to filter out stream IDs that no longer exist (e.g., removed
     from M3U playlists) before updating channels.
@@ -498,15 +605,8 @@ def get_valid_stream_ids() -> set:
     Returns:
         set: Set of valid stream IDs.
     """
-    try:
-        all_streams = get_streams(log_result=False)
-        valid_ids = {stream['id'] for stream in all_streams if isinstance(stream, dict) and 'id' in stream}
-        return valid_ids
-    except Exception as e:
-        logging.error(f"Failed to fetch valid stream IDs: {e}")
-        # Return empty set on error - this will cause all stream IDs to be filtered out
-        # which is safer than allowing potentially invalid IDs
-        return set()
+    udi = get_udi_manager()
+    return udi.get_valid_stream_ids()
 
 
 def get_dead_stream_urls() -> set:
@@ -525,7 +625,7 @@ def get_dead_stream_urls() -> set:
         dead_streams = tracker.get_dead_streams()
         return set(dead_streams.keys())
     except Exception as e:
-        logging.warning(f"Could not load dead streams tracker: {e}")
+        logger.warning(f"Could not load dead streams tracker: {e}")
         # Return empty set if tracker not available
         return set()
 
@@ -580,62 +680,13 @@ def filter_dead_streams(stream_ids: List[int], stream_id_to_url: Optional[Dict[i
 
 def has_custom_streams() -> bool:
     """
-    Efficiently check if any custom streams exist.
-    
-    Tries to use API filtering if supported, otherwise iterates through
-    pages with early exit. This is much faster than fetching all streams
-    when there are thousands.
+    Check if any custom streams exist in the UDI cache.
     
     Returns:
         bool: True if at least one custom stream exists, False otherwise.
     """
-    base_url = _get_base_url()
-    
-    # Try filtering by is_custom parameter first (if API supports it)
-    # This would be the most efficient approach
-    url = f"{base_url}/api/channels/streams/?is_custom=true&page_size=1"
-    response = fetch_data_from_url(url)
-    
-    if response:
-        # Handle paginated response
-        if isinstance(response, dict):
-            results = response.get('results', [])
-            # If we got results with the filter, custom streams exist
-            if results and any(s.get('is_custom', False) for s in results):
-                return True
-            # If no results, check if filtering is supported by checking total count
-            # If count is explicitly 0 or results is empty list, no custom streams
-            if 'results' in response:
-                return False
-        elif isinstance(response, list) and response:
-            if any(s.get('is_custom', False) for s in response):
-                return True
-    
-    # Fallback: If filtering isn't supported or unclear, iterate through pages
-    # Use page_size=100 for efficiency (fewer API calls)
-    url = f"{base_url}/api/channels/streams/?page_size=100"
-    
-    while url:
-        response = fetch_data_from_url(url)
-        if not response:
-            break
-        
-        # Handle paginated response
-        if isinstance(response, dict) and 'results' in response:
-            streams = response.get('results', [])
-            # Early exit if we find any custom stream
-            if any(s.get('is_custom', False) for s in streams):
-                return True
-            url = response.get('next')
-        elif isinstance(response, list):
-            # Early exit if we find any custom stream
-            if any(s.get('is_custom', False) for s in response):
-                return True
-            break
-        else:
-            break
-    
-    return False
+    udi = get_udi_manager()
+    return udi.has_custom_streams()
 
 def create_channel_from_stream(
     stream_id: int,
@@ -715,7 +766,7 @@ def add_streams_to_channel(
     # Log if any stream IDs were filtered out as non-existent
     non_existent_count = len([sid for sid in stream_ids if sid not in valid_stream_ids])
     if non_existent_count > 0:
-        logging.warning(
+        logger.warning(
             f"Filtered out {non_existent_count} non-existent stream(s) "
             f"before adding to channel {channel_id}"
         )
@@ -724,7 +775,7 @@ def add_streams_to_channel(
     if not allow_dead_streams and valid_new_stream_ids:
         valid_new_stream_ids, dead_count = filter_dead_streams(valid_new_stream_ids)
         if dead_count > 0:
-            logging.warning(
+            logger.warning(
                 f"Filtered out {dead_count} dead stream(s) "
                 f"before adding to channel {channel_id}"
             )
@@ -732,13 +783,13 @@ def add_streams_to_channel(
     if valid_new_stream_ids:
         updated_streams = current_stream_ids + valid_new_stream_ids
         update_channel_streams(channel_id, updated_streams, valid_stream_ids, allow_dead_streams)
-        logging.info(
+        logger.info(
             f"Added {len(valid_new_stream_ids)} new streams to channel "
             f"{channel_id}"
         )
         return len(valid_new_stream_ids)
     else:
-        logging.info(
+        logger.info(
             f"No new streams to add to channel {channel_id}"
         )
         return 0

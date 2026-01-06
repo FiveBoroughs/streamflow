@@ -1,0 +1,58 @@
+version: '3.8'
+
+services:
+  # Backend service - runs in Docker
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    ports:
+      - "5000:5000"   # Backend API
+    volumes:
+      - ./backend:/app  # Mount backend code for hot-reload
+      - ./data:/app/data  # Persistent data
+    env_file:
+      - .env
+    environment:
+      - API_HOST=0.0.0.0
+      - API_PORT=5000
+      - CONFIG_DIR=/app/data
+      - FLASK_ENV=development
+      - DEBUG_MODE=true
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    networks:
+      - streamflow-network
+
+  # Frontend service - Vite dev server with hot-reload
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    ports:
+      - "3000:3000"   # Vite dev server
+    volumes:
+      - ./frontend:/app  # Mount frontend code for hot-reload
+      - /app/node_modules  # Prevent overwriting node_modules
+    environment:
+      - NODE_ENV=development
+      - VITE_API_URL=http://localhost:5000
+    depends_on:
+      - backend
+    command: npm run dev -- --host 0.0.0.0
+    networks:
+      - streamflow-network
+
+networks:
+  streamflow-network:
+    driver: bridge
+
+# Data volume for local development
+volumes:
+  data:
+    driver: local

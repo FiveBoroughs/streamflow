@@ -1,0 +1,254 @@
+#!/usr/bin/env python3
+"""
+Unit tests for stream_check_utils module.
+
+Tests the new focused stream checking implementation that extracts
+essential quality metrics using ffmpeg/ffprobe.
+"""
+
+import unittest
+from unittest.mock import patch, MagicMock
+import json
+import sys
+import os
+
+# Add backend to path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from stream_check_utils import (
+    check_ffmpeg_installed,
+    get_stream_info,
+    get_stream_bitrate,
+    analyze_stream
+)
+
+
+class TestFFmpegInstalled(unittest.TestCase):
+    """Test checking for ffmpeg/ffprobe installation."""
+    
+    @patch('subprocess.run')
+    def test_ffmpeg_installed(self, mock_run):
+        """Test successful ffmpeg/ffprobe detection."""
+        mock_run.return_value = MagicMock(returncode=0)
+        self.assertTrue(check_ffmpeg_installed())
+    
+    @patch('subprocess.run')
+    def test_ffmpeg_not_found(self, mock_run):
+        """Test handling when ffmpeg/ffprobe not found."""
+        mock_run.side_effect = FileNotFoundError()
+        self.assertFalse(check_ffmpeg_installed())
+
+
+class TestGetStreamInfo(unittest.TestCase):
+    """Test extracting stream information with ffprobe."""
+    
+    @patch('subprocess.run')
+    def test_successful_stream_info(self, mock_run):
+        """Test successful extraction of stream info."""
+        mock_output = {
+            'streams': [
+                {
+                    'codec_name': 'h264',
+                    'width': 1920,
+                    'height': 1080,
+                    'avg_frame_rate': '30/1'
+                },
+                {
+                    'codec_name': 'aac'
+                }
+            ]
+        }
+        mock_run.return_value = MagicMock(
+            stdout=json.dumps(mock_output),
+            stderr=""
+        )
+        
+        video_info, audio_info = get_stream_info('http://test.stream', timeout=10)
+        
+        self.assertIsNotNone(video_info)
+        self.assertIsNotNone(audio_info)
+        self.assertEqual(video_info['codec_name'], 'h264')
+        self.assertEqual(video_info['width'], 1920)
+        self.assertEqual(video_info['height'], 1080)
+        self.assertEqual(audio_info['codec_name'], 'aac')
+    
+    @patch('subprocess.run')
+    def test_timeout_handling(self, mock_run):
+        """Test handling of ffprobe timeout."""
+        import subprocess
+        mock_run.side_effect = subprocess.TimeoutExpired('ffprobe', 10)
+        
+        video_info, audio_info = get_stream_info('http://test.stream', timeout=10)
+        
+        self.assertIsNone(video_info)
+        self.assertIsNone(audio_info)
+    
+    @patch('subprocess.run')
+    def test_invalid_json_handling(self, mock_run):
+        """Test handling of invalid JSON from ffprobe."""
+        mock_run.return_value = MagicMock(
+            stdout="invalid json",
+            stderr=""
+        )
+        
+        video_info, audio_info = get_stream_info('http://test.stream', timeout=10)
+        
+        self.assertIsNone(video_info)
+        self.assertIsNone(audio_info)
+
+
+class TestGetStreamBitrate(unittest.TestCase):
+    """Test extracting stream bitrate with ffmpeg."""
+    
+    @patch('subprocess.run')
+    def test_bitrate_method_1_statistics(self, mock_run):
+        """Test bitrate detection using Statistics line."""
+        mock_output = """
+        Statistics: 12500000 bytes read, duration: 30s
+        """
+        mock_run.return_value = MagicMock(
+            stderr=mock_output,
+            returncode=0
+        )
+        
+        bitrate, status, elapsed = get_stream_bitrate('http://test.stream', duration=30, timeout=10)
+        
+        self.assertIsNotNone(bitrate)
+        self.assertAlmostEqual(bitrate, 3333.33, places=1)
+        self.assertEqual(status, "OK")
+    
+    @patch('subprocess.run')
+    def test_bitrate_method_2_progress(self, mock_run):
+        """Test bitrate detection using progress output."""
+        mock_output = """
+        frame= 900 fps= 30 q=-1.0 size=12345kB time=00:00:30.00 bitrate=3333.3kbits/s speed=1.0x
+        """
+        mock_run.return_value = MagicMock(
+            stderr=mock_output,
+            returncode=0
+        )
+        
+        bitrate, status, elapsed = get_stream_bitrate('http://test.stream', duration=30, timeout=10)
+        
+        self.assertIsNotNone(bitrate)
+        self.assertEqual(bitrate, 3333.3)
+        self.assertEqual(status, "OK")
+    
+    @patch('subprocess.run')
+    def test_timeout_handling(self, mock_run):
+        """Test handling of ffmpeg timeout."""
+        import subprocess
+        mock_run.side_effect = subprocess.TimeoutExpired('ffmpeg', 40)
+        
+        bitrate, status, elapsed = get_stream_bitrate('http://test.stream', duration=30, timeout=10)
+        
+        self.assertIsNone(bitrate)
+        self.assertEqual(status, "Timeout")
+
+
+class TestAnalyzeStream(unittest.TestCase):
+    """Test complete stream analysis."""
+    
+    @patch('stream_check_utils.get_stream_info_and_bitrate')
+    def test_successful_analysis(self, mock_get_info_and_bitrate):
+        """Test successful complete stream analysis."""
+        # Mock the combined function
+        mock_get_info_and_bitrate.return_value = {
+            'video_codec': 'h264',
+            'audio_codec': 'aac',
+            'resolution': '1920x1080',
+            'fps': 30.0,
+            'bitrate_kbps': 5000.0,
+            'status': 'OK',
+            'elapsed_time': 30.5
+        }
+        
+        result = analyze_stream(
+            stream_url='http://test.stream',
+            stream_id=123,
+            stream_name='Test Stream',
+            ffmpeg_duration=30,
+            timeout=30,
+            retries=1,
+            retry_delay=5
+        )
+        
+        self.assertEqual(result['stream_id'], 123)
+        self.assertEqual(result['stream_name'], 'Test Stream')
+        self.assertEqual(result['stream_url'], 'http://test.stream')
+        self.assertEqual(result['video_codec'], 'h264')
+        self.assertEqual(result['audio_codec'], 'aac')
+        self.assertEqual(result['resolution'], '1920x1080')
+        self.assertEqual(result['fps'], 30.0)
+        self.assertEqual(result['bitrate_kbps'], 5000.0)
+        self.assertEqual(result['status'], 'OK')
+    
+    @patch('stream_check_utils.get_stream_info_and_bitrate')
+    def test_no_video_info(self, mock_get_info_and_bitrate):
+        """Test handling when no video info is available."""
+        mock_get_info_and_bitrate.return_value = {
+            'video_codec': 'N/A',
+            'audio_codec': 'N/A',
+            'resolution': '0x0',
+            'fps': 0,
+            'bitrate_kbps': None,
+            'status': 'Error',
+            'elapsed_time': 0
+        }
+        
+        result = analyze_stream(
+            stream_url='http://test.stream',
+            stream_id=123,
+            stream_name='Test Stream'
+        )
+        
+        self.assertEqual(result['video_codec'], 'N/A')
+        self.assertEqual(result['audio_codec'], 'N/A')
+        self.assertEqual(result['resolution'], '0x0')
+        self.assertEqual(result['fps'], 0)
+    
+    @patch('stream_check_utils.get_stream_info_and_bitrate')
+    @patch('time.sleep')
+    def test_retry_on_failure(self, mock_sleep, mock_get_info_and_bitrate):
+        """Test retry logic when stream analysis fails."""
+        # First call fails, second succeeds
+        mock_get_info_and_bitrate.side_effect = [
+            {
+                'video_codec': 'h264',
+                'audio_codec': 'N/A',
+                'resolution': '1920x1080',
+                'fps': 30.0,
+                'bitrate_kbps': None,
+                'status': 'Timeout',
+                'elapsed_time': 40
+            },
+            {
+                'video_codec': 'h264',
+                'audio_codec': 'N/A',
+                'resolution': '1920x1080',
+                'fps': 30.0,
+                'bitrate_kbps': 5000.0,
+                'status': 'OK',
+                'elapsed_time': 30.5
+            }
+        ]
+        
+        result = analyze_stream(
+            stream_url='http://test.stream',
+            stream_id=123,
+            stream_name='Test Stream',
+            retries=1,
+            retry_delay=5
+        )
+        
+        # Should have retried
+        self.assertEqual(mock_get_info_and_bitrate.call_count, 2)
+        self.assertEqual(mock_sleep.call_count, 1)
+        
+        # Final result should be successful
+        self.assertEqual(result['status'], 'OK')
+        self.assertEqual(result['bitrate_kbps'], 5000.0)
+
+
+if __name__ == '__main__':
+    unittest.main()

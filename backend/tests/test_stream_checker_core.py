@@ -153,18 +153,20 @@ class TestProgressTracking(unittest.TestCase):
         shutil.rmtree(self.temp_dir, ignore_errors=True)
     
     @patch('stream_checker_service.fetch_channel_streams')
-    @patch('stream_checker_service.fetch_data_from_url')
+    @patch('stream_checker_service.get_udi_manager')
     @patch('stream_checker_service._get_base_url')
-    def test_total_streams_defined_before_use(self, mock_base_url, mock_fetch_data, mock_fetch_streams):
+    def test_total_streams_defined_before_use(self, mock_base_url, mock_get_udi, mock_fetch_streams):
         """Test that total_streams is defined before being used in progress updates."""
         # Setup mocks
         mock_base_url.return_value = "http://test:8000"
         
-        # Mock channel data
-        mock_fetch_data.return_value = {
+        # Mock UDI manager
+        mock_udi = MagicMock()
+        mock_udi.get_channel_by_id.return_value = {
             'id': 1,
             'name': 'Test Channel'
         }
+        mock_get_udi.return_value = mock_udi
         
         # Mock streams - 3 streams to check
         mock_fetch_streams.return_value = [
@@ -188,12 +190,9 @@ class TestProgressTracking(unittest.TestCase):
             
             service.progress.update = mock_progress_update
             
-            # Mock _analyze_stream_task to avoid actual stream analysis
-            with patch('importlib.util.spec_from_file_location') as mock_spec:
-                mock_module = MagicMock()
-                mock_module._analyze_stream_task = MagicMock(return_value={
-                    'channel_id': 1,
-                    'channel_name': 'Test Channel',
+            # Mock analyze_stream from stream_check_utils to avoid actual stream analysis
+            with patch('stream_check_utils.analyze_stream') as mock_analyze_stream:
+                mock_analyze_stream.return_value = {
                     'stream_id': 1,
                     'stream_name': 'Stream 1',
                     'stream_url': 'http://test1',
@@ -203,31 +202,28 @@ class TestProgressTracking(unittest.TestCase):
                     'audio_codec': 'aac',
                     'bitrate_kbps': 5000,
                     'status': 'OK'
-                })
-                mock_module.load_config = MagicMock(return_value={})
-                mock_spec.return_value.loader.exec_module = MagicMock()
+                }
                 
-                with patch('importlib.util.module_from_spec', return_value=mock_module):
-                    with patch.object(service, '_update_stream_stats', return_value=True):
-                        with patch('stream_checker_service.update_channel_streams'):
-                            try:
-                                # This should not raise NameError for total_streams
-                                service._check_channel(1)
-                                
-                                # Verify that progress updates were made with total parameter
-                                analyzing_updates = [c for c in progress_calls if c.get('status') == 'analyzing']
-                                
-                                if analyzing_updates:
-                                    # Check that total is defined (not None) and equals number of streams
-                                    for update in analyzing_updates:
-                                        self.assertIn('total', update, "total parameter missing in progress update")
-                                        self.assertIsNotNone(update['total'], "total parameter should not be None")
-                                        self.assertEqual(update['total'], 3, "total should equal number of streams to check")
-                                        
-                            except NameError as e:
-                                if 'total_streams' in str(e):
-                                    self.fail(f"NameError for total_streams should not occur: {e}")
-                                raise
+                with patch.object(service, '_update_stream_stats', return_value=True):
+                    with patch('stream_checker_service.update_channel_streams'):
+                        try:
+                            # This should not raise NameError for total_streams
+                            service._check_channel(1)
+                            
+                            # Verify that progress updates were made with total parameter
+                            analyzing_updates = [c for c in progress_calls if c.get('status') == 'analyzing']
+                            
+                            if analyzing_updates:
+                                # Check that total is defined (not None) and equals number of streams
+                                for update in analyzing_updates:
+                                    self.assertIn('total', update, "total parameter missing in progress update")
+                                    self.assertIsNotNone(update['total'], "total parameter should not be None")
+                                    self.assertEqual(update['total'], 3, "total should equal number of streams to check")
+                                    
+                        except NameError as e:
+                            if 'total_streams' in str(e):
+                                self.fail(f"NameError for total_streams should not occur: {e}")
+                            raise
 
 
 if __name__ == '__main__':

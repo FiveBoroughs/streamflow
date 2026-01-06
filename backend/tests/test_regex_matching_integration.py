@@ -1,0 +1,218 @@
+#!/usr/bin/env python3
+"""
+Integration test for regex matching system to verify the deadlock fix.
+
+This test ensures:
+1. No deadlock occurs when creating auto-create rules
+2. Programs are matched correctly after rule creation
+3. EPG data is fetched before matching
+"""
+
+import unittest
+import tempfile
+import json
+import os
+import sys
+import time
+import threading
+from pathlib import Path
+from unittest.mock import Mock, patch, MagicMock
+from datetime import datetime, timedelta, timezone
+
+# Set minimal environment before importing scheduling_service
+os.environ['DISPATCHARR_BASE_URL'] = 'http://test.local'
+os.environ['DISPATCHARR_TOKEN'] = 'test_token'
+
+# Add backend to path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import scheduling_service
+from scheduling_service import SchedulingService
+
+
+class TestRegexMatchingIntegration(unittest.TestCase):
+    """Integration test for regex matching system."""
+    
+    def setUp(self):
+        """Set up test fixtures."""
+        # Create a fresh temp directory for each test
+        self.test_config_dir = tempfile.mkdtemp()
+        os.environ['CONFIG_DIR'] = self.test_config_dir
+        
+        # Reset the global singleton and reload CONFIG_DIR
+        scheduling_service._scheduling_service = None
+        scheduling_service.CONFIG_DIR = Path(self.test_config_dir)
+        scheduling_service.SCHEDULING_CONFIG_FILE = scheduling_service.CONFIG_DIR / 'scheduling_config.json'
+        scheduling_service.SCHEDULED_EVENTS_FILE = scheduling_service.CONFIG_DIR / 'scheduled_events.json'
+        scheduling_service.AUTO_CREATE_RULES_FILE = scheduling_service.CONFIG_DIR / 'auto_create_rules.json'
+        
+        self.service = SchedulingService()
+        
+        # Mock UDI manager
+        self.mock_udi_patcher = patch('scheduling_service.get_udi_manager')
+        self.mock_udi = self.mock_udi_patcher.start()
+        
+        # Mock channel
+        self.mock_channel = {
+            'id': 1,
+            'name': 'Test Channel',
+            'tvg_id': 'test-channel-1',
+            'logo_id': None
+        }
+        
+        self.mock_udi.return_value.get_channel_by_id.return_value = self.mock_channel
+        self.mock_udi.return_value.get_logo_by_id.return_value = None
+        
+        # Mock EPG programs
+        now = datetime.now(timezone.utc)
+        self.mock_programs = [
+            {
+                'title': 'Breaking News at 5',
+                'start_time': (now + timedelta(hours=1)).isoformat(),
+                'end_time': (now + timedelta(hours=2)).isoformat(),
+                'tvg_id': 'test-channel-1'
+            },
+            {
+                'title': 'Regular Show',
+                'start_time': (now + timedelta(hours=2)).isoformat(),
+                'end_time': (now + timedelta(hours=3)).isoformat(),
+                'tvg_id': 'test-channel-1'
+            },
+            {
+                'title': 'Breaking News Special',
+                'start_time': (now + timedelta(hours=3)).isoformat(),
+                'end_time': (now + timedelta(hours=4)).isoformat(),
+                'tvg_id': 'test-channel-1'
+            }
+        ]
+    
+    def tearDown(self):
+        """Clean up test fixtures."""
+        self.mock_udi_patcher.stop()
+        # Clean up the temp directory
+        import shutil
+        if os.path.exists(self.test_config_dir):
+            shutil.rmtree(self.test_config_dir)
+        
+        # Reset the global singleton
+        scheduling_service._scheduling_service = None
+    
+    def test_no_deadlock_when_creating_rule(self):
+        """Test that creating a rule doesn't cause a deadlock."""
+        # Mock fetch_epg_grid to return programs
+        with patch.object(self.service, 'fetch_epg_grid', return_value=self.mock_programs):
+            rule_data = {
+                'name': 'Breaking News Alert',
+                'channel_id': 1,
+                'regex_pattern': '^Breaking News',
+                'minutes_before': 5
+            }
+            
+            # This should complete without hanging
+            rule = self.service.create_auto_create_rule(rule_data)
+            
+            # Give the background thread time to complete
+            time.sleep(0.5)
+            
+            self.assertIsNotNone(rule['id'])
+            self.assertEqual(rule['name'], 'Breaking News Alert')
+    
+    def test_matching_creates_events_synchronously(self):
+        """Test that events are created when matching is called directly."""
+        # Pre-populate EPG cache and create a rule
+        with self.service._lock:
+            self.service._epg_cache = self.mock_programs.copy()
+            self.service._epg_cache_time = datetime.now()
+            self.service._auto_create_rules = [{
+                'id': 'test-rule-1',
+                'name': 'Breaking News Alert',
+                'channel_id': 1,
+                'tvg_id': 'test-channel-1',
+                'regex_pattern': '^Breaking News',
+                'minutes_before': 5
+            }]
+        
+        # Directly call match_programs_to_rules
+        result = self.service.match_programs_to_rules()
+        
+        # Check that events were created
+        events = self.service.get_scheduled_events()
+        
+        # Should have created 2 events (for the 2 "Breaking News" programs)
+        self.assertEqual(len(events), 2)
+        self.assertEqual(result['created'], 2)
+        self.assertIn('Breaking News', events[0]['program_title'])
+        self.assertIn('Breaking News', events[1]['program_title'])
+    
+    def test_match_programs_completes_without_deadlock(self):
+        """Test that match_programs_to_rules completes without deadlock."""
+        # Pre-populate EPG cache and rules
+        with self.service._lock:
+            self.service._epg_cache = self.mock_programs.copy()
+            self.service._epg_cache_time = datetime.now()
+            self.service._auto_create_rules = [{
+                'id': 'test-rule-1',
+                'name': 'Test Rule',
+                'channel_id': 1,
+                'tvg_id': 'test-channel-1',
+                'regex_pattern': '^Breaking News',
+                'minutes_before': 5
+            }]
+        
+        # This should complete without hanging
+        result = self.service.match_programs_to_rules()
+        
+        self.assertEqual(result['created'], 2)  # Should create 2 events
+        self.assertEqual(result['updated'], 0)
+        
+        # Verify events were created
+        events = self.service.get_scheduled_events()
+        self.assertEqual(len(events), 2)
+    
+    def test_concurrent_access_no_deadlock(self):
+        """Test that concurrent access to the service doesn't cause deadlock."""
+        with self.service._lock:
+            self.service._epg_cache = self.mock_programs.copy()
+            self.service._epg_cache_time = datetime.now()
+        
+        errors = []
+        
+        def create_rule():
+            try:
+                rule_data = {
+                    'name': 'Test Rule',
+                    'channel_id': 1,
+                    'regex_pattern': '^Breaking News',
+                    'minutes_before': 5
+                }
+                with patch('scheduling_service.requests.get'):
+                    self.service.create_auto_create_rule(rule_data)
+            except Exception as e:
+                errors.append(e)
+        
+        def match_programs():
+            try:
+                self.service.match_programs_to_rules()
+            except Exception as e:
+                errors.append(e)
+        
+        # Start multiple threads
+        threads = []
+        for _ in range(3):
+            t1 = threading.Thread(target=match_programs)
+            t1.start()
+            threads.append(t1)
+        
+        # Wait for all threads with timeout
+        for t in threads:
+            t.join(timeout=2.0)
+            if t.is_alive():
+                self.fail("Thread deadlocked and didn't complete")
+        
+        # Check no errors occurred
+        if errors:
+            self.fail(f"Errors occurred: {errors}")
+
+
+if __name__ == '__main__':
+    unittest.main()

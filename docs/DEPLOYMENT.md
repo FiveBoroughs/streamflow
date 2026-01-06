@@ -1,14 +1,15 @@
 # Deployment Guide
 
-## 🚀 Simplified Single-Container Deployment
+## 🚀 Single-Container Deployment
 
-The application now uses a **simplified single-container architecture** that is much easier to deploy and maintain:
+The application uses a **single-container architecture** that is easy to deploy and maintain:
 
-- **Single Service**: Python Flask serves both API and React frontend
-- **Single Port**: Everything accessible at http://localhost:3000
-- **No nginx**: Eliminated complex reverse proxy configuration
+- **Single Container**: All services in one Docker container managed by Supervisor
+- **Thread-Based Parallelism**: Multi-threaded stream checking for performance
+- **Single Port**: Everything accessible at http://localhost:5000
+- **No External Dependencies**: No need for separate database or worker containers
 - **Faster Builds**: Pre-built frontend reduces Docker build time
-- **Persistent Storage**: Configuration files stored in Docker volumes
+- **Persistent Storage**: Configuration data stored in Docker volumes
 
 ## Quick Start
 
@@ -26,9 +27,9 @@ The application now uses a **simplified single-container architecture** that is 
    ```
 
 3. **Access the application**:
-   - **Web Interface**: http://localhost:3000
-   - **API Endpoints**: http://localhost:3000/api/health
-   - **Health Check**: `curl http://localhost:3000/api/health`
+   - **Web Interface**: http://localhost:5000
+   - **API Endpoints**: http://localhost:5000/api/health
+   - **Health Check**: `curl http://localhost:5000/api/health`
 
 ## Data Persistence
 
@@ -52,6 +53,7 @@ The following files are stored in the mounted volume:
 - `changelog.json` - Activity history
 - `stream_checker_config.json` - Stream quality checking configuration
 - `channel_updates.json` - Channel update tracking
+- `udi/` - Universal Data Index (UDI) JSON storage
 
 ### Customizing the Volume Path
 
@@ -69,14 +71,66 @@ chmod 755 /your/custom/path
 
 ## Architecture
 
-The simplified application uses a single Docker container that includes:
-- **Backend**: Python Flask API (internal port 5000)
+The application uses a single Docker container that includes:
+- **Backend**: Python Flask API (port 5000)
 - **Frontend**: React application served by Flask
 - **Static Files**: React build served from Flask `/static` directory
 - **Configuration**: JSON files in `/app/data` (mounted volume)
+- **Process Manager**: Supervisor manages the Flask service within the container
+
+### Startup Sequence
+
+The container uses Supervisor to manage the Flask API service:
+
+1. **Flask API** - Starts and initializes the stream checker service
+
+The stream checker service runs as a background thread within the Flask application.
+
+### Logging
+
+All application logs are forwarded to Docker's stdout/stderr and can be viewed using:
+
+```bash
+# View all logs
+docker compose logs -f
+
+# View logs from a specific time
+docker compose logs --since 10m
+
+# View only the last 100 lines
+docker compose logs --tail 100
+```
+
+The logging system includes:
+- **Supervisor**: Process management logs
+- **Flask API**: HTTP requests, API calls, and application events
+- **Stream Checker**: Stream quality analysis and channel update logs
+
+All logs use `/proc/1/fd/1` (stdout) and `/proc/1/fd/2` (stderr) to ensure proper forwarding to Docker's logging system.
+
+### Debug Mode
+
+Enable debug mode for more verbose logging:
+
+```bash
+# In .env file
+DEBUG_MODE=true
+```
+
+Or via environment variable:
+```bash
+docker compose up -d -e DEBUG_MODE=true
+```
+
+Debug mode provides detailed information about:
+- API request/response details
+- Stream analysis steps
+- Parallel processing
+- Queue processing
+- Configuration changes
 
 ### Port Mapping
-- **External**: http://localhost:3000 → **Internal**: Flask port 5000
+- **External**: http://localhost:5000 → **Internal**: Flask port 5000
 - All frontend routes and API calls go through the same port
 
 ## Docker Deployment Options
@@ -151,7 +205,7 @@ For containerized deployments, you can specify environment variables directly in
 
 ```yaml
 services:
-  streamflow:
+  stream-checker:
     # ... other config ...
     environment:
       - DISPATCHARR_BASE_URL=http://your-dispatcharr-instance.com:9191
@@ -165,16 +219,9 @@ services:
 
 > **Note**: When using direct environment variables, comment out or remove the `env_file` section in docker-compose.yml. JWT tokens will be refreshed automatically on startup as they cannot be persisted without a .env file.
 
-## Architecture
-
-The application now uses a single Docker container that includes:
-- **Backend**: Python Flask API (port 5000)
-- **Frontend**: React application served via nginx (port 80)
-- **Reverse Proxy**: nginx routes frontend requests and proxies API calls
-
 ## Accessing the Application
 
-- **Web Interface & API**: http://localhost:3000
+- **Web Interface & API**: http://localhost:5000
 - All endpoints are accessible through the single port
 
 ## GitHub Container Registry

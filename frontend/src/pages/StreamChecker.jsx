@@ -1,0 +1,1011 @@
+import { useState, useEffect } from 'react'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card.jsx'
+import { Button } from '@/components/ui/button.jsx'
+import { Badge } from '@/components/ui/badge.jsx'
+import { Progress } from '@/components/ui/progress.jsx'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert.jsx'
+import { Label } from '@/components/ui/label.jsx'
+import { Input } from '@/components/ui/input.jsx'
+import { Switch } from '@/components/ui/switch.jsx'
+import { Separator } from '@/components/ui/separator.jsx'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs.jsx'
+import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from '@/components/ui/pagination.jsx'
+import { useToast } from '@/hooks/use-toast.js'
+import { streamCheckerAPI, deadStreamsAPI } from '@/services/api.js'
+import { 
+  Activity, 
+  CheckCircle2, 
+  Clock, 
+  PlayCircle, 
+  StopCircle, 
+  Loader2,
+  Settings,
+  Trash2,
+  AlertCircle,
+  RefreshCw,
+  List
+} from 'lucide-react'
+
+// Pagination constants
+const DEAD_STREAMS_PER_PAGE = 20
+const PAGINATION_MAX_VISIBLE_PAGES = 5
+
+export default function StreamChecker() {
+  const [status, setStatus] = useState(null)
+  const [progress, setProgress] = useState(null)
+  const [config, setConfig] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [actionLoading, setActionLoading] = useState('')
+  const [configEditing, setConfigEditing] = useState(false)
+  const [editedConfig, setEditedConfig] = useState(null)
+  const [deadStreams, setDeadStreams] = useState([])
+  const [deadStreamsLoading, setDeadStreamsLoading] = useState(false)
+  const [deadStreamsPagination, setDeadStreamsPagination] = useState({
+    page: 1,
+    per_page: DEAD_STREAMS_PER_PAGE,
+    total_pages: 0,
+    has_next: false,
+    has_prev: false
+  })
+  const [totalDeadStreams, setTotalDeadStreams] = useState(0)
+  const { toast } = useToast()
+
+  useEffect(() => {
+    loadData()
+    // Poll for updates - use shorter interval when checking is active
+    const pollInterval = (status?.checking || status?.global_action_in_progress || (status?.queue?.queue_size > 0)) ? 1000 : 3000
+    const interval = setInterval(() => {
+      loadData()
+    }, pollInterval)
+    return () => clearInterval(interval)
+  }, [status?.checking, status?.global_action_in_progress, status?.queue?.queue_size])
+
+  const loadData = async () => {
+    try {
+      const [statusResponse, progressResponse, configResponse] = await Promise.all([
+        streamCheckerAPI.getStatus(),
+        streamCheckerAPI.getProgress(),
+        streamCheckerAPI.getConfig()
+      ])
+      setStatus(statusResponse.data)
+      setProgress(progressResponse.data)
+      setConfig(configResponse.data)
+      if (!editedConfig && configResponse.data) {
+        setEditedConfig(configResponse.data)
+      }
+    } catch (err) {
+      console.error('Failed to load stream checker data:', err)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleTriggerGlobalAction = async () => {
+    try {
+      setActionLoading('global-action')
+      await streamCheckerAPI.triggerGlobalAction()
+      toast({
+        title: "Success",
+        description: "Global action initiated successfully"
+      })
+      await loadData()
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err.response?.data?.error || "Failed to trigger global action",
+        variant: "destructive"
+      })
+    } finally {
+      setActionLoading('')
+    }
+  }
+
+  const handleClearQueue = async () => {
+    try {
+      setActionLoading('clear-queue')
+      await streamCheckerAPI.clearQueue()
+      toast({
+        title: "Success",
+        description: "Queue cleared successfully"
+      })
+      await loadData()
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: "Failed to clear queue",
+        variant: "destructive"
+      })
+    } finally {
+      setActionLoading('')
+    }
+  }
+
+  const handleSaveConfig = async () => {
+    try {
+      setActionLoading('save-config')
+      await streamCheckerAPI.updateConfig(editedConfig)
+      toast({
+        title: "Success",
+        description: "Configuration saved successfully"
+      })
+      setConfigEditing(false)
+      await loadData()
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err.response?.data?.error || "Failed to save configuration",
+        variant: "destructive"
+      })
+    } finally {
+      setActionLoading('')
+    }
+  }
+
+  const updateConfigValue = (path, value) => {
+    setEditedConfig(prevConfig => {
+      const newConfig = JSON.parse(JSON.stringify(prevConfig)) // Deep clone
+      const keys = path.split('.')
+      
+      // Validate keys to prevent prototype pollution
+      const safeKeys = keys.filter(key => 
+        key !== '__proto__' && 
+        key !== 'constructor' && 
+        key !== 'prototype'
+      )
+      
+      if (safeKeys.length === 0) {
+        return prevConfig // Return unchanged if all keys were filtered
+      }
+      
+      let current = newConfig
+      for (let i = 0; i < safeKeys.length - 1; i++) {
+        const key = safeKeys[i]
+        if (!current[key] || typeof current[key] !== 'object' || Array.isArray(current[key])) {
+          current[key] = {}
+        }
+        current = current[key]
+      }
+      current[safeKeys[safeKeys.length - 1]] = value
+      return newConfig
+    })
+  }
+
+  const loadDeadStreams = async (page = deadStreamsPagination.page) => {
+    try {
+      setDeadStreamsLoading(true)
+      const response = await deadStreamsAPI.getDeadStreams(page, deadStreamsPagination.per_page)
+      const deadStreamsData = response.data.dead_streams || []
+      const paginationData = response.data.pagination || {}
+      
+      // Validate that backend returned the page we requested
+      if (paginationData.page && paginationData.page !== page) {
+        // Page mismatch - backend returned different page than requested
+        // This could happen if the requested page is out of bounds
+        toast({
+          title: "Warning",
+          description: `Requested page ${page} but received page ${paginationData.page}`,
+          variant: "default"
+        })
+      }
+      
+      setDeadStreams(deadStreamsData)
+      setTotalDeadStreams(response.data.total_dead_streams || 0)
+      setDeadStreamsPagination({
+        page: paginationData.page || page,
+        per_page: paginationData.per_page || deadStreamsPagination.per_page,
+        total_pages: paginationData.total_pages || 0,
+        has_next: paginationData.has_next || false,
+        has_prev: paginationData.has_prev || false
+      })
+    } catch (err) {
+      console.error('Failed to load dead streams:', err)
+      toast({
+        title: "Error",
+        description: "Failed to load dead streams",
+        variant: "destructive"
+      })
+    } finally {
+      setDeadStreamsLoading(false)
+    }
+  }
+
+  const handleReviveStream = async (streamUrl) => {
+    try {
+      setActionLoading(`revive-${streamUrl}`)
+      await deadStreamsAPI.reviveStream(streamUrl)
+      toast({
+        title: "Success",
+        description: "Stream revived successfully"
+      })
+      await loadDeadStreams()
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err.response?.data?.error || "Failed to revive stream",
+        variant: "destructive"
+      })
+    } finally {
+      setActionLoading('')
+    }
+  }
+
+  const handleClearAllDeadStreams = async () => {
+    try {
+      setActionLoading('clear-all-dead')
+      const response = await deadStreamsAPI.clearAllDeadStreams()
+      toast({
+        title: "Success",
+        description: response.data.message || "All dead streams cleared"
+      })
+      await loadDeadStreams()
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err.response?.data?.error || "Failed to clear dead streams",
+        variant: "destructive"
+      })
+    } finally {
+      setActionLoading('')
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    )
+  }
+
+  const isChecking = status?.checking || status?.global_action_in_progress || (status?.queue?.queue_size > 0)
+  const queueSize = status?.queue?.queue_size || 0
+  const inProgress = status?.queue?.in_progress || 0
+  const completed = status?.queue?.completed || 0
+  const failed = status?.queue?.failed || 0
+
+  return (
+    <div className="space-y-6">
+      <div className="flex justify-between items-start">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Stream Checker</h1>
+          <p className="text-muted-foreground">
+            Monitor and manage stream quality checking
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <Button
+            onClick={handleTriggerGlobalAction}
+            disabled={actionLoading === 'global-action' || isChecking}
+            variant="default"
+          >
+            {actionLoading === 'global-action' ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="mr-2 h-4 w-4" />
+            )}
+            Global Action
+          </Button>
+        </div>
+      </div>
+
+      {/* Status Overview */}
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Status</CardTitle>
+            <Activity className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center gap-2">
+              <Badge variant={isChecking ? "default" : "secondary"}>
+                {isChecking ? "Active" : "Idle"}
+              </Badge>
+              {status?.global_action_in_progress && (
+                <Badge variant="destructive">Global Action</Badge>
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground mt-2">
+              Mode: {status?.parallel?.mode || 'sequential'}
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Queue Size</CardTitle>
+            <List className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{queueSize}</div>
+            <p className="text-xs text-muted-foreground">
+              {inProgress > 0 ? `${inProgress} in progress` : 'No channels processing'}
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Completed</CardTitle>
+            <CheckCircle2 className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{completed}</div>
+            <p className="text-xs text-muted-foreground">
+              Channels checked this session
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Failed</CardTitle>
+            <AlertCircle className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{failed}</div>
+            <p className="text-xs text-muted-foreground">
+              Channels with errors
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Current Progress */}
+      {progress && isChecking && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Current Progress</CardTitle>
+            <CardDescription>
+              {progress.channel_name || 'Processing...'}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">{progress.step || 'Checking'}</span>
+                <span className="font-medium">{progress.percentage || 0}%</span>
+              </div>
+              <Progress value={progress.percentage || 0} className="h-2" />
+              <p className="text-xs text-muted-foreground">{progress.step_detail}</p>
+            </div>
+
+            {progress.current_stream_name && (
+              <div className="space-y-2">
+                <Label className="text-sm">
+                  {status?.parallel?.enabled ? 'Recently Completed Stream' : 'Current Stream'}
+                </Label>
+                <div className="text-sm font-mono bg-muted p-2 rounded-md">
+                  {progress.current_stream_name}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Stream {progress.current_stream}/{progress.total_streams}
+                  {status?.parallel?.enabled && inProgress > 1 && (
+                    <span className="ml-2 text-blue-600 dark:text-blue-400">
+                      ({inProgress} streams checking concurrently)
+                    </span>
+                  )}
+                </p>
+              </div>
+            )}
+
+            <div className="flex items-center gap-2 text-sm">
+              <Badge variant="outline">{progress.status}</Badge>
+              {status?.parallel?.enabled && (
+                <Badge variant="secondary">
+                  Parallel ({status.parallel.max_workers} workers)
+                </Badge>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Queue Information */}
+      {queueSize > 0 && (
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between">
+            <div>
+              <CardTitle>Stream Queue</CardTitle>
+              <CardDescription>
+                {queueSize} channels waiting to be checked
+              </CardDescription>
+            </div>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={handleClearQueue}
+              disabled={actionLoading === 'clear-queue'}
+            >
+              {actionLoading === 'clear-queue' ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Trash2 className="mr-2 h-4 w-4" />
+              )}
+              Clear Queue
+            </Button>
+          </CardHeader>
+        </Card>
+      )}
+
+      <Separator />
+
+      {/* Configuration Section */}
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <div>
+            <CardTitle>Stream Checker Configuration</CardTitle>
+            <CardDescription>
+              Configure stream analysis and checking parameters
+            </CardDescription>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setConfigEditing(!configEditing)}
+          >
+            <Settings className="mr-2 h-4 w-4" />
+            {configEditing ? 'Cancel' : 'Edit'}
+          </Button>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {config && (
+            <>
+              {/* Pipeline Mode - Read Only */}
+              <div className="space-y-2">
+                <Label>Pipeline Mode</Label>
+                <div className="text-sm bg-muted p-3 rounded-md">
+                  <span className="font-medium">{config.pipeline_mode}</span>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Pipeline mode is managed in Automation Settings
+                  </p>
+                </div>
+              </div>
+
+              {/* Tabs for Configuration Sections */}
+              <Tabs defaultValue="analysis" className="w-full">
+                <TabsList className="grid w-full grid-cols-4">
+                  <TabsTrigger value="analysis">Stream Analysis</TabsTrigger>
+                  <TabsTrigger value="concurrent">Concurrent Checking</TabsTrigger>
+                  <TabsTrigger value="scoring">Stream Scoring Weights</TabsTrigger>
+                  <TabsTrigger value="dead-streams">Dead Streams</TabsTrigger>
+                </TabsList>
+
+                {/* Stream Analysis Tab */}
+                <TabsContent value="analysis" className="space-y-4">
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="ffmpeg_duration">FFmpeg Duration (seconds)</Label>
+                      <Input
+                        id="ffmpeg_duration"
+                        type="number"
+                        value={editedConfig?.stream_analysis?.ffmpeg_duration || 30}
+                        onChange={(e) => updateConfigValue('stream_analysis.ffmpeg_duration', parseInt(e.target.value))}
+                        disabled={!configEditing}
+                        min={5}
+                        max={120}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Duration to analyze each stream (5-120 seconds)
+                      </p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="timeout">Timeout (seconds)</Label>
+                      <Input
+                        id="timeout"
+                        type="number"
+                        value={editedConfig?.stream_analysis?.timeout || 30}
+                        onChange={(e) => updateConfigValue('stream_analysis.timeout', parseInt(e.target.value))}
+                        disabled={!configEditing}
+                        min={10}
+                        max={300}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Base timeout for stream operations (does not include duration or startup buffer)
+                      </p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="stream_startup_buffer">Stream Startup Buffer (seconds)</Label>
+                      <Input
+                        id="stream_startup_buffer"
+                        type="number"
+                        value={editedConfig?.stream_analysis?.stream_startup_buffer || 10}
+                        onChange={(e) => updateConfigValue('stream_analysis.stream_startup_buffer', parseInt(e.target.value))}
+                        disabled={!configEditing}
+                        min={5}
+                        max={120}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Maximum time to wait for stream to start (actual timeout = timeout + duration + buffer)
+                      </p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="retries">Retry Attempts</Label>
+                      <Input
+                        id="retries"
+                        type="number"
+                        value={editedConfig?.stream_analysis?.retries || 1}
+                        onChange={(e) => updateConfigValue('stream_analysis.retries', parseInt(e.target.value))}
+                        disabled={!configEditing}
+                        min={0}
+                        max={5}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Number of retry attempts for failed streams
+                      </p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="retry_delay">Retry Delay (seconds)</Label>
+                      <Input
+                        id="retry_delay"
+                        type="number"
+                        value={editedConfig?.stream_analysis?.retry_delay || 10}
+                        onChange={(e) => updateConfigValue('stream_analysis.retry_delay', parseInt(e.target.value))}
+                        disabled={!configEditing}
+                        min={1}
+                        max={60}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Delay between retry attempts
+                      </p>
+                    </div>
+
+                    <div className="space-y-2 md:col-span-2">
+                      <Label htmlFor="user_agent">FFmpeg/FFprobe User Agent</Label>
+                      <Input
+                        id="user_agent"
+                        type="text"
+                        value={editedConfig?.stream_analysis?.user_agent || 'VLC/3.0.14'}
+                        onChange={(e) => updateConfigValue('stream_analysis.user_agent', e.target.value)}
+                        disabled={!configEditing}
+                        maxLength={200}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        User agent string for ffmpeg/ffprobe (for strict stream providers)
+                      </p>
+                    </div>
+                  </div>
+                </TabsContent>
+
+                {/* Concurrent Checking Tab */}
+                <TabsContent value="concurrent" className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label htmlFor="concurrent_enabled">Enable Concurrent Checking</Label>
+                      <p className="text-xs text-muted-foreground">
+                        Check multiple streams in parallel for faster processing
+                      </p>
+                    </div>
+                    <Switch
+                      id="concurrent_enabled"
+                      checked={editedConfig?.concurrent_streams?.enabled !== false}
+                      onCheckedChange={(checked) => updateConfigValue('concurrent_streams.enabled', checked)}
+                      disabled={!configEditing}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="global_limit">Global Concurrent Limit</Label>
+                    <Input
+                      id="global_limit"
+                      type="number"
+                      value={editedConfig?.concurrent_streams?.global_limit || 10}
+                      onChange={(e) => updateConfigValue('concurrent_streams.global_limit', parseInt(e.target.value))}
+                      disabled={!configEditing || !editedConfig?.concurrent_streams?.enabled}
+                      min={1}
+                      max={50}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Maximum number of streams to check simultaneously (1-50)
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="stagger_delay">Stagger Delay (seconds)</Label>
+                    <Input
+                      id="stagger_delay"
+                      type="number"
+                      step="0.1"
+                      value={editedConfig?.concurrent_streams?.stagger_delay || 1.0}
+                      onChange={(e) => updateConfigValue('concurrent_streams.stagger_delay', parseFloat(e.target.value))}
+                      disabled={!configEditing || !editedConfig?.concurrent_streams?.enabled}
+                      min={0}
+                      max={10}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Delay between starting each concurrent check to prevent overload
+                    </p>
+                  </div>
+                </TabsContent>
+
+                {/* Stream Scoring Weights Tab */}
+                <TabsContent value="scoring" className="space-y-4">
+                  <p className="text-sm text-muted-foreground">
+                    Adjust how different quality metrics are weighted when scoring streams
+                  </p>
+                  
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="weight_bitrate">Bitrate Weight</Label>
+                      <Input
+                        id="weight_bitrate"
+                        type="number"
+                        step="0.05"
+                        value={editedConfig?.scoring?.weights?.bitrate || 0.40}
+                        onChange={(e) => updateConfigValue('scoring.weights.bitrate', parseFloat(e.target.value))}
+                        disabled={!configEditing}
+                        min={0}
+                        max={1}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="weight_resolution">Resolution Weight</Label>
+                      <Input
+                        id="weight_resolution"
+                        type="number"
+                        step="0.05"
+                        value={editedConfig?.scoring?.weights?.resolution || 0.35}
+                        onChange={(e) => updateConfigValue('scoring.weights.resolution', parseFloat(e.target.value))}
+                        disabled={!configEditing}
+                        min={0}
+                        max={1}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="weight_fps">FPS Weight</Label>
+                      <Input
+                        id="weight_fps"
+                        type="number"
+                        step="0.05"
+                        value={editedConfig?.scoring?.weights?.fps || 0.15}
+                        onChange={(e) => updateConfigValue('scoring.weights.fps', parseFloat(e.target.value))}
+                        disabled={!configEditing}
+                        min={0}
+                        max={1}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="weight_codec">Codec Weight</Label>
+                      <Input
+                        id="weight_codec"
+                        type="number"
+                        step="0.05"
+                        value={editedConfig?.scoring?.weights?.codec || 0.10}
+                        onChange={(e) => updateConfigValue('scoring.weights.codec', parseFloat(e.target.value))}
+                        disabled={!configEditing}
+                        min={0}
+                        max={1}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label htmlFor="prefer_h265">Prefer H.265/HEVC</Label>
+                      <p className="text-xs text-muted-foreground">
+                        Give preference to H.265 codec over H.264
+                      </p>
+                    </div>
+                    <Switch
+                      id="prefer_h265"
+                      checked={editedConfig?.scoring?.prefer_h265 !== false}
+                      onCheckedChange={(checked) => updateConfigValue('scoring.prefer_h265', checked)}
+                      disabled={!configEditing}
+                    />
+                  </div>
+                </TabsContent>
+
+                {/* Dead Streams Tab */}
+                <TabsContent value="dead-streams" className="space-y-4">
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="space-y-0.5">
+                        <Label htmlFor="dead_stream_enabled">Enable Dead Stream Removal</Label>
+                        <p className="text-sm text-muted-foreground">
+                          Automatically remove streams that are detected as dead or below quality thresholds
+                        </p>
+                      </div>
+                      <Switch
+                        id="dead_stream_enabled"
+                        checked={editedConfig?.dead_stream_handling?.enabled !== false}
+                        onCheckedChange={(checked) => updateConfigValue('dead_stream_handling.enabled', checked)}
+                        disabled={!configEditing}
+                      />
+                    </div>
+
+                    {editedConfig?.dead_stream_handling?.enabled !== false && (
+                      <>
+                        <div className="space-y-4 pt-4 border-t">
+                          <h4 className="font-medium">Quality Thresholds</h4>
+                          <p className="text-sm text-muted-foreground">
+                            Streams below these thresholds will be considered dead and removed. Set to 0 to disable a specific threshold.
+                          </p>
+
+                          <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                              <Label htmlFor="min_resolution_width">Minimum Width (pixels)</Label>
+                              <Input
+                                id="min_resolution_width"
+                                type="number"
+                                min="0"
+                                step="1"
+                                value={editedConfig?.dead_stream_handling?.min_resolution_width ?? 0}
+                                onChange={(e) => updateConfigValue('dead_stream_handling.min_resolution_width', parseInt(e.target.value) || 0)}
+                                disabled={!configEditing}
+                              />
+                              <p className="text-sm text-muted-foreground">
+                                e.g., 1280 for 720p minimum (0 = no minimum)
+                              </p>
+                            </div>
+
+                            <div className="space-y-2">
+                              <Label htmlFor="min_resolution_height">Minimum Height (pixels)</Label>
+                              <Input
+                                id="min_resolution_height"
+                                type="number"
+                                min="0"
+                                step="1"
+                                value={editedConfig?.dead_stream_handling?.min_resolution_height ?? 0}
+                                onChange={(e) => updateConfigValue('dead_stream_handling.min_resolution_height', parseInt(e.target.value) || 0)}
+                                disabled={!configEditing}
+                              />
+                              <p className="text-sm text-muted-foreground">
+                                e.g., 720 for 720p minimum (0 = no minimum)
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="space-y-2">
+                            <Label htmlFor="min_bitrate_kbps">Minimum Bitrate (kbps)</Label>
+                            <Input
+                              id="min_bitrate_kbps"
+                              type="number"
+                              min="0"
+                              step="100"
+                              value={editedConfig?.dead_stream_handling?.min_bitrate_kbps ?? 0}
+                              onChange={(e) => updateConfigValue('dead_stream_handling.min_bitrate_kbps', parseInt(e.target.value) || 0)}
+                              disabled={!configEditing}
+                            />
+                            <p className="text-sm text-muted-foreground">
+                              e.g., 1000 for 1 Mbps minimum (0 = no minimum)
+                            </p>
+                          </div>
+
+                          <div className="space-y-2">
+                            <Label htmlFor="min_score">Minimum Quality Score</Label>
+                            <Input
+                              id="min_score"
+                              type="number"
+                              min="0"
+                              max="100"
+                              step="1"
+                              value={editedConfig?.dead_stream_handling?.min_score ?? 0}
+                              onChange={(e) => updateConfigValue('dead_stream_handling.min_score', parseInt(e.target.value) || 0)}
+                              disabled={!configEditing}
+                            />
+                            <p className="text-sm text-muted-foreground">
+                              Overall quality score from 0-100 (0 = no minimum)
+                            </p>
+                          </div>
+                        </div>
+
+                        <Alert>
+                          <AlertCircle className="h-4 w-4" />
+                          <AlertTitle>Important</AlertTitle>
+                          <AlertDescription>
+                            Streams with 0x0 resolution or 0 bitrate are always considered dead, regardless of these settings.
+                            These thresholds provide additional quality controls beyond basic dead stream detection.
+                          </AlertDescription>
+                        </Alert>
+                      </>
+                    )}
+
+                    {/* Dead Streams List */}
+                    <Separator className="my-6" />
+                    
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h4 className="font-medium">Dead Streams List</h4>
+                          <p className="text-sm text-muted-foreground">
+                            View and manage streams that have been marked as dead
+                          </p>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={loadDeadStreams}
+                            disabled={deadStreamsLoading}
+                          >
+                            {deadStreamsLoading ? (
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            ) : (
+                              <RefreshCw className="mr-2 h-4 w-4" />
+                            )}
+                            Refresh
+                          </Button>
+                          {deadStreams.length > 0 && (
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              onClick={handleClearAllDeadStreams}
+                              disabled={actionLoading === 'clear-all-dead'}
+                            >
+                              {actionLoading === 'clear-all-dead' ? (
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              ) : (
+                                <Trash2 className="mr-2 h-4 w-4" />
+                              )}
+                              Clear All
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+
+                      {deadStreamsLoading ? (
+                        <div className="flex items-center justify-center py-8">
+                          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                        </div>
+                      ) : deadStreams.length === 0 ? (
+                        <Alert>
+                          <CheckCircle2 className="h-4 w-4" />
+                          <AlertTitle>No Dead Streams</AlertTitle>
+                          <AlertDescription>
+                            No streams are currently marked as dead. This is good news!
+                          </AlertDescription>
+                        </Alert>
+                      ) : (
+                        <>
+                          <div className="space-y-2">
+                            {deadStreams.map((stream) => (
+                              <Card key={stream.url} className="p-4">
+                                <div className="flex items-start justify-between gap-4">
+                                  <div className="flex-1 space-y-1">
+                                    <div className="flex items-center gap-2">
+                                      <Badge variant="destructive">Dead</Badge>
+                                      <span className="font-medium">{stream.stream_name}</span>
+                                    </div>
+                                    <div className="text-sm text-muted-foreground space-y-1">
+                                      <div className="flex items-center gap-2">
+                                        <span className="font-mono text-xs">{stream.url}</span>
+                                      </div>
+                                      {stream.marked_dead_at && (
+                                        <div className="flex items-center gap-2">
+                                          <Clock className="h-3 w-3" />
+                                          <span>Marked dead: {new Date(stream.marked_dead_at).toLocaleString()}</span>
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => handleReviveStream(stream.url)}
+                                    disabled={actionLoading === `revive-${stream.url}`}
+                                  >
+                                    {actionLoading === `revive-${stream.url}` ? (
+                                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                    ) : (
+                                      <CheckCircle2 className="mr-2 h-4 w-4" />
+                                    )}
+                                    Revive
+                                  </Button>
+                                </div>
+                              </Card>
+                            ))}
+                          </div>
+                          
+                          {/* Pagination */}
+                          {deadStreamsPagination.total_pages > 1 && (
+                            <div className="flex flex-col items-center gap-2 pt-4">
+                              <div className="text-sm text-muted-foreground">
+                                Showing page {deadStreamsPagination.page} of {deadStreamsPagination.total_pages} ({totalDeadStreams} total)
+                              </div>
+                              <Pagination>
+                                <PaginationContent>
+                                  <PaginationItem>
+                                    <PaginationPrevious 
+                                      onClick={() => deadStreamsPagination.has_prev && loadDeadStreams(deadStreamsPagination.page - 1)}
+                                      className={!deadStreamsPagination.has_prev ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
+                                    />
+                                  </PaginationItem>
+                                  
+                                  {/* Show page numbers with smart windowing */}
+                                  {(() => {
+                                    const currentPage = deadStreamsPagination.page
+                                    const totalPages = deadStreamsPagination.total_pages
+                                    const maxVisiblePages = PAGINATION_MAX_VISIBLE_PAGES
+                                    let startPage, endPage
+                                    
+                                    if (totalPages <= maxVisiblePages) {
+                                      // Show all pages if total is less than max
+                                      startPage = 1
+                                      endPage = totalPages
+                                    } else {
+                                      // Calculate range to show current page in the middle when possible
+                                      const halfVisible = Math.floor(maxVisiblePages / 2)
+                                      
+                                      if (currentPage <= halfVisible + 1) {
+                                        // Near the start
+                                        startPage = 1
+                                        endPage = maxVisiblePages
+                                      } else if (currentPage >= totalPages - halfVisible) {
+                                        // Near the end
+                                        startPage = totalPages - maxVisiblePages + 1
+                                        endPage = totalPages
+                                      } else {
+                                        // In the middle
+                                        startPage = currentPage - halfVisible
+                                        endPage = currentPage + halfVisible
+                                      }
+                                    }
+                                    
+                                    return Array.from({ length: endPage - startPage + 1 }, (_, i) => {
+                                      const pageNum = startPage + i
+                                      return (
+                                        <PaginationItem key={pageNum}>
+                                          <PaginationLink
+                                            onClick={() => loadDeadStreams(pageNum)}
+                                            isActive={pageNum === currentPage}
+                                            className="cursor-pointer"
+                                          >
+                                            {pageNum}
+                                          </PaginationLink>
+                                        </PaginationItem>
+                                      )
+                                    })
+                                  })()}
+                                  
+                                  <PaginationItem>
+                                    <PaginationNext 
+                                      onClick={() => deadStreamsPagination.has_next && loadDeadStreams(deadStreamsPagination.page + 1)}
+                                      className={!deadStreamsPagination.has_next ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
+                                    />
+                                  </PaginationItem>
+                                </PaginationContent>
+                              </Pagination>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </TabsContent>
+              </Tabs>
+
+              {configEditing && (
+                <div className="flex justify-end gap-2 pt-4">
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setEditedConfig(config)
+                      setConfigEditing(false)
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={handleSaveConfig}
+                    disabled={actionLoading === 'save-config'}
+                  >
+                    {actionLoading === 'save-config' ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : null}
+                    Save Configuration
+                  </Button>
+                </div>
+              )}
+            </>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  )
+}

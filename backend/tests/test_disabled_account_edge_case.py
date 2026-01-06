@@ -8,7 +8,7 @@ accounts to disappear from the UI.
 """
 
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, patch, MagicMock
 import sys
 import os
 import json
@@ -20,9 +20,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 class TestDisabledAccountEdgeCase(unittest.TestCase):
     """Test the edge case fix for disabled accounts with null URLs."""
     
+    @patch('m3u_priority_config.get_m3u_priority_config')
     @patch('api_utils.has_custom_streams')
     @patch('api_utils.get_m3u_accounts')
-    def test_edge_case_disabled_account_still_shown(self, mock_get_accounts, mock_has_custom):
+    def test_edge_case_disabled_account_still_shown(self, mock_get_accounts, mock_has_custom, mock_priority_config):
         """
         Test the edge case that was fixed:
         
@@ -34,11 +35,16 @@ class TestDisabledAccountEdgeCase(unittest.TestCase):
         """
         from web_api import app
         
+        # Mock priority config
+        mock_config = MagicMock()
+        mock_config.get_global_priority_mode.return_value = 'disabled'
+        mock_priority_config.return_value = mock_config
+        
         # Mock accounts including a disabled one with null URLs
         mock_get_accounts.return_value = [
-            {'id': 1, 'name': 'Account A', 'server_url': 'http://example.com/playlist.m3u'},
-            {'id': 2, 'name': 'Account B', 'server_url': None, 'file_path': None},  # Disabled
-            {'id': 3, 'name': 'custom', 'server_url': None, 'file_path': None},  # Should be filtered
+            {'id': 1, 'name': 'Account A', 'server_url': 'http://example.com/playlist.m3u', 'is_active': True},
+            {'id': 2, 'name': 'Account B', 'server_url': None, 'file_path': None, 'is_active': True},  # Disabled
+            {'id': 3, 'name': 'custom', 'server_url': None, 'file_path': None, 'is_active': True},  # Should be filtered
         ]
         
         # No custom streams
@@ -48,16 +54,21 @@ class TestDisabledAccountEdgeCase(unittest.TestCase):
             response = client.get('/api/m3u-accounts')
             data = json.loads(response.data)
             
+            # Response should be an object with 'accounts' and 'global_priority_mode' keys
+            self.assertIn('accounts', data)
+            
             # Should return Account A and Account B (not "custom")
-            self.assertEqual(len(data), 2)
-            account_names = [acc['name'] for acc in data]
+            accounts = data['accounts']
+            self.assertEqual(len(accounts), 2)
+            account_names = [acc['name'] for acc in accounts]
             self.assertIn('Account A', account_names)
             self.assertIn('Account B', account_names)  # Disabled account is kept!
             self.assertNotIn('custom', account_names)  # Only "custom" is filtered
     
+    @patch('m3u_priority_config.get_m3u_priority_config')
     @patch('api_utils.has_custom_streams')
     @patch('api_utils.get_m3u_accounts')
-    def test_file_based_account_with_null_server_url_shown(self, mock_get_accounts, mock_has_custom):
+    def test_file_based_account_with_null_server_url_shown(self, mock_get_accounts, mock_has_custom, mock_priority_config):
         """
         Test that file-based accounts with null server_url are kept.
         
@@ -68,10 +79,15 @@ class TestDisabledAccountEdgeCase(unittest.TestCase):
         """
         from web_api import app
         
+        # Mock priority config
+        mock_config = MagicMock()
+        mock_config.get_global_priority_mode.return_value = 'disabled'
+        mock_priority_config.return_value = mock_config
+        
         mock_get_accounts.return_value = [
-            {'id': 1, 'name': 'Online Provider', 'server_url': 'http://example.com'},
-            {'id': 2, 'name': 'Local File', 'server_url': None, 'file_path': '/path/to/playlist.m3u'},
-            {'id': 3, 'name': 'custom', 'server_url': None, 'file_path': None},
+            {'id': 1, 'name': 'Online Provider', 'server_url': 'http://example.com', 'is_active': True},
+            {'id': 2, 'name': 'Local File', 'server_url': None, 'file_path': '/path/to/playlist.m3u', 'is_active': True},
+            {'id': 3, 'name': 'custom', 'server_url': None, 'file_path': None, 'is_active': True},
         ]
         
         mock_has_custom.return_value = False
@@ -80,16 +96,21 @@ class TestDisabledAccountEdgeCase(unittest.TestCase):
             response = client.get('/api/m3u-accounts')
             data = json.loads(response.data)
             
+            # Response should be an object with 'accounts' and 'global_priority_mode' keys
+            self.assertIn('accounts', data)
+            
             # Should return both Online Provider and Local File (not "custom")
-            self.assertEqual(len(data), 2)
-            account_names = [acc['name'] for acc in data]
+            accounts = data['accounts']
+            self.assertEqual(len(accounts), 2)
+            account_names = [acc['name'] for acc in accounts]
             self.assertIn('Online Provider', account_names)
             self.assertIn('Local File', account_names)
             self.assertNotIn('custom', account_names)
     
+    @patch('m3u_priority_config.get_m3u_priority_config')
     @patch('api_utils.has_custom_streams')
     @patch('api_utils.get_m3u_accounts')
-    def test_all_accounts_disabled_except_custom(self, mock_get_accounts, mock_has_custom):
+    def test_all_accounts_disabled_except_custom(self, mock_get_accounts, mock_has_custom, mock_priority_config):
         """
         Test edge case where all real accounts are disabled, only custom remains.
         
@@ -101,10 +122,15 @@ class TestDisabledAccountEdgeCase(unittest.TestCase):
         """
         from web_api import app
         
+        # Mock priority config
+        mock_config = MagicMock()
+        mock_config.get_global_priority_mode.return_value = 'disabled'
+        mock_priority_config.return_value = mock_config
+        
         mock_get_accounts.return_value = [
-            {'id': 1, 'name': 'Disabled A', 'server_url': None, 'file_path': None},
-            {'id': 2, 'name': 'Disabled B', 'server_url': None, 'file_path': None},
-            {'id': 3, 'name': 'custom', 'server_url': None, 'file_path': None},
+            {'id': 1, 'name': 'Disabled A', 'server_url': None, 'file_path': None, 'is_active': True},
+            {'id': 2, 'name': 'Disabled B', 'server_url': None, 'file_path': None, 'is_active': True},
+            {'id': 3, 'name': 'custom', 'server_url': None, 'file_path': None, 'is_active': True},
         ]
         
         mock_has_custom.return_value = False
@@ -113,9 +139,13 @@ class TestDisabledAccountEdgeCase(unittest.TestCase):
             response = client.get('/api/m3u-accounts')
             data = json.loads(response.data)
             
+            # Response should be an object with 'accounts' and 'global_priority_mode' keys
+            self.assertIn('accounts', data)
+            
             # Should return both disabled accounts (not "custom")
-            self.assertEqual(len(data), 2)
-            account_names = [acc['name'] for acc in data]
+            accounts = data['accounts']
+            self.assertEqual(len(accounts), 2)
+            account_names = [acc['name'] for acc in accounts]
             self.assertIn('Disabled A', account_names)
             self.assertIn('Disabled B', account_names)
             self.assertNotIn('custom', account_names)

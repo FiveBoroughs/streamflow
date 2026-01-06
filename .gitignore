@@ -6,6 +6,10 @@ automation_config.json
 channel_regex_config.json
 changelog.json
 
+# Version files (generated during build)
+backend/version.txt
+frontend/public/version.txt
+
 # CSV data files
 csv/*.csv
 
@@ -13,6 +17,9 @@ csv/*.csv
 frontend/build/
 frontend/node_modules/
 backend/static/
+
+# Development data directory
+data/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -30,7 +37,9 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+# Python lib directories (but not frontend/src/lib)
+/lib/
+backend/lib/
 lib64/
 parts/
 sdist/
@@ -220,3 +229,11 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# UDI data files (runtime data)
+backend/data/udi/
+
+.vscode
+node_modules
+package-lock.json
+package.json
