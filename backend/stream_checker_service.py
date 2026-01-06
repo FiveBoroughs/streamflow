@@ -26,9 +26,11 @@ import os
 import threading
 import time
 from collections import defaultdict, deque
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple, Any
+import re
 import queue
 
 from api_utils import (
@@ -181,7 +183,7 @@ def reorder_streams_by_event_time(channel_id: str, stream_ids: List[int]) -> Lis
         return stream_ids
 
 
-def parse_event_time_with_pattern(stream_name: str, pattern: str) -> tuple:
+def parse_event_time_with_pattern(stream_name: str, pattern: str, timezone_str: str = None) -> tuple:
     """Parse event time from stream name using a custom regex pattern with named groups.
 
     Expected named groups: year, month, day, hour, minute, second, ampm, order, league
@@ -189,6 +191,7 @@ def parse_event_time_with_pattern(stream_name: str, pattern: str) -> tuple:
     Args:
         stream_name: The stream name to parse
         pattern: Regex pattern with named capture groups
+        timezone_str: Optional IANA timezone string (e.g., 'America/New_York')
 
     Returns:
         tuple of (datetime, order_num) - datetime object if found (None otherwise), order number for tiebreaking
@@ -210,7 +213,8 @@ def parse_event_time_with_pattern(stream_name: str, pattern: str) -> tuple:
         order_num = int(order_val) if order_val and order_val.isdigit() else 999
 
         # Extract components with defaults
-        now = datetime.utcnow()
+        # Use UTC now for defaults to avoid local time issues
+        now = datetime.now(timezone.utc)
 
         # Year
         year = int(groups.get('year', now.year)) if groups.get('year') else now.year
@@ -244,14 +248,31 @@ def parse_event_time_with_pattern(stream_name: str, pattern: str) -> tuple:
         minute = int(groups.get('minute', 0)) if groups.get('minute') else 0
         second = int(groups.get('second', 0)) if groups.get('second') else 0
 
-        return (datetime(year, month, day, hour, minute, second), order_num)
+        # Create datetime object
+        dt = datetime(year, month, day, hour, minute, second)
+
+        # Apply timezone if provided
+        if timezone_str:
+            try:
+                tz = ZoneInfo(timezone_str)
+                # Attach the timezone
+                dt = dt.replace(tzinfo=tz)
+                # Convert to UTC
+                dt = dt.astimezone(timezone.utc)
+                # Make it offset-naive UTC for consistency with rest of system
+                dt = dt.replace(tzinfo=None)
+            except Exception as e:
+                logging.warning(f"Invalid timezone {timezone_str}: {e}")
+                # Fallback: treat as local/naive
+        
+        return (dt, order_num)
 
     except Exception as e:
         logging.debug(f"Failed to parse event time with pattern: {e}")
         return (None, 999)
 
 
-def parse_event_time_multi_format(stream_name: str) -> Optional[datetime]:
+def parse_event_time_multi_format(stream_name: str, timezone_str: str = None) -> Optional[datetime]:
     """Parse event time from stream name supporting multiple formats.
 
     Supported formats:
@@ -261,15 +282,32 @@ def parse_event_time_multi_format(stream_name: str) -> Optional[datetime]:
 
     Args:
         stream_name: The stream name to parse
+        timezone_str: Optional IANA timezone string (e.g., 'America/New_York')
 
     Returns:
         datetime object if found, None otherwise
     """
+    now_utc = datetime.now(timezone.utc)
+    target_tz = None
+    if timezone_str:
+        try:
+            target_tz = ZoneInfo(timezone_str)
+        except Exception as e:
+            logging.warning(f"Invalid stream timezone {timezone_str} for multi-format parser: {e}")
+
+    def _localize_and_convert_to_utc(dt: datetime) -> datetime:
+        if target_tz and dt.tzinfo is None:
+            # Localize naive datetime to the target timezone
+            dt = dt.replace(tzinfo=target_tz)
+        # Convert to UTC
+        return dt.astimezone(timezone.utc).replace(tzinfo=None) # Make it offset-naive UTC
+
     # Format 1: start:YYYY-MM-DD HH:MM:SS
     match = EVENT_TIME_PATTERN.search(stream_name)
     if match:
         try:
-            return datetime.strptime(match.group(1), '%Y-%m-%d %H:%M:%S')
+            dt = datetime.strptime(match.group(1), '%Y-%m-%d %H:%M:%S')
+            return _localize_and_convert_to_utc(dt)
         except ValueError:
             pass
 
@@ -290,8 +328,16 @@ def parse_event_time_multi_format(stream_name: str) -> Optional[datetime]:
             months = {'jan':1,'feb':2,'mar':3,'apr':4,'may':5,'jun':6,
                      'jul':7,'aug':8,'sep':9,'oct':10,'nov':11,'dec':12}
             month = months.get(month_str.lower()[:3], 1)
-            return datetime(2025, month, day, hour, 0, 0)
-        except:
+            
+            if month is None:
+                return None # Invalid month string
+            
+            # Use current year, assuming event is in the current year
+            year = datetime.now().year
+            
+            dt = datetime(year, month, day, hour, 0, 0)
+            return _localize_and_convert_to_utc(dt)
+        except (ValueError, IndexError):
             pass
 
     # Format 3: - 7PM EventName (time only, assume today)
@@ -306,13 +352,14 @@ def parse_event_time_multi_format(stream_name: str) -> Optional[datetime]:
             elif ampm == 'AM' and hour == 12:
                 hour = 0
 
-            now = datetime.utcnow()
+            # Use local time
+            now = datetime.now()
             return datetime(now.year, now.month, now.day, hour, 0, 0)
         except:
             pass
 
-    return None
-
+    # Format 4: HH:MM (24-hour time at end of string, e.g. "Bournemouth 21:00")
+    match = re.search(r'\s+(\d{1,2}):(\d{2})\s*
 
 def get_moved_streams_file():
     """Get path to the moved streams tracking file."""
@@ -539,8 +586,10 @@ def handle_overflow_conflicts(streams_data: list, channel_id: int, overflow_chan
                     # Only remove streams that are going to this overflow channel
                     streams_for_this_overflow = [sid for sid in streams_to_remove if sid in stream_ids]
                     if streams_for_this_overflow:
-                        remove_streams_from_channel(streams_for_this_overflow, source_channel_id, valid_stream_ids)
-                        logging.info(f"Removed {len(streams_for_this_overflow)} streams from channel {source_channel_id}")
+                        # Only remove if source is not the target overflow channel (avoid clearing channel)
+                        if source_channel_id != overflow_id:
+                            remove_streams_from_channel(streams_for_this_overflow, source_channel_id, valid_stream_ids)
+                            logging.info(f"Removed {len(streams_for_this_overflow)} streams from channel {source_channel_id}")
 
                 # Track for return to main channel
                 tracking['moved_streams'].append({
@@ -596,16 +645,20 @@ def return_moved_streams():
         logging.error(f"Error returning moved streams: {e}")
 
 
-def apply_event_time_ordering_for_channels(channel_ids: List[int], channels_config: dict = None):
+def apply_event_time_ordering_for_channels(channel_ids: List[int], channels_config: dict = None, global_settings: dict = None):
     """Apply event time ordering to specific channels.
 
     Args:
         channel_ids: List of channel IDs to order
         channels_config: Optional dict with per-channel config including custom patterns
+        global_settings: Optional dict with global event ordering settings
     """
     try:
         base_url = _get_base_url()
         reordered_count = 0
+
+        # Get global stream timezone if available
+        global_stream_timezone = global_settings.get('stream_timezone') if global_settings else None
 
         # Collect all stream IDs we work with - they're valid since they come from channels
         all_stream_ids = set()
@@ -624,6 +677,9 @@ def apply_event_time_ordering_for_channels(channel_ids: List[int], channels_conf
                 custom_pattern = None
                 overflow_channel_ids = []
                 return_after_hours = 6
+                timezone_offset = 0
+                stream_timezone = global_stream_timezone # Default to global if not set per channel
+
                 if channels_config and str(channel_id) in channels_config:
                     channel_config = channels_config[str(channel_id)]
                     custom_pattern = channel_config.get('pattern')
@@ -632,6 +688,10 @@ def apply_event_time_ordering_for_channels(channel_ids: List[int], channels_conf
                     if not overflow_channel_ids and channel_config.get('overflow_channel_id'):
                         overflow_channel_ids = [channel_config.get('overflow_channel_id')]
                     return_after_hours = channel_config.get('return_after_hours', 6)
+                    timezone_offset = channel_config.get('timezone_offset', 0)
+                    # Channel-specific stream_timezone overrides global
+                    if channel_config.get('stream_timezone'):
+                        stream_timezone = channel_config.get('stream_timezone')
 
                 # Get current streams
                 streams = fetch_data_from_url(f"{base_url}/api/channels/channels/{channel_id}/streams/")
@@ -656,19 +716,44 @@ def apply_event_time_ordering_for_channels(channel_ids: List[int], channels_conf
 
                         # Use custom pattern if available, otherwise fall back to multi-format parser
                         if custom_pattern:
-                            event_time, item_num = parse_event_time_with_pattern(stream_name, custom_pattern)
+                            event_time, item_num = parse_event_time_with_pattern(stream_name, custom_pattern, stream_timezone)
                             if idx == 0:  # Log first stream for debugging
                                 logging.info(f"Parsed first stream: event_time={event_time}, item_num={item_num}")
+                            
+                            # Fallback if pattern failed to match time
+                            if event_time is None:
+                                fallback_time, _ = parse_event_time_multi_format(stream_name, stream_timezone)
+                                if fallback_time:
+                                    event_time = fallback_time
                         else:
-                            event_time = parse_event_time_multi_format(stream_name)
+                            event_time, item_num = parse_event_time_multi_format(stream_name, stream_timezone)
                             # Fall back to extracting number for ordering (e.g., "PPV 1", "EVENT 06", "UFC 02")
-                            num_match = re.search(r'(?:PPV|EVENT|UFC|NBA)\s*(\d+)', stream_name, re.IGNORECASE)
-                            item_num = int(num_match.group(1)) if num_match else 999
+                            if item_num is None:
+                                num_match = re.search(r'(?:PPV|EVENT|UFC|NBA)\s*(\d+)', stream_name, re.IGNORECASE)
+                                item_num = int(num_match.group(1)) if num_match else 999
+
+                        # Try to parse stop time generically to identify finished events
+                        stop_time = None
+                        stop_match = re.search(r'stop:(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})', stream_name)
+                        if stop_match:
+                            try:
+                                dt = datetime.strptime(stop_match.group(1), '%Y-%m-%d %H:%M:%S')
+                                # Convert to UTC, assuming stream_timezone for naive time
+                                if stream_timezone:
+                                    try:
+                                        tz = ZoneInfo(stream_timezone)
+                                        dt = dt.replace(tzinfo=tz).astimezone(timezone.utc).replace(tzinfo=None)
+                                    except Exception as e:
+                                        logging.warning(f"Invalid timezone {stream_timezone} for stop time: {e}")
+                                stop_time = dt
+                            except ValueError:
+                                pass
 
                         streams_data.append({
                             'id': stream_id,
                             'name': stream_name,
                             'event_time': event_time,
+                            'stop_time': stop_time,
                             'item_num': item_num,
                             'original_index': idx
                         })
@@ -681,27 +766,55 @@ def apply_event_time_ordering_for_channels(channel_ids: List[int], channels_conf
 
                 if has_times:
                     # Sort by event time
-                    now = datetime.utcnow()
-                    buffer_hours = 2
+                    # All times are now UTC, so compare to UTC now
+                    now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+                    
+                    # Apply timezone offset to 'now' for classification comparison only
+                    # This ensures 'now' reflects the user's perception of current time relative to events
+                    now = now_utc + timedelta(hours=timezone_offset)
+                    
+                    # Use configured return_after_hours as the buffer for "live" status
+                    # This keeps events at the top for their entire duration
+                    buffer_hours = return_after_hours
 
-                    upcoming = []
+                    future = []
+                    live = []
                     past = []
 
                     for s in streams_data:
                         if s['event_time']:
+                            # Check if explicit stop time exists and is passed
+                            if s['stop_time'] and now > s['stop_time']:
+                                past.append(s)
+                                continue
+
+                            # Calculate time difference
+                            # hours_diff positive = past event (now > event)
+                            # hours_diff negative = future event (now < event)
                             hours_diff = (now - s['event_time']).total_seconds() / 3600
-                            if hours_diff < buffer_hours:
-                                upcoming.append(s)
+                            
+                            if hours_diff < 0:
+                                # Future event
+                                future.append(s)
+                            elif hours_diff < buffer_hours:
+                                # Live event (started within buffer window)
+                                live.append(s)
                             else:
+                                # Past event (started longer than buffer ago)
                                 past.append(s)
                         else:
                             past.append(s)
 
-                    # Sort upcoming by time, past by time desc
-                    upcoming.sort(key=lambda x: (x['event_time'], x['item_num']))
+                    # 1. Future: Sort ASC (soonest upcoming first)
+                    future.sort(key=lambda x: (x['event_time'], x['item_num']))
+                    
+                    # 2. Live: Sort DESC (most recently started first)
+                    live.sort(key=lambda x: (x['event_time'], x['item_num']), reverse=True)
+                    
+                    # 3. Past: Sort DESC (most recently ended/started first)
                     past.sort(key=lambda x: (x['event_time'] or datetime.min, x['item_num']), reverse=True)
 
-                    ordered = upcoming + past
+                    ordered = future + live + past
                 else:
                     # No times, sort by item number
                     streams_data.sort(key=lambda x: x['item_num'])
@@ -720,7 +833,9 @@ def apply_event_time_ordering_for_channels(channel_ids: List[int], channels_conf
 
                     success = update_channel_streams(str(channel_id), reordered_ids, valid_stream_ids, allow_dead_streams=True)
                     if success:
-                        logging.info(f"✓ Reordered {channel_name}: {len([s for s in ordered if s.get('event_time') and (datetime.utcnow() - s['event_time']).total_seconds() / 3600 < 2])} upcoming")
+                        # Calculate total "upcoming" count (future + live) for log
+                        upcoming_count = len(future) + len(live)
+                        logging.info(f"✓ Reordered {channel_name}: {upcoming_count} upcoming")
                         reordered_count += 1
                     else:
                         logging.error(f"✗ Failed to update {channel_name}")
@@ -2244,17 +2359,32 @@ class StreamCheckerService:
                     analyzed['score'] = score
                     analyzed_streams.append(analyzed)
             
-            # Sort streams by score (highest first)
-            self.progress.update(
-                channel_id=channel_id,
-                channel_name=channel_name,
-                current=len(streams),
-                total=len(streams),
-                status='processing',
-                step='Calculating scores',
-                step_detail='Sorting streams by quality score'
-            )
-            analyzed_streams.sort(key=lambda x: x.get('score', 0), reverse=True)
+            # Check if event ordering is enabled for this channel
+            regex_config_path = get_regex_config_file()
+            is_event_channel = False
+            if regex_config_path.exists():
+                try:
+                    with open(regex_config_path, 'r') as f:
+                        regex_config = json.load(f)
+                        if str(channel_id) in regex_config.get('event_ordering', {}).get('channels', {}):
+                            is_event_channel = True
+                except:
+                    pass
+
+            # Sort streams by score (highest first) - ONLY if not an event channel
+            if not is_event_channel:
+                self.progress.update(
+                    channel_id=channel_id,
+                    channel_name=channel_name,
+                    current=len(streams),
+                    total=len(streams),
+                    status='processing',
+                    step='Calculating scores',
+                    step_detail='Sorting streams by quality score'
+                )
+                analyzed_streams.sort(key=lambda x: x.get('score', 0), reverse=True)
+            else:
+                logging.info(f"Skipping quality sort for channel {channel_name} (Event Ordering enabled)")
             
             # Remove dead streams from the channel (unless it's a force check/global check)
             # During global checks, we want to give dead streams a chance to be revived
@@ -2272,20 +2402,34 @@ class StreamCheckerService:
             if revived_stream_ids:
                 logging.info(f"{len(revived_stream_ids)} streams were revived in channel {channel_name}")
             
-            # Update channel with reordered streams
+            # Update channel with streams
             self.progress.update(
                 channel_id=channel_id,
                 channel_name=channel_name,
                 current=len(streams),
                 total=len(streams),
                 status='updating',
-                step='Reordering streams',
-                step_detail='Applying new stream order to channel'
+                step='Updating channel',
+                step_detail='Applying stream updates'
             )
             reordered_ids = [s['stream_id'] for s in analyzed_streams]
             # Allow dead streams during force_check (global checks) to give them a second chance
             update_channel_streams(channel_id, reordered_ids, allow_dead_streams=force_check)
-            
+
+            # If this is an event channel, re-apply event ordering now that dead streams are gone
+            if is_event_channel:
+                logging.info(f"Re-applying event ordering for channel {channel_name}")
+                apply_event_time_ordering_for_channels([channel_id])
+                
+                # Re-fetch reordered IDs for verification
+                # We need to fetch again because apply_event_time_ordering_for_channels updates the channel
+                time.sleep(0.5) # Wait for update to propagate
+                reordered_ids = [] # Reset for verification
+                updated_channel_data = fetch_data_from_url(f"{base_url}/api/channels/channels/{channel_id}/?include_streams=true")
+                if updated_channel_data:
+                    streams = updated_channel_data.get('streams', [])
+                    reordered_ids = [s['id'] if isinstance(s, dict) else s for s in streams]
+
             # Verify the update was applied correctly
             self.progress.update(
                 channel_id=channel_id,
@@ -2303,16 +2447,19 @@ class StreamCheckerService:
                 # Extract stream IDs from full stream objects
                 streams = updated_channel_data.get('streams', [])
                 updated_stream_ids = [s['id'] if isinstance(s, dict) else s for s in streams]
-                logging.info(f"🔍 DEBUG GET: Verification streams order: {updated_stream_ids[:10]}...")
-                if updated_stream_ids == reordered_ids:
-                    logging.info(f"✓ Verified: Channel {channel_name} streams reordered correctly")
+                # Only verify exact match if not event channel (event ordering might have changed it again)
+                if not is_event_channel:
+                    if updated_stream_ids == reordered_ids:
+                        logging.info(f"✓ Verified: Channel {channel_name} streams reordered correctly")
+                    else:
+                        logging.warning(f"⚠ Verification failed: Stream order mismatch for channel {channel_name}")
+                        logging.warning(f"Expected: {reordered_ids[:5]}... Got: {updated_stream_ids[:5]}...")
                 else:
-                    logging.warning(f"⚠ Verification failed: Stream order mismatch for channel {channel_name}")
-                    logging.warning(f"Expected: {reordered_ids[:5]}... Got: {updated_stream_ids[:5]}...")
+                     logging.info(f"✓ Channel {channel_name} updated (Event ordering applied)")
             else:
                 logging.warning(f"⚠ Could not verify stream update for channel {channel_name}")
             
-            logging.info(f"✓ Channel {channel_name} checked and streams reordered")
+            logging.info(f"✓ Channel {channel_name} checked")
             
             # Add changelog entry with stream stats
             if self.changelog:

@@ -41,57 +41,26 @@ function EventOrderingConfig() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
+  // Global Settings state
+  const [availableTimezones, setAvailableTimezones] = useState([]);
+  const [channelTimezone, setChannelTimezone] = useState('');
+
   // Regex builder state
   const [words, setWords] = useState([]);
   const [wordData, setWordData] = useState({});
   const [selectedWords, setSelectedWords] = useState(new Set());
 
-  // Categories for time components
-  // Muted color palette for channels
-  const channelColors = [
-    { bg: '#2d3748', border: '#4a5568', text: '#e2e8f0' }, // slate
-    { bg: '#2c3e50', border: '#34495e', text: '#ecf0f1' }, // dark blue
-    { bg: '#3d3d3d', border: '#5a5a5a', text: '#e0e0e0' }, // gray
-    { bg: '#1e3a5f', border: '#2980b9', text: '#aed6f1' }, // blue
-    { bg: '#4a2c2a', border: '#6b3a38', text: '#f5b7b1' }, // muted red
-    { bg: '#2e4a3e', border: '#27ae60', text: '#a9dfbf' }, // green
-    { bg: '#4a3f2e', border: '#d4a574', text: '#fdebd0' }, // tan
-    { bg: '#3e2a4a', border: '#8e44ad', text: '#d7bde2' }, // purple
-    { bg: '#2a3e4a', border: '#5dade2', text: '#aed6f1' }, // teal
-    { bg: '#4a3e2a', border: '#f39c12', text: '#fdebd0' }, // amber
-  ];
+  // Initialize available timezones
+  useEffect(() => {
+    if (Intl && Intl.supportedValuesOf) {
+      setAvailableTimezones(Intl.supportedValuesOf('timeZone'));
+    } else {
+      // Fallback for older browsers
+      setAvailableTimezones(['UTC', 'America/New_York', 'Europe/London', 'Asia/Tokyo']); 
+    }
+  }, []);
 
-  const getChannelColor = (channelId) => {
-    const index = channels.findIndex(c => String(c.id) === String(channelId));
-    return channelColors[index % channelColors.length];
-  };
-
-  const categories = [
-    { id: 'league', label: 'League', color: '#f97316', tooltip: 'Event type (UFC, NBA, etc.)' },
-    { id: 'order', label: 'Order', color: '#a855f7', tooltip: 'Event number for tiebreaking when times match (lower first)' },
-    { id: 'year', label: 'Year', color: '#3b82f6' },
-    { id: 'month', label: 'Month', color: '#8b5cf6' },
-    { id: 'day', label: 'Day', color: '#06b6d4' },
-    { id: 'hour', label: 'Hour', color: '#10b981' },
-    { id: 'minute', label: 'Minute', color: '#f59e0b' },
-    { id: 'second', label: 'Second', color: '#ef4444' },
-    { id: 'ampm', label: 'AM/PM', color: '#ec4899' },
-    { id: 'ignore', label: 'Ignore', color: '#6b7280' }
-  ];
-
-  // Generated pattern
-  const [generatedPattern, setGeneratedPattern] = useState('');
-  const [testResults, setTestResults] = useState([]);
-  const [orderingPreview, setOrderingPreview] = useState([]);
-
-  // Overflow settings
-  const [overflowChannelIds, setOverflowChannelIds] = useState([]);
-  const [returnAfterHours, setReturnAfterHours] = useState(6);
-  const [overflowPreview, setOverflowPreview] = useState({ conflicts: [], staying: [], moving: [] });
-
-  // Config state
-  const [config, setConfig] = useState(null);
-
+  // Load initial data
   useEffect(() => {
     loadInitialData();
   }, []);
@@ -123,6 +92,7 @@ function EventOrderingConfig() {
     setOrderingPreview([]);
     setOverflowChannelIds([]);
     setReturnAfterHours(6);
+    setChannelTimezone(''); // Reset timezone
 
     if (!channelId) {
       setStreams([]);
@@ -185,6 +155,8 @@ function EventOrderingConfig() {
           (channelConfig.overflow_channel_id ? [channelConfig.overflow_channel_id] : []);
         setOverflowChannelIds(overflowIds);
         setReturnAfterHours(channelConfig.return_after_hours || 6);
+        setChannelTimezone(channelConfig.stream_timezone || ''); // Load per-channel timezone
+        
         // Test the existing pattern against all streams (main + overflow)
         if (channelConfig.pattern && allStreams.length > 0) {
           testPattern(channelConfig.pattern, allStreams);
@@ -192,6 +164,7 @@ function EventOrderingConfig() {
       } else {
         setOverflowChannelIds([]);
         setReturnAfterHours(6);
+        setChannelTimezone('');
       }
     } catch (err) {
       console.error('Failed to load streams:', err);
@@ -201,6 +174,52 @@ function EventOrderingConfig() {
       setLoadingStreams(false);
     }
   };
+
+  // Categories for time components
+  // Muted color palette for channels
+  const channelColors = [
+    { bg: '#2d3748', border: '#4a5568', text: '#e2e8f0' }, // slate
+    { bg: '#2c3e50', border: '#34495e', text: '#ecf0f1' }, // dark blue
+    { bg: '#3d3d3d', border: '#5a5a5a', text: '#e0e0e0' }, // gray
+    { bg: '#1e3a5f', border: '#2980b9', text: '#aed6f1' }, // blue
+    { bg: '#4a2c2a', border: '#6b3a38', text: '#f5b7b1' }, // muted red
+    { bg: '#2e4a3e', border: '#27ae60', text: '#a9dfbf' }, // green
+    { bg: '#4a3f2e', border: '#d4a574', text: '#fdebd0' }, // tan
+    { bg: '#3e2a4a', border: '#8e44ad', text: '#d7bde2' }, // purple
+    { bg: '#2a3e4a', border: '#5dade2', text: '#aed6f1' }, // teal
+    { bg: '#4a3e2a', border: '#f39c12', text: '#fdebd0' }, // amber
+  ];
+
+  const getChannelColor = (channelId) => {
+    const index = channels.findIndex(c => String(c.id) === String(channelId));
+    return channelColors[index % channelColors.length];
+  };
+
+  const categories = [
+    { id: 'league', label: 'League', color: '#f97316', tooltip: 'Event type (UFC, NBA, etc.)' },
+    { id: 'order', label: 'Order', color: '#a855f7', tooltip: 'Event number for tiebreaking when times match (lower first)' },
+    { id: 'year', label: 'Year', color: '#3b82f6' },
+    { id: 'month', label: 'Month', color: '#8b5cf6' },
+    { id: 'day', label: 'Day', color: '#06b6d4' },
+    { id: 'hour', label: 'Hour', color: '#10b981' },
+    { id: 'minute', label: 'Minute', color: '#f59e0b' },
+    { id: 'second', label: 'Second', color: '#ef4444' },
+    { id: 'ampm', label: 'AM/PM', color: '#ec4899' },
+    { id: 'ignore', label: 'Ignore', color: '#6b7280' }
+  ];
+
+  // Generated pattern
+  const [generatedPattern, setGeneratedPattern] = useState('');
+  const [testResults, setTestResults] = useState([]);
+  const [orderingPreview, setOrderingPreview] = useState([]);
+
+  // Overflow settings
+  const [overflowChannelIds, setOverflowChannelIds] = useState([]);
+  const [returnAfterHours, setReturnAfterHours] = useState(6);
+  const [overflowPreview, setOverflowPreview] = useState({ conflicts: [], staying: [], moving: [] });
+
+  // Config state
+  const [config, setConfig] = useState(null);
 
   const handleStreamSelect = (streamName) => {
     setSelectedStreamName(streamName);
@@ -214,8 +233,8 @@ function EventOrderingConfig() {
       return;
     }
 
-    // Split on whitespace and common delimiters, preserving delimiters
-    const tokens = sample.split(/(\s+|[|:@()#\-/])/g)
+    // Split on whitespace, common delimiters, and also between digits and am/pm, preserving delimiters
+    const tokens = sample.split(/(\s+|[|:@()#\-/]|(?<=\d)(?=[ap]m))/g)
       .filter(t => t && t.length > 0);
 
     const newWords = [];
@@ -321,6 +340,7 @@ function EventOrderingConfig() {
 
     let pattern = '';
     let lastCategorizedIndex = -1;
+    const usedCategories = {};
 
     allWords.forEach(([id, data]) => {
       if (data.category && data.category !== 'ignore') {
@@ -340,8 +360,16 @@ function EventOrderingConfig() {
           }
         }
 
-        // Add named capture group
-        pattern += `(?<${data.category}>${buildCapturePattern(data.text, data.category)})`;
+        // Add named capture group with unique name
+        let groupName = data.category;
+        if (usedCategories[data.category]) {
+          usedCategories[data.category]++;
+          groupName = `${data.category}_${usedCategories[data.category]}`;
+        } else {
+          usedCategories[data.category] = 1;
+        }
+
+        pattern += `(?<${groupName}>${buildCapturePattern(data.text, data.category)})`;
         lastCategorizedIndex = data.index;
       }
     });
@@ -406,7 +434,8 @@ function EventOrderingConfig() {
 
       // Generate ordering preview
       const now = new Date();
-      const bufferHours = 2;
+      // Use configured return duration as the buffer for "live" status
+      const bufferHours = returnAfterHours;
 
       const parsedStreams = streamsToTest.map((stream, idx) => {
         const match = stream.name.match(regex);
@@ -524,6 +553,13 @@ function EventOrderingConfig() {
       setOverflowPreview({ conflicts: [], staying: [], moving: [] });
     }
   }, [overflowChannelIds]);
+
+  // Re-run pattern test when returnAfterHours changes to update "Live/Upcoming" status
+  useEffect(() => {
+    if (generatedPattern && streams.length > 0) {
+      testPattern(generatedPattern, streams);
+    }
+  }, [returnAfterHours, generatedPattern, streams]);
 
   // Helper to parse groups to date
   const parseGroupsToDate = (groups) => {
@@ -656,7 +692,8 @@ function EventOrderingConfig() {
             pattern: generatedPattern,
             name: channel?.name || `Channel ${selectedChannelId}`,
             overflow_channel_ids: overflowChannelIds,
-            return_after_hours: returnAfterHours
+            return_after_hours: returnAfterHours,
+            stream_timezone: channelTimezone
           }
         }
       };
@@ -733,7 +770,7 @@ function EventOrderingConfig() {
         </Alert>
       )}
 
-      <Grid container spacing={2}>
+              <Grid container spacing={2}>
         {/* Configured Channels */}
         {config?.channels && Object.keys(config.channels).length > 0 && (
           <Grid item xs={12}>
@@ -837,6 +874,27 @@ function EventOrderingConfig() {
                 <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                   Drag words to their categories. Use Shift/Ctrl+click to select multiple words.
                 </Typography>
+
+                <Box sx={{ mb: 2 }}>
+                  <FormControl fullWidth size="small">
+                    <InputLabel>Stream Title Timezone (Optional)</InputLabel>
+                    <Select
+                      value={channelTimezone}
+                      onChange={(e) => setChannelTimezone(e.target.value)}
+                      label="Stream Title Timezone (Optional)"
+                    >
+                      <MenuItem value="">
+                        <em>Detect automatically / Local time</em>
+                      </MenuItem>
+                      {availableTimezones.map(tz => (
+                        <MenuItem key={tz} value={tz}>{tz}</MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                  <Typography variant="caption" color="text.secondary">
+                    If stream titles contain times (e.g. "10:00") without a timezone, specify which timezone they refer to (e.g. "America/New_York").
+                  </Typography>
+                </Box>
 
                 <Alert severity="info" sx={{ mb: 2 }}>
                   <Typography variant="body2">
