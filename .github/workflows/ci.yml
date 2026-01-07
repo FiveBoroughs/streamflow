@@ -1,20 +1,18 @@
 name: Build and Push Docker Image to GHCR
 
 on:
-  workflow_dispatch:
   release:
     types: [published]
   pull_request:
+    branches:
+      - dev
     types: [closed]
-    branches-ignore:
-      - main
 
 jobs:
   build:
     if: |
-      github.event_name == 'workflow_dispatch' ||
       github.event_name == 'release' ||
-      (github.event_name == 'pull_request' && github.event.pull_request.merged == true && github.base_ref != 'main')
+      (github.event_name == 'pull_request' && github.base_ref == 'dev' && github.event.pull_request.merged == true)
     runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
@@ -40,31 +38,6 @@ jobs:
         cd frontend
         npm ci
 
-    - name: Generate version file
-      run: |
-        # Determine version based on event and branch
-        if [ "${{ github.event_name }}" = "release" ]; then
-          # For releases, use the tag name (strip leading "v" if present)
-          raw_tag="${GITHUB_REF##*/}"
-          VERSION="${raw_tag#v}"
-        else
-          # For non-release builds, use branch name and build date
-          BRANCH_NAME="${GITHUB_REF##*/}"
-          # Sanitize branch name (replace / and other special chars with -)
-          SANITIZED_BRANCH=$(echo "${BRANCH_NAME}" | tr '/._' '---')
-          BUILD_DATE=$(date -u +%Y%m%d)
-          VERSION="${SANITIZED_BRANCH}-${BUILD_DATE}"
-        fi
-        
-        echo "Generated version: $VERSION"
-        
-        # Create version file for backend
-        echo "$VERSION" > backend/version.txt
-        
-        # Create version file for frontend build
-        mkdir -p frontend/public
-        echo "$VERSION" > frontend/public/version.txt
-
     - name: Build frontend
       run: |
         cd frontend
@@ -82,50 +55,31 @@ jobs:
           ${{ runner.os }}-${{ runner.arch }}-buildx-
 
     - name: Log in to GitHub Container Registry
+      if: github.event_name == 'release' || (github.event_name == 'pull_request' && github.base_ref == 'dev' && github.event.pull_request.merged == true)
       uses: docker/login-action@v3
       with:
         registry: ghcr.io
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Set image tag based on branch
-      id: set_tag
-      run: |
-        # For release events, use the tag name (strip leading "v" if present) so semver dots are preserved.
-        if [ "${{ github.event_name }}" = "release" ]; then
-          raw_tag="${GITHUB_REF##*/}"
-          # strip leading v if present, e.g. v2.0 -> 2.0
-          raw_tag="${raw_tag#v}"
-          image_tag="${raw_tag}"
-        elif [ "${GITHUB_REF##*/}" = "main" ]; then
-          image_tag="latest"
-        elif [ "${GITHUB_REF##*/}" = "dev" ]; then
-          image_tag="dev"
-        else
-          # Replace / and other invalid chars with -
-          branch_name="${GITHUB_REF##*/}"
-          sanitized_branch=$(echo "${branch_name}" | tr '/._' '---')
-          image_tag="${sanitized_branch}"
-        fi
-        echo "tag=$image_tag" >> $GITHUB_OUTPUT
-
     - name: Extract metadata
+      if: github.event_name == 'release' || (github.event_name == 'pull_request' && github.base_ref == 'dev' && github.event.pull_request.merged == true)
       id: meta
       uses: docker/metadata-action@v5
       with:
         images: ghcr.io/${{ github.repository_owner }}/streamflow
         tags: |
-          type=raw,value=${{ steps.set_tag.outputs.tag }}
           type=semver,pattern={{version}}
           type=semver,pattern={{major}}.{{minor}}
           type=semver,pattern={{major}}
+          type=raw,value=latest
 
     - name: Build and push Docker image by digest
       id: build
       uses: docker/build-push-action@v5
       with:
         context: .
-        file: ./Dockerfile
+        dockerfile: ./Dockerfile
         platforms: ${{ matrix.platform }}
         labels: ${{ steps.meta.outputs.labels }}
         cache-from: type=local,src=/tmp/.buildx-cache
@@ -154,9 +108,8 @@ jobs:
   merge:
     runs-on: ubuntu-latest
     if: |
-      github.event_name == 'workflow_dispatch' ||
       github.event_name == 'release' ||
-      (github.event_name == 'pull_request' && github.base_ref != 'main' && github.event.pull_request.merged == true)
+      (github.event_name == 'pull_request' && github.base_ref == 'dev' && github.event.pull_request.merged == true)
     needs:
       - build
     steps:
@@ -170,34 +123,16 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Set image tag based on branch
-        id: set_tag
-        run: |
-          if [ "${{ github.event_name }}" = "release" ]; then
-            raw_tag="${GITHUB_REF##*/}"
-            raw_tag="${raw_tag#v}"
-            image_tag="${raw_tag}"
-          elif [ "${GITHUB_REF##*/}" = "main" ]; then
-            image_tag="latest"
-          elif [ "${GITHUB_REF##*/}" = "dev" ]; then
-            image_tag="dev"
-          else
-            branch_name="${GITHUB_REF##*/}"
-            sanitized_branch=$(echo "${branch_name}" | tr '/._' '---')
-            image_tag="${sanitized_branch}"
-          fi
-          echo "tag=$image_tag" >> $GITHUB_OUTPUT
-
       - name: Docker meta
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository_owner }}/streamflow
           tags: |
-            type=raw,value=${{ steps.set_tag.outputs.tag }}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
+            type=raw,value=latest
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
@@ -209,19 +144,19 @@ jobs:
       - name: Create manifest list and push
         working-directory: /tmp/digests
         run: |
-          # Start with the primary tag (preserves the sanitized or semver tag chosen above)
-          tags="-t ghcr.io/${{ github.repository_owner }}/streamflow:${{ steps.set_tag.outputs.tag }}"
-          # For releases, also add the semver tags from metadata and a :latest tag
+          tags=""
           if [ "${{ github.event_name }}" = "release" ]; then
-            tags="$tags -t ghcr.io/${{ github.repository_owner }}/streamflow:latest $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< '${{ steps.meta.outputs.json }}')"
+            tags=$(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON")
+          else
+            tags="-t ghcr.io/${{ github.repository_owner }}/streamflow:pr-test"
           fi
-
-          # Buildx imagetools expects a list of tag args followed by the list of digests
-          # The files in this directory are the digest filenames (sha256:... stripped when created above)
-          digest_args=$(printf 'ghcr.io/${{ github.repository_owner }}/streamflow@sha256:%s ' *)
-
-          docker buildx imagetools create $tags $digest_args
+          docker buildx imagetools create $tags \
+            $(printf 'ghcr.io/${{ github.repository_owner }}/streamflow@sha256:%s ' *)
 
       - name: Inspect image
         run: |
-          docker buildx imagetools inspect ghcr.io/${{ github.repository_owner }}/streamflow:${{ steps.set_tag.outputs.tag }}
+          if [ "${{ github.event_name }}" = "release" ]; then
+            docker buildx imagetools inspect ghcr.io/${{ github.repository_owner }}/streamflow:${{ steps.meta.outputs.version }}
+          else
+            docker buildx imagetools inspect ghcr.io/${{ github.repository_owner }}/streamflow:pr-test
+          fi

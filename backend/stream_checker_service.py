@@ -37,7 +37,8 @@ from api_utils import (
     update_channel_streams,
     _get_base_url,
     patch_request,
-    get_valid_stream_ids
+    get_valid_stream_ids,
+    fetch_data_from_url
 )
 
 # Import UDI for direct data access
@@ -266,7 +267,7 @@ def parse_event_time_with_pattern(stream_name: str, pattern: str, timezone_str: 
         return (None, 999)
 
 
-def parse_event_time_multi_format(stream_name: str, timezone_str: str = None) -> Optional[datetime]:
+def parse_event_time_multi_format(stream_name: str, timezone_str: str = None) -> tuple:
     """Parse event time from stream name supporting multiple formats.
 
     Supported formats:
@@ -279,7 +280,7 @@ def parse_event_time_multi_format(stream_name: str, timezone_str: str = None) ->
         timezone_str: Optional IANA timezone string (e.g., 'America/New_York')
 
     Returns:
-        datetime object if found, None otherwise
+        tuple of (datetime, order_num) - datetime object if found (None otherwise), order number (default 999)
     """
     now_utc = datetime.now(timezone.utc)
     target_tz = None
@@ -301,7 +302,7 @@ def parse_event_time_multi_format(stream_name: str, timezone_str: str = None) ->
     if match:
         try:
             dt = datetime.strptime(match.group(1), '%Y-%m-%d %H:%M:%S')
-            return _localize_and_convert_to_utc(dt)
+            return (_localize_and_convert_to_utc(dt), 999)
         except ValueError:
             pass
 
@@ -324,13 +325,13 @@ def parse_event_time_multi_format(stream_name: str, timezone_str: str = None) ->
             month = months.get(month_str.lower()[:3], 1)
             
             if month is None:
-                return None # Invalid month string
+                return (None, 999) # Invalid month string
             
             # Use current year, assuming event is in the current year
             year = datetime.now().year
             
             dt = datetime(year, month, day, hour, 0, 0)
-            return _localize_and_convert_to_utc(dt)
+            return (_localize_and_convert_to_utc(dt), 999)
         except (ValueError, IndexError):
             pass
 
@@ -348,12 +349,28 @@ def parse_event_time_multi_format(stream_name: str, timezone_str: str = None) ->
 
             # Use local time
             now = datetime.now()
-            return datetime(now.year, now.month, now.day, hour, 0, 0)
+            dt = datetime(now.year, now.month, now.day, hour, 0, 0)
+            return (dt, 999) # Return as is, let system handle timezone if needed
         except:
             pass
 
     # Format 4: HH:MM (24-hour time at end of string, e.g. "Bournemouth 21:00")
-    match = re.search(r'\s+(\d{1,2}):(\d{2})\s*
+    match = re.search(r'\s+(\d{1,2}):(\d{2})\s*$', stream_name)
+    if match:
+        try:
+            hour = int(match.group(1))
+            minute = int(match.group(2))
+            
+            # Use local time
+            now = datetime.now()
+            dt = datetime(now.year, now.month, now.day, hour, minute, 0)
+            return (_localize_and_convert_to_utc(dt), 999)
+        except ValueError:
+            pass
+
+    return (None, 999)
+
+
 
 def get_moved_streams_file():
     """Get path to the moved streams tracking file."""

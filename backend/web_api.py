@@ -21,7 +21,7 @@ from flask import Flask, request, jsonify, send_from_directory, send_file
 from flask_cors import CORS
 
 from automated_stream_manager import AutomatedStreamManager, RegexChannelMatcher
-from api_utils import _get_base_url
+from api_utils import _get_base_url, fetch_data_from_url
 from stream_checker_service import get_stream_checker_service
 from scheduling_service import get_scheduling_service
 from channel_settings_manager import get_channel_settings_manager

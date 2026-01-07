@@ -875,27 +875,6 @@ function EventOrderingConfig() {
                   Drag words to their categories. Use Shift/Ctrl+click to select multiple words.
                 </Typography>
 
-                <Box sx={{ mb: 2 }}>
-                  <FormControl fullWidth size="small">
-                    <InputLabel>Stream Title Timezone (Optional)</InputLabel>
-                    <Select
-                      value={channelTimezone}
-                      onChange={(e) => setChannelTimezone(e.target.value)}
-                      label="Stream Title Timezone (Optional)"
-                    >
-                      <MenuItem value="">
-                        <em>Detect automatically / Local time</em>
-                      </MenuItem>
-                      {availableTimezones.map(tz => (
-                        <MenuItem key={tz} value={tz}>{tz}</MenuItem>
-                      ))}
-                    </Select>
-                  </FormControl>
-                  <Typography variant="caption" color="text.secondary">
-                    If stream titles contain times (e.g. "10:00") without a timezone, specify which timezone they refer to (e.g. "America/New_York").
-                  </Typography>
-                </Box>
-
                 <Alert severity="info" sx={{ mb: 2 }}>
                   <Typography variant="body2">
                     <strong>Important:</strong> Only categorize the <strong>start time</strong> components, not the end/stop time.
@@ -1017,6 +996,27 @@ function EventOrderingConfig() {
                   >
                     Generate Pattern
                   </Button>
+                </Box>
+
+                <Box sx={{ mt: 3, pt: 2, borderTop: '1px solid', borderColor: 'divider' }}>
+                  <FormControl fullWidth size="small">
+                    <InputLabel>Stream Title Timezone (Optional)</InputLabel>
+                    <Select
+                      value={channelTimezone}
+                      onChange={(e) => setChannelTimezone(e.target.value)}
+                      label="Stream Title Timezone (Optional)"
+                    >
+                      <MenuItem value="">
+                        <em>Detect automatically / Local time</em>
+                      </MenuItem>
+                      {availableTimezones.map(tz => (
+                        <MenuItem key={tz} value={tz}>{tz}</MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                  <Typography variant="caption" color="text.secondary">
+                    If stream titles contain times (e.g. "10:00") without a timezone, specify which timezone they refer to (e.g. "America/New_York").
+                  </Typography>
                 </Box>
               </CardContent>
             </Card>
