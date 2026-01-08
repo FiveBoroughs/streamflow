@@ -3,7 +3,7 @@ name: Docker Build and Publish
 on:
   push:
     branches: [ "main", "feature/*" ]
-  tags: [ 'v*.*.*' ]
+    tags: [ 'v*.*.*' ]
   pull_request:
     branches: [ "main" ]
 
