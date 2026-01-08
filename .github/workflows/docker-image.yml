@@ -29,9 +29,8 @@ jobs:
 
       - name: Build Frontend
         working-directory: ./frontend/context
-        env:
-          CI: 'false'
         run: |
+          export CI=false
           npm install
           npm run build
           # Move build output to where Dockerfile expects it
