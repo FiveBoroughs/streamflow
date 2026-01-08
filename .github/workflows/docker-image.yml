@@ -30,7 +30,7 @@ jobs:
       - name: Build Frontend
         working-directory: ./frontend/context
         env:
-          CI: false
+          CI: 'false'
         run: |
           npm install
           npm run build
