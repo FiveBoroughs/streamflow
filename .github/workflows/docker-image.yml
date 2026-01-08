@@ -3,7 +3,7 @@ name: Docker Build and Publish
 on:
   push:
     branches: [ "main", "feature/*" ]
-    tags: [ 'v*.*.*' ]
+  tags: [ 'v*.*.*' ]
   pull_request:
     branches: [ "main" ]
 
@@ -29,6 +29,8 @@ jobs:
 
       - name: Build Frontend
         working-directory: ./frontend/context
+        env:
+          CI: false
         run: |
           npm install
           npm run build
