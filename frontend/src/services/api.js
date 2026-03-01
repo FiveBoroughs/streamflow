@@ -306,3 +306,14 @@ export const profileAPI = {
   getProfileChannels: (profileId, includeSnapshot = false) =>
     api.get(`/channels/profiles/${profileId}`, { params: { include_snapshot: includeSnapshot } }),
 };
+
+export const eventOrderingAPI = {
+  getConfig: () => api.get('/event-ordering/config'),
+  updateConfig: (config) => api.put('/event-ordering/config', config),
+  getStatus: () => api.get('/event-ordering/status'),
+  trigger: () => api.post('/event-ordering/trigger'),
+  preview: (channelId) => api.post('/event-ordering/preview', { channel_id: channelId }),
+  testPattern: (data) => api.post('/event-ordering/test-pattern', data),
+  startProcessor: () => api.post('/event-ordering/processor/start'),
+  stopProcessor: () => api.post('/event-ordering/processor/stop'),
+};

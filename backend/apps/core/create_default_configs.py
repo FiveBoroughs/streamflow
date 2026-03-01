@@ -58,6 +58,18 @@ def create_default_configs() -> None:
             json.dump([], f)
         print(f"Created {changelog_path}")
 
+    # Create default event ordering config
+    event_ordering_path = CONFIG_DIR / 'event_ordering_config.json'
+    if not event_ordering_path.exists():
+        config = {
+            'enabled': False,
+            'frequency': 300,
+            'channels': {}
+        }
+        with open(event_ordering_path, 'w', encoding='utf-8') as f:
+            json.dump(config, f, indent=2)
+        print(f"Created {event_ordering_path}")
+
     # Create default webhook config
     webhook_path = CONFIG_DIR / 'webhook_config.json'
     if not webhook_path.exists():

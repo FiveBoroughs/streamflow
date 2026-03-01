@@ -17,6 +17,7 @@ import SetupWizard from '@/pages/SetupWizard'
 import AutomationProfileEditor from '@/pages/AutomationProfileEditor'
 import Scheduling from '@/pages/Scheduling'
 import StatsDashboard from '@/pages/StatsDashboard'
+import EventOrdering from '@/pages/EventOrdering'
 
 function App() {
   const [setupStatus, setSetupStatus] = useState(null)
@@ -105,6 +106,7 @@ function App() {
             <Route path="/automation/profiles/:profileId" element={<AutomationProfileEditor />} />
             <Route path="/scheduling" element={<Scheduling />} />
             <Route path="/stats" element={<StatsDashboard />} />
+            <Route path="/event-ordering" element={<EventOrdering />} />
             <Route path="/changelog" element={<Changelog />} />
           </Routes>
         </div>

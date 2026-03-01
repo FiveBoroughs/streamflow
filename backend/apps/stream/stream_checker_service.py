@@ -1015,13 +1015,27 @@ class StreamCheckerService:
     
     def _check_channel(self, channel_id: int, skip_batch_changelog: bool = False, forced_profile_id: Optional[str] = None):
         """Check and reorder streams for a specific channel.
-        
+
         Routes to either concurrent or sequential checking based on configuration.
-        
+        Skips quality-based reordering if event ordering is enabled for this channel.
+
         Args:
             channel_id: ID of the channel to check
             skip_batch_changelog: If True, don't add this check to the batch changelog
         """
+        try:
+            from event_ordering_service import get_event_ordering_service
+
+            event_ordering = get_event_ordering_service()
+            if event_ordering.is_channel_enabled(channel_id):
+                logger.info(
+                    "Skipping quality-based reordering for channel %s — managed by event ordering",
+                    channel_id,
+                )
+                return None
+        except ImportError:
+            pass
+
         concurrent_enabled = self.config.get('concurrent_streams.enabled', True)
         
         if concurrent_enabled:

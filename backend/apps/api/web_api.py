@@ -39,6 +39,7 @@ from apps.stream.udp_proxy import UDPProxyManager
 from apps.config.dispatcharr_config import get_dispatcharr_config
 from apps.config.acestream_orchestrator_config import get_acestream_orchestrator_config
 from apps.channels.channel_order_manager import get_channel_order_manager
+from event_ordering_service import get_event_ordering_service
 from apps.channels.repository import UdiChannelRepository
 from apps.channels.service import ChannelService
 from apps.automation.automation_config_manager import get_automation_config_manager
@@ -368,6 +369,9 @@ epg_refresh_wake = None  # threading.Event to wake up the refresh early
 udi_refresh_thread = None
 udi_refresh_running = False
 udi_refresh_wake = None  # threading.Event to wake up the UDI refresh early
+event_ordering_processor_thread = None
+event_ordering_processor_running = False
+event_ordering_processor_wake = None  # threading.Event to wake up the processor early
 
 
 def _set_epg_refresh_running(value: bool):
@@ -611,6 +615,84 @@ def stop_udi_refresh_processor():
         return False
 
     logger.info("UDI refresh processor stopped")
+    return True
+
+
+def event_ordering_processor():
+    """Periodically run event-time ordering on configured channels."""
+    global event_ordering_processor_running, event_ordering_processor_wake
+
+    logger.info("Event ordering processor thread started")
+    while event_ordering_processor_running:
+        try:
+            service = get_event_ordering_service()
+            if not service.is_enabled():
+                if event_ordering_processor_wake:
+                    event_ordering_processor_wake.wait(timeout=30)
+                    event_ordering_processor_wake.clear()
+                continue
+
+            frequency = service.get_frequency()
+            logger.info("Running event ordering cycle...")
+            result = service.run_ordering_cycle()
+            logger.info(
+                "Event ordering cycle complete. Processed %s channels.",
+                result.get('channels_processed', 0),
+            )
+
+            if event_ordering_processor_wake:
+                event_ordering_processor_wake.wait(timeout=frequency)
+                event_ordering_processor_wake.clear()
+            else:
+                time.sleep(frequency)
+        except Exception as exc:
+            logger.error("Error in event ordering processor: %s", exc, exc_info=True)
+            if event_ordering_processor_wake and event_ordering_processor_running:
+                event_ordering_processor_wake.wait(timeout=60)
+                event_ordering_processor_wake.clear()
+
+    logger.info("Event ordering processor thread stopped")
+
+
+def start_event_ordering_processor():
+    """Start the event ordering background processor."""
+    global event_ordering_processor_thread, event_ordering_processor_running, event_ordering_processor_wake
+
+    if event_ordering_processor_thread is not None and event_ordering_processor_thread.is_alive():
+        logger.warning("Event ordering processor is already running")
+        return False
+
+    event_ordering_processor_wake = threading.Event()
+    event_ordering_processor_running = True
+    event_ordering_processor_thread = threading.Thread(
+        target=event_ordering_processor,
+        name="EventOrderingProcessor",
+        daemon=True,
+    )
+    event_ordering_processor_thread.start()
+    logger.info("Event ordering processor started")
+    return True
+
+
+def stop_event_ordering_processor():
+    """Stop the event ordering background processor."""
+    global event_ordering_processor_thread, event_ordering_processor_running, event_ordering_processor_wake
+
+    if event_ordering_processor_thread is None or not event_ordering_processor_thread.is_alive():
+        logger.warning("Event ordering processor is not running")
+        return False
+
+    logger.info("Stopping event ordering processor...")
+    event_ordering_processor_running = False
+    if event_ordering_processor_wake:
+        event_ordering_processor_wake.set()
+
+    event_ordering_processor_thread.join(timeout=THREAD_SHUTDOWN_TIMEOUT_SECONDS)
+    if event_ordering_processor_thread.is_alive():
+        logger.warning("Event ordering processor thread did not stop gracefully")
+        return False
+
+    logger.info("Event ordering processor stopped")
     return True
 
 
@@ -2453,6 +2535,171 @@ def create_session_from_event(event_id):
     )
 
 
+# ==================== Event Ordering API ====================
+
+@app.route('/api/event-ordering/config', methods=['GET'])
+def get_event_ordering_config():
+    """Get event ordering configuration and processor status."""
+    try:
+        service = get_event_ordering_service()
+        config = service.get_config()
+        thread_alive = (
+            event_ordering_processor_thread is not None
+            and event_ordering_processor_thread.is_alive()
+        )
+        config['processor_running'] = thread_alive and event_ordering_processor_running
+        return jsonify(config)
+    except Exception as exc:
+        logger.error("Error getting event ordering config: %s", exc)
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route('/api/event-ordering/config', methods=['PUT'])
+def update_event_ordering_config():
+    """Update event ordering configuration."""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No configuration data provided"}), 400
+
+        service = get_event_ordering_service()
+        was_enabled = service.is_enabled()
+        if not service.update_config(data):
+            return jsonify({"error": "Failed to save configuration"}), 500
+
+        is_enabled = service.is_enabled()
+        if is_enabled and not was_enabled:
+            start_event_ordering_processor()
+        elif not is_enabled and was_enabled:
+            stop_event_ordering_processor()
+
+        return jsonify({"message": "Configuration updated", "config": service.get_config()})
+    except Exception as exc:
+        logger.error("Error updating event ordering config: %s", exc)
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route('/api/event-ordering/trigger', methods=['POST'])
+def trigger_event_ordering():
+    """Manually trigger an event ordering cycle."""
+    try:
+        return jsonify(get_event_ordering_service().run_ordering_cycle())
+    except Exception as exc:
+        logger.error("Error triggering event ordering: %s", exc)
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route('/api/event-ordering/preview', methods=['POST'])
+def preview_event_ordering():
+    """Preview event ordering for a channel without applying changes."""
+    try:
+        data = request.get_json()
+        if not data or 'channel_id' not in data:
+            return jsonify({"error": "channel_id is required"}), 400
+
+        result = get_event_ordering_service().preview_channel(int(data['channel_id']))
+        return jsonify(result), 400 if 'error' in result else 200
+    except Exception as exc:
+        logger.error("Error previewing event ordering: %s", exc)
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route('/api/event-ordering/test-pattern', methods=['POST'])
+def test_event_ordering_pattern():
+    """Test a regex pattern or parser configuration against stream names."""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+
+        pattern = data.get('pattern', '')
+        timezone_str = data.get('timezone', '')
+        channel_id = data.get('channel_id')
+        stream_names = data.get('stream_names', [])
+        if not pattern:
+            return jsonify({"error": "pattern is required"}), 400
+
+        if channel_id and not stream_names:
+            from apps.core.api_utils import fetch_channel_streams
+
+            streams = fetch_channel_streams(int(channel_id))
+            if streams:
+                stream_names = [stream.get('name', '') for stream in streams]
+        if not stream_names:
+            return jsonify({"error": "No stream names to test against"}), 400
+
+        service = get_event_ordering_service()
+        parser_config = data.get('parser')
+        if parser_config is None and channel_id:
+            channel_config = (service.get_config().get('channels', {}) or {}).get(
+                str(int(channel_id)),
+                {},
+            )
+            if isinstance(channel_config, dict):
+                parser_config = channel_config.get('parser')
+
+        results = service.test_pattern(
+            pattern,
+            stream_names,
+            timezone_str,
+            parser_cfg=parser_config,
+        )
+        matched_count = sum(1 for result in results if result['matched'])
+        return jsonify({
+            'results': results,
+            'total': len(results),
+            'matched': matched_count,
+            'unmatched': len(results) - matched_count,
+        })
+    except Exception as exc:
+        logger.error("Error testing event ordering pattern: %s", exc)
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route('/api/event-ordering/status', methods=['GET'])
+def get_event_ordering_status():
+    """Get event ordering processor status and last-run results."""
+    try:
+        service = get_event_ordering_service()
+        thread_alive = (
+            event_ordering_processor_thread is not None
+            and event_ordering_processor_thread.is_alive()
+        )
+        return jsonify({
+            'enabled': service.is_enabled(),
+            'processor_running': thread_alive and event_ordering_processor_running,
+            'frequency': service.get_frequency(),
+            'last_run': service.get_last_run_results(),
+        })
+    except Exception as exc:
+        logger.error("Error getting event ordering status: %s", exc)
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route('/api/event-ordering/processor/start', methods=['POST'])
+def start_event_ordering_processor_api():
+    """Start the event ordering processor."""
+    try:
+        started = start_event_ordering_processor()
+        message = "Event ordering processor started" if started else "Event ordering processor is already running"
+        return jsonify({"message": message})
+    except Exception as exc:
+        logger.error("Error starting event ordering processor: %s", exc)
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route('/api/event-ordering/processor/stop', methods=['POST'])
+def stop_event_ordering_processor_api():
+    """Stop the event ordering processor."""
+    try:
+        stopped = stop_event_ordering_processor()
+        message = "Event ordering processor stopped" if stopped else "Event ordering processor is not running"
+        return jsonify({"message": message})
+    except Exception as exc:
+        logger.error("Error stopping event ordering processor: %s", exc)
+        return jsonify({"error": str(exc)}), 500
+
+
 # ==================== Settings API ====================
 
 @app.route('/api/settings/session', methods=['GET', 'POST'])
@@ -2552,6 +2799,7 @@ if __name__ == '__main__':
                 try:
                     stop_scheduled_event_processor()
                     stop_epg_refresh_processor()
+                    stop_event_ordering_processor()
                 except Exception:
                     pass
                     
@@ -2611,6 +2859,19 @@ if __name__ == '__main__':
                 logger.info("UDI refresh processor auto-started")
         except Exception as e:
             logger.error(f"Failed to auto-start UDI refresh processor: {e}")
+
+        try:
+            if not check_wizard_complete():
+                logger.info("Event ordering processor will not start - setup wizard has not been completed")
+            else:
+                event_ordering_service = get_event_ordering_service()
+                if event_ordering_service.is_enabled():
+                    start_event_ordering_processor()
+                    logger.info("Event ordering processor auto-started")
+                else:
+                    logger.info("Event ordering processor is disabled in configuration")
+        except Exception as e:
+            logger.error(f"Failed to auto-start event ordering processor: {e}")
         
         try:
             monitoring_service = get_monitoring_service()

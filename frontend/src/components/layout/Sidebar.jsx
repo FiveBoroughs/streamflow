@@ -13,7 +13,8 @@ import {
   Activity,
   ChevronLeft,
   ChevronRight,
-  TrendingUp
+  TrendingUp,
+  ArrowUpDown
 } from 'lucide-react'
 import { Button } from '@/components/ui/button.jsx'
 import { ThemeToggle } from '@/components/ThemeToggle.jsx'
@@ -33,6 +34,7 @@ const menuItems = [
   { text: 'Scheduling', icon: Calendar, path: '/scheduling' },
   { text: 'Analytics', icon: TrendingUp, path: '/stats' },
   { text: 'Settings', icon: Settings, path: '/settings' },
+  { text: 'Event Ordering', icon: ArrowUpDown, path: '/event-ordering' },
   { text: 'Changelog', icon: History, path: '/changelog' },
 ]
 
