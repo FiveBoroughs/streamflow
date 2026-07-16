@@ -3099,6 +3099,21 @@ class StreamCheckerService:
         
         with self.lock:
             sync_state = dict(self.sync_batch_state)
+
+        if (
+            self.running
+            and not self.checking
+            and progress is None
+            and not sync_state.get('active', False)
+            and queue_status.get('queue_size', 0) == 0
+            and queue_status.get('in_progress', 0) > 0
+        ):
+            stale_channel_ids = self.check_queue.clear_in_progress()
+            logger.warning(
+                "Cleared stale in-progress stream checker state for channel(s): %s",
+                stale_channel_ids,
+            )
+            queue_status = self.check_queue.get_status()
             
         if sync_state.get('active'):
             # Override queue status with our synchronous batch status

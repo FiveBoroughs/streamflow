@@ -1,6 +1,7 @@
 requests
 python-dotenv
 pandas
+pytz
 flask
 flask-cors
 croniter

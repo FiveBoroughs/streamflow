@@ -11,14 +11,22 @@ import json
 import os
 import re
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
 
+import pytz
 import requests
 
-from logging_config import setup_logging
-from api_utils import fetch_channel_streams, update_channel_streams, _get_base_url, _get_auth_headers, patch_request
+from apps.core.logging_config import setup_logging
+from apps.core.api_utils import (
+    fetch_channel_streams,
+    update_channel_streams,
+    _get_base_url,
+    _get_auth_headers,
+    patch_request,
+)
+from event_ordering_parser_schema import validate_parser_v1, ensure_channel_parser_defaults
 
 logger = setup_logging(__name__)
 
@@ -81,6 +89,21 @@ def _parse_month(value: str) -> Optional[int]:
     return MONTH_NAMES.get(value.lower().strip())
 
 
+def _localize_to_utc(naive_dt: Optional[datetime], timezone_str: str) -> Optional[datetime]:
+    """Convert a naive datetime in the given timezone to a UTC-aware datetime."""
+    if naive_dt is None:
+        return None
+    if not timezone_str:
+        # No timezone info — attach UTC so comparisons work
+        return naive_dt.replace(tzinfo=pytz.utc)
+    try:
+        tz = pytz.timezone(timezone_str)
+        localized = tz.localize(naive_dt, is_dst=None)
+        return localized.astimezone(pytz.utc)
+    except Exception:
+        return naive_dt.replace(tzinfo=pytz.utc)
+
+
 class EventOrderingService:
     """Service for ordering streams by event time within channels."""
 
@@ -125,6 +148,21 @@ class EventOrderingService:
     def update_config(self, new_config: Dict[str, Any]) -> bool:
         """Update config and save."""
         with self._lock:
+            # Validate parser schema (if provided) and apply defaults.
+            channels = (new_config or {}).get('channels', {})
+            if isinstance(channels, dict):
+                normalized_channels = {}
+                for channel_id, channel_cfg in channels.items():
+                    cfg = ensure_channel_parser_defaults(channel_cfg if isinstance(channel_cfg, dict) else {})
+                    parser = cfg.get('parser')
+                    if parser is not None:
+                        ok, err = validate_parser_v1(parser)
+                        if not ok:
+                            logger.error(f"Invalid parser schema for channel {channel_id}: {err}")
+                            return False
+                    normalized_channels[channel_id] = cfg
+                new_config = {**new_config, 'channels': normalized_channels}
+
             self._config.update(new_config)
             success = self._save_config()
             if success:
@@ -150,6 +188,65 @@ class EventOrderingService:
         """Get results from the last ordering cycle."""
         with self._lock:
             return self._last_run_results.copy()
+
+    def _parse_event_time_from_groups(self, groups: Dict[str, Any]) -> Optional[datetime]:
+        """Parse datetime from already-extracted named groups."""
+        try:
+            year_str = groups.get('year')
+            month_str = groups.get('month') or groups.get('month2')
+            day_str = groups.get('day') or groups.get('date') or groups.get('date2') or groups.get('day2')
+            hour_str = groups.get('hour') or groups.get('hour2')
+            minute_str = groups.get('minute') or groups.get('minute2')
+            second_str = groups.get('second')
+            ampm = groups.get('ampm')
+
+            if hour_str is None or minute_str is None:
+                return None
+
+            hour = int(hour_str)
+            minute = int(minute_str)
+            second = int(second_str) if second_str else 0
+
+            if ampm:
+                ampm_upper = str(ampm).upper()
+                if ampm_upper == 'PM' and hour != 12:
+                    hour += 12
+                elif ampm_upper == 'AM' and hour == 12:
+                    hour = 0
+
+            now = datetime.now()
+            year = int(year_str) if year_str else now.year
+            month = _parse_month(month_str) if month_str else now.month
+
+            day = None
+            if day_str:
+                try:
+                    day = int(day_str)
+                except (ValueError, TypeError):
+                    pass
+            if day is None:
+                day = now.day
+
+            return datetime(year, month, day, hour, minute, second)
+        except Exception:
+            return None
+
+    def _match_with_pattern(self, stream_name: str, pattern: str) -> Optional[Dict[str, Any]]:
+        try:
+            python_pattern = _js_to_python_regex(pattern)
+            m = re.search(python_pattern, stream_name)
+            if not m:
+                return None
+            return m.groupdict() or {}
+        except Exception:
+            return None
+
+    def _extract_order_from_groups(self, groups: Dict[str, Any]) -> Optional[int]:
+        try:
+            order_str = groups.get('order') if groups else None
+            return int(order_str) if order_str not in (None, '') else None
+        except Exception:
+            return None
 
     def parse_event_time(
         self,
@@ -178,72 +275,9 @@ class EventOrderingService:
             if not match:
                 return None
 
-            groups = match.groupdict()
-
-            # Extract time components, supporting alternate group names
-            year_str = groups.get('year')
-            month_str = groups.get('month') or groups.get('month2')
-            # Check 'date'/'date2' before 'day2' since day2 might be a day name like "Sat"
-            day_str = groups.get('day') or groups.get('date') or groups.get('date2') or groups.get('day2')
-            hour_str = groups.get('hour') or groups.get('hour2')
-            minute_str = groups.get('minute') or groups.get('minute2')
-            second_str = groups.get('second')
-            ampm = groups.get('ampm')
-
-            if hour_str is None or minute_str is None:
-                return None
-
-            hour = int(hour_str)
-            minute = int(minute_str)
-            second = int(second_str) if second_str else 0
-
-            # Handle AM/PM
-            if ampm:
-                ampm_upper = ampm.upper()
-                if ampm_upper == 'PM' and hour != 12:
-                    hour += 12
-                elif ampm_upper == 'AM' and hour == 12:
-                    hour = 0
-
-            now = datetime.now()
-
-            # Parse year
-            year = int(year_str) if year_str else now.year
-
-            # Parse month
-            month = _parse_month(month_str) if month_str else now.month
-
-            # Parse day - could be a day name or a date number
-            day = None
-            if day_str:
-                try:
-                    day = int(day_str)
-                except (ValueError, TypeError):
-                    # It's a day name like "Monday" - not useful for date, skip
-                    pass
-
-            if day is None:
-                day = now.day
-
-            # Handle timezone offset
-            tz_offset = timedelta(0)
-            if timezone_str:
-                try:
-                    import zoneinfo
-                    tz = zoneinfo.ZoneInfo(timezone_str)
-                    # Get current UTC offset for this timezone
-                    tz_now = datetime.now(tz)
-                    local_now = datetime.now()
-                    tz_offset = tz_now.utcoffset() - (local_now - datetime.utcnow())
-                except Exception:
-                    pass  # Fall back to no offset
-
-            try:
-                event_time = datetime(year, month, day, hour, minute, second)
-            except ValueError:
-                return None
-
-            return event_time
+            groups = match.groupdict() or {}
+            naive_dt = self._parse_event_time_from_groups(groups)
+            return _localize_to_utc(naive_dt, timezone_str)
 
         except re.error as e:
             logger.warning(f"Invalid regex pattern: {e}")
@@ -252,12 +286,54 @@ class EventOrderingService:
             logger.warning(f"Error parsing event time from '{stream_name}': {e}")
             return None
 
+    def parse_event_time_with_parser(self, stream_name: str, parser_cfg: Dict[str, Any], timezone_str: str = '') -> Optional[datetime]:
+        """Parse event time using parser.v1 datetime candidate_patterns."""
+        try:
+            dt_cfg = (parser_cfg or {}).get('datetime', {})
+            candidates = dt_cfg.get('candidate_patterns', []) if isinstance(dt_cfg, dict) else []
+            # Highest priority first
+            sorted_candidates = sorted(
+                [c for c in candidates if isinstance(c, dict) and c.get('pattern')],
+                key=lambda c: int(c.get('priority', 0) or 0),
+                reverse=True,
+            )
+            for cand in sorted_candidates:
+                groups = self._match_with_pattern(stream_name, cand.get('pattern', ''))
+                if groups:
+                    naive_dt = self._parse_event_time_from_groups(groups)
+                    parsed = _localize_to_utc(naive_dt, timezone_str)
+                    if parsed is not None:
+                        return parsed
+            return None
+        except Exception:
+            return None
+
+    def extract_order_with_parser(self, stream_name: str, parser_cfg: Dict[str, Any]) -> Optional[int]:
+        """Extract order using parser.v1 fields.extractors.order."""
+        try:
+            extractors = (((parser_cfg or {}).get('fields') or {}).get('extractors') or {}).get('order', [])
+            sorted_extractors = sorted(
+                [e for e in extractors if isinstance(e, dict) and e.get('pattern')],
+                key=lambda e: int(e.get('priority', 0) or 0),
+                reverse=True,
+            )
+            for ext in sorted_extractors:
+                groups = self._match_with_pattern(stream_name, ext.get('pattern', ''))
+                if groups:
+                    order = self._extract_order_from_groups(groups)
+                    if order is not None:
+                        return order
+            return None
+        except Exception:
+            return None
+
     def categorize_streams(
         self,
         streams: List[Dict[str, Any]],
         pattern: str,
         timezone_str: str = '',
-        grace_hours: float = 2.0
+        grace_hours: float = 2.0,
+        parser_cfg: Optional[Dict[str, Any]] = None,
     ) -> Tuple[List[Dict], List[Dict], List[Dict]]:
         """Categorize streams into upcoming, past, and unparseable.
 
@@ -271,10 +347,10 @@ class EventOrderingService:
             Tuple of (upcoming, past, unparseable) stream lists.
             Each item is a dict with stream info plus 'event_time' and 'order'.
         """
-        now = datetime.now()
+        now = datetime.now(tz=pytz.utc)
         grace_cutoff = now - timedelta(hours=grace_hours)
 
-        python_pattern = _js_to_python_regex(pattern)
+        python_pattern = _js_to_python_regex(pattern) if pattern else None
         upcoming = []
         past = []
         unparseable = []
@@ -283,18 +359,22 @@ class EventOrderingService:
             stream_name = stream.get('name', '')
             stream_id = stream.get('id')
 
-            event_time = self.parse_event_time(stream_name, pattern, timezone_str)
-
-            # Extract order number if present
-            order = None
-            try:
-                match = re.search(python_pattern, stream_name)
-                if match:
-                    order_str = match.groupdict().get('order')
-                    if order_str:
-                        order = int(order_str)
-            except Exception:
-                pass
+            if parser_cfg:
+                event_time = self.parse_event_time_with_parser(stream_name, parser_cfg, timezone_str)
+                order = self.extract_order_with_parser(stream_name, parser_cfg)
+            else:
+                event_time = self.parse_event_time(stream_name, pattern, timezone_str)
+                # Extract order number if present
+                order = None
+                try:
+                    if python_pattern:
+                        match = re.search(python_pattern, stream_name)
+                        if match:
+                            order_str = match.groupdict().get('order')
+                            if order_str:
+                                order = int(order_str)
+                except Exception:
+                    pass
 
             entry = {
                 'stream_id': stream_id,
@@ -323,15 +403,18 @@ class EventOrderingService:
         Returns:
             Ordered list of stream IDs
         """
+        _max = datetime.max.replace(tzinfo=pytz.utc)
+        _min = datetime.min.replace(tzinfo=pytz.utc)
+
         # Sort upcoming by event time (soonest first), then by order number
         upcoming.sort(key=lambda x: (
-            x['event_time'] or datetime.max,
+            x['event_time'] or _max,
             x['order'] if x['order'] is not None else 9999
         ))
 
         # Sort past by event time descending (most recent first)
         past.sort(key=lambda x: (
-            x['event_time'] or datetime.min,
+            x['event_time'] or _min,
         ), reverse=True)
 
         # Combine: upcoming first, then past, then unparseable
@@ -360,8 +443,9 @@ class EventOrderingService:
         if streams is None:
             return {'error': f'Could not fetch streams for channel {channel_id}'}
 
+        parser_cfg = ch_config.get('parser') if isinstance(ch_config.get('parser'), dict) else None
         upcoming, past, unparseable = self.categorize_streams(
-            streams, pattern, timezone_str, grace_hours
+            streams, pattern, timezone_str, grace_hours, parser_cfg=parser_cfg
         )
         ordered_ids = self.sort_streams(upcoming, past, unparseable)
 
@@ -426,8 +510,9 @@ class EventOrderingService:
         if not streams:
             return {'success': True, 'message': 'No streams to reorder', 'reordered': False}
 
+        parser_cfg = ch_config.get('parser') if isinstance(ch_config.get('parser'), dict) else None
         upcoming, past, unparseable = self.categorize_streams(
-            streams, pattern, timezone_str, grace_hours
+            streams, pattern, timezone_str, grace_hours, parser_cfg=parser_cfg
         )
         ordered_ids = self.sort_streams(upcoming, past, unparseable)
 
@@ -457,10 +542,14 @@ class EventOrderingService:
         return result
 
     def handle_overflow(self, channel_id: int) -> Dict[str, Any]:
-        """Move conflicting/past streams to overflow channels.
+        """Assign conflicting events to overflow channels.
 
-        When multiple events share the same time slot, overflow channels
-        are used to hold the extra streams.
+        Streams with the same order number are backup feeds of the same event and stay
+        together in the same channel. Only streams with different order numbers at the
+        same time slot are conflicting events that need separate overflow channels.
+
+        Collects streams from main + all overflow channels so backup feeds that ended
+        up in the wrong place from a previous cycle are reassigned correctly.
 
         Returns:
             Dict with overflow result info
@@ -480,57 +569,88 @@ class EventOrderingService:
         pattern = ch_config.get('pattern', '')
         timezone_str = ch_config.get('stream_timezone', '')
         grace_hours = ch_config.get('return_after_hours', 6)
+        parser_cfg = ch_config.get('parser') if isinstance(ch_config.get('parser'), dict) else None
 
-        streams = fetch_channel_streams(channel_id)
-        if streams is None:
+        # Collect streams from main + all overflow channels to get the full picture —
+        # backup feeds may have ended up in overflow channels from previous cycles.
+        all_streams: List[Dict] = []
+        for cid in [channel_id] + list(overflow_ids):
+            ch_streams = fetch_channel_streams(cid)
+            if ch_streams:
+                all_streams.extend(ch_streams)
+
+        if not all_streams:
             return {'success': False, 'error': f'Could not fetch streams for channel {channel_id}'}
 
         upcoming, past, unparseable = self.categorize_streams(
-            streams, pattern, timezone_str, grace_hours
+            all_streams, pattern, timezone_str, grace_hours, parser_cfg=parser_cfg
         )
 
-        # Group upcoming streams by time slot (same hour)
-        time_slots: Dict[str, List[Dict]] = {}
+        # Group upcoming by time slot, then by order number within each slot.
+        # Same order number = same event (backup feeds); different order = different event.
+        time_slots: Dict[str, Dict[int, List[Dict]]] = {}
         for s in upcoming:
             if s['event_time']:
                 slot_key = s['event_time'].strftime('%Y-%m-%d %H:00')
-                time_slots.setdefault(slot_key, []).append(s)
+                order = s['order'] if s['order'] is not None else 9999
+                time_slots.setdefault(slot_key, {}).setdefault(order, []).append(s)
 
-        # Find overflow streams: when multiple streams share a time slot,
-        # keep the first (by order number) and overflow the rest
-        overflow_streams = []
-        for slot_key, slot_streams in time_slots.items():
-            if len(slot_streams) > 1:
-                slot_streams.sort(key=lambda x: x['order'] if x['order'] is not None else 9999)
-                overflow_streams.extend(slot_streams[1:])  # All but the first
+        # Assign events to channels:
+        # - Main channel: primary event per slot (lowest order) + non-conflicting events
+        # - Overflow channels: one per conflicting event (all its backup feeds together)
+        main_stream_ids: List[int] = []
+        overflow_event_groups: List[List[int]] = []  # [i] -> stream_ids for overflow_ids[i]
 
-        if not overflow_streams:
-            return {'success': True, 'message': 'No streams need overflow', 'moved': 0}
+        for slot_key in sorted(time_slots.keys()):
+            order_groups = time_slots[slot_key]
+            for i, order in enumerate(sorted(order_groups.keys())):
+                stream_ids = [s['stream_id'] for s in order_groups[order]]
+                if i == 0:
+                    main_stream_ids.extend(stream_ids)
+                else:
+                    overflow_event_groups.append(stream_ids)
 
-        # Distribute overflow streams across overflow channels
+        # Past and unparseable streams stay on the main channel
+        for s in past + unparseable:
+            if s['stream_id'] not in main_stream_ids:
+                main_stream_ids.append(s['stream_id'])
+
+        # Update main channel — preserve current ordering for streams already there,
+        # append any that are being pulled back from overflow channels
+        current_main = fetch_channel_streams(channel_id) or []
+        main_id_set = set(main_stream_ids)
+        ordered_main = [s['id'] for s in current_main if s['id'] in main_id_set]
+        for sid in main_stream_ids:
+            if sid not in set(ordered_main):
+                ordered_main.append(sid)
+        update_channel_streams(channel_id, ordered_main, allow_dead_streams=True)
+
+        # Assign each conflicting event group to an overflow channel
         moved = 0
-        for i, stream in enumerate(overflow_streams):
+        for i, event_stream_ids in enumerate(overflow_event_groups):
             if i >= len(overflow_ids):
                 logger.warning(f"Not enough overflow channels for channel {channel_id}")
                 break
+            target_channel = overflow_ids[i]
+            update_channel_streams(target_channel, event_stream_ids, allow_dead_streams=True)
+            moved += len(event_stream_ids)
+            logger.info(f"Assigned {len(event_stream_ids)} stream(s) to overflow channel {target_channel}")
 
-            target_channel = overflow_ids[i % len(overflow_ids)]
-            target_streams = fetch_channel_streams(target_channel)
-            if target_streams is None:
-                target_streams = []
+        # Clear overflow channels that have no current event assignment
+        for i in range(len(overflow_event_groups), len(overflow_ids)):
+            update_channel_streams(overflow_ids[i], [], allow_dead_streams=True)
 
-            # Add stream to overflow channel
-            target_stream_ids = [s.get('id') for s in target_streams]
-            if stream['stream_id'] not in target_stream_ids:
-                target_stream_ids.append(stream['stream_id'])
-                if update_channel_streams(target_channel, target_stream_ids, allow_dead_streams=True):
-                    moved += 1
-                    logger.info(
-                        f"Moved stream {stream['stream_id']} ({stream['stream_name']}) "
-                        f"to overflow channel {target_channel}"
-                    )
-
-        return {'success': True, 'moved': moved, 'total_overflow': len(overflow_streams)}
+        # Return which overflow channels received events so the renaming step
+        # can use this instead of re-fetching stale UDI cache data.
+        assigned_overflow_ids = set(
+            overflow_ids[i] for i in range(len(overflow_event_groups)) if i < len(overflow_ids)
+        )
+        return {
+            'success': True,
+            'moved': moved,
+            'total_overflow': len(overflow_event_groups),
+            'assigned_overflow_ids': list(assigned_overflow_ids),
+        }
 
     def format_channel_name(
         self,
@@ -539,7 +659,8 @@ class EventOrderingService:
         pattern: str,
         base_name: str,
         timezone_str: str = '',
-        display_timezone: str = ''
+        display_timezone: str = '',
+        parser_cfg: Optional[Dict[str, Any]] = None,
     ) -> str:
         """Format a channel name using a template and regex groups from the top stream.
 
@@ -563,9 +684,43 @@ class EventOrderingService:
             Formatted channel name
         """
         try:
-            python_pattern = _js_to_python_regex(pattern)
-            match = re.search(python_pattern, stream_name)
-            groups = match.groupdict() if match else {}
+            groups: Dict[str, Any] = {}
+            if parser_cfg and isinstance(parser_cfg, dict):
+                # Extract fields from parser.v1 field extractors (highest-priority first per field)
+                extractors = (((parser_cfg.get('fields') or {}).get('extractors')) or {})
+                if isinstance(extractors, dict):
+                    for field_name, defs in extractors.items():
+                        if not isinstance(defs, list):
+                            continue
+                        sorted_defs = sorted(
+                            [d for d in defs if isinstance(d, dict) and d.get('pattern')],
+                            key=lambda d: int(d.get('priority', 0) or 0),
+                            reverse=True,
+                        )
+                        for d in sorted_defs:
+                            m_groups = self._match_with_pattern(stream_name, d.get('pattern', ''))
+                            if m_groups and m_groups.get(field_name) not in (None, ''):
+                                groups[field_name] = m_groups.get(field_name)
+                                break
+                # Also include first successful datetime groups for year/month/day/hour/minute/second/ampm
+                dt_cfg = (parser_cfg.get('datetime') or {})
+                dt_defs = dt_cfg.get('candidate_patterns', []) if isinstance(dt_cfg, dict) else []
+                dt_sorted = sorted(
+                    [d for d in dt_defs if isinstance(d, dict) and d.get('pattern')],
+                    key=lambda d: int(d.get('priority', 0) or 0),
+                    reverse=True,
+                )
+                for d in dt_sorted:
+                    m_groups = self._match_with_pattern(stream_name, d.get('pattern', ''))
+                    if m_groups:
+                        for k, v in m_groups.items():
+                            if v not in (None, '') and k not in groups:
+                                groups[k] = v
+                        break
+            else:
+                python_pattern = _js_to_python_regex(pattern)
+                match = re.search(python_pattern, stream_name)
+                groups = match.groupdict() if match else {}
 
             # Build variables dict
             variables = {
@@ -575,9 +730,8 @@ class EventOrderingService:
             variables.update(groups)
 
             # Add formatted time if available
-            event_time = self.parse_event_time(stream_name, pattern, timezone_str)
+            event_time = self.parse_event_time_with_parser(stream_name, parser_cfg, timezone_str) if parser_cfg else self.parse_event_time(stream_name, pattern, timezone_str)
             if event_time:
-                import pytz
                 display_tz = display_timezone or timezone_str
                 if display_tz:
                     try:
@@ -645,7 +799,8 @@ class EventOrderingService:
         self,
         pattern: str,
         stream_names: List[str],
-        timezone_str: str = ''
+        timezone_str: str = '',
+        parser_cfg: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         """Test a regex pattern against a list of stream names.
 
@@ -653,27 +808,54 @@ class EventOrderingService:
             List of dicts with stream_name, matched, event_time, groups
         """
         results = []
-        python_pattern = _js_to_python_regex(pattern)
+        python_pattern = _js_to_python_regex(pattern) if pattern else None
 
         for name in stream_names:
             try:
-                match = re.search(python_pattern, name)
-                if match:
-                    groups = match.groupdict()
-                    event_time = self.parse_event_time(name, pattern, timezone_str)
+                if parser_cfg and isinstance(parser_cfg, dict):
+                    extracted_groups: Dict[str, Any] = {}
+                    extractors = (((parser_cfg.get('fields') or {}).get('extractors')) or {})
+                    if isinstance(extractors, dict):
+                        for field_name, defs in extractors.items():
+                            if not isinstance(defs, list):
+                                continue
+                            sorted_defs = sorted(
+                                [d for d in defs if isinstance(d, dict) and d.get('pattern')],
+                                key=lambda d: int(d.get('priority', 0) or 0),
+                                reverse=True,
+                            )
+                            for d in sorted_defs:
+                                mg = self._match_with_pattern(name, d.get('pattern', ''))
+                                if mg and mg.get(field_name) not in (None, ''):
+                                    extracted_groups[field_name] = mg.get(field_name)
+                                    break
+
+                    event_time = self.parse_event_time_with_parser(name, parser_cfg)
+                    matched = bool(event_time or extracted_groups)
                     results.append({
                         'stream_name': name,
-                        'matched': True,
+                        'matched': matched,
                         'event_time': event_time.isoformat() if event_time else None,
-                        'groups': groups,
+                        'groups': extracted_groups,
                     })
                 else:
-                    results.append({
-                        'stream_name': name,
-                        'matched': False,
-                        'event_time': None,
-                        'groups': {},
-                    })
+                    match = re.search(python_pattern, name) if python_pattern else None
+                    if match:
+                        groups = match.groupdict()
+                        event_time = self.parse_event_time(name, pattern, timezone_str)
+                        results.append({
+                            'stream_name': name,
+                            'matched': True,
+                            'event_time': event_time.isoformat() if event_time else None,
+                            'groups': groups,
+                        })
+                    else:
+                        results.append({
+                            'stream_name': name,
+                            'matched': False,
+                            'event_time': None,
+                            'groups': {},
+                        })
             except re.error as e:
                 results.append({
                     'stream_name': name,
@@ -717,22 +899,53 @@ class EventOrderingService:
                 # Handle channel renaming if enabled and template is configured
                 name_template = ch_config.get('channel_name_template', '')
                 renaming_enabled = ch_config.get('channel_renaming_enabled', bool(name_template))
-                if renaming_enabled and name_template and result.get('success'):
+                if not renaming_enabled and name_template and result.get('success'):
+                    # Renaming was explicitly disabled — restore base names for main + overflow channels
+                    self.rename_channel(channel_id, channel_name)
+                    for i, overflow_id in enumerate(overflow_ids):
+                        self.rename_channel(overflow_id, f"{channel_name} {i + 2}")
+                elif renaming_enabled and name_template and result.get('success'):
                     pattern = ch_config.get('pattern', '')
                     timezone_str = ch_config.get('stream_timezone', '')
                     display_tz = ch_config.get('display_timezone', '')
-                    # Get the top stream (first upcoming or first overall)
+                    parser_cfg = ch_config.get('parser') if isinstance(ch_config.get('parser'), dict) else None
+                    # Rename main channel based on its top stream
                     streams = fetch_channel_streams(channel_id)
                     if streams:
                         top_stream_name = streams[0].get('name', '')
                         new_name = self.format_channel_name(
                             name_template, top_stream_name, pattern,
-                            channel_name, timezone_str, display_tz
+                            channel_name, timezone_str, display_tz,
+                            parser_cfg=parser_cfg,
                         )
                         if new_name and new_name != channel_name:
                             renamed = self.rename_channel(channel_id, new_name)
                             results[channel_id_str]['renamed'] = renamed
                             results[channel_id_str]['new_channel_name'] = new_name if renamed else None
+                    # Rename each overflow channel.
+                    # Use overflow assignment info from handle_overflow rather than
+                    # re-fetching streams — the UDI cache is stale immediately after
+                    # handle_overflow PATCHes Dispatcharr, so fetch_channel_streams
+                    # would return old (pre-clear) data for emptied channels.
+                    assigned_overflow_ids = set(
+                        results[channel_id_str].get('overflow', {}).get('assigned_overflow_ids', [])
+                    )
+                    for i, overflow_id in enumerate(overflow_ids):
+                        if overflow_id in assigned_overflow_ids:
+                            # Channel has streams — rename to its top stream's event
+                            overflow_streams = fetch_channel_streams(overflow_id)
+                            if overflow_streams:
+                                overflow_top_name = overflow_streams[0].get('name', '')
+                                overflow_new_name = self.format_channel_name(
+                                    name_template, overflow_top_name, pattern,
+                                    channel_name, timezone_str, display_tz,
+                                    parser_cfg=parser_cfg,
+                                )
+                                if overflow_new_name:
+                                    self.rename_channel(overflow_id, overflow_new_name)
+                        else:
+                            # Channel was cleared — reset to "{base_name} {n}"
+                            self.rename_channel(overflow_id, f"{channel_name} {i + 2}")
 
             except Exception as e:
                 logger.error(f"Error processing channel {channel_id}: {e}", exc_info=True)

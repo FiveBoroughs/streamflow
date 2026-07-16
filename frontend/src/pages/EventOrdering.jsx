@@ -69,13 +69,20 @@ const buildCapturePattern = (text, category) => {
 }
 
 const MONTHS = { jan:0, feb:1, mar:2, apr:3, may:4, jun:5, jul:6, aug:7, sep:8, oct:9, nov:10, dec:11 }
+const TOKEN_SEPARATOR_CHARS = ['-', ':', '/', '@', '|', '(', ')', '#']
+const TOKEN_SEPARATOR_CLASS = TOKEN_SEPARATOR_CHARS
+  .map(char => ['\\', '-', ']'].includes(char) ? `\\${char}` : char)
+  .join('')
+const TOKEN_SPLIT_REGEX = new RegExp(
+  `(\\s+|[${TOKEN_SEPARATOR_CLASS}]|(?<=\\d)(?=[AaPp][Mm]))`
+)
 
-function parseGroupsToDate(groups) {
+function parseGroupsToDate(groups, timezone = null) {
   if (!groups) return null
   try {
     const now = new Date()
     const year = groups.year ? parseInt(groups.year) : now.getFullYear()
-    
+
     // Support both 'month' and 'month2' named groups (like backend does)
     let month = now.getMonth()
     const monthStr = groups.month || groups.month2
@@ -86,12 +93,12 @@ function parseGroupsToDate(groups) {
         month = MONTHS[monthStr.toLowerCase().slice(0, 3)] ?? now.getMonth()
       }
     }
-    
+
     // Support 'day', 'date', and 'day2' named groups
     // Note: Check 'date' before 'day2' because 'day2' might be a day name like "Sat"
     const dayStr = groups.day || groups.date || groups.date2 || groups.day2
     const day = dayStr ? parseInt(dayStr) : now.getDate()
-    
+
     let hour = groups.hour ? parseInt(groups.hour) : (groups.hour2 ? parseInt(groups.hour2) : 0)
     if (groups.ampm) {
       const ampm = groups.ampm.toUpperCase()
@@ -100,18 +107,39 @@ function parseGroupsToDate(groups) {
     }
     const minute = groups.minute ? parseInt(groups.minute) : (groups.minute2 ? parseInt(groups.minute2) : 0)
     const second = groups.second ? parseInt(groups.second) : 0
-    
+
     // Validate that we have valid numbers
     if (isNaN(day) || isNaN(month) || isNaN(year) || isNaN(hour) || isNaN(minute)) {
       return null
     }
-    
-    const date = new Date(year, month, day, hour, minute, second)
-    // Validate the date is valid
-    if (isNaN(date.getTime())) {
-      return null
+
+    if (timezone) {
+      try {
+        // Interpret the parsed time as being in the given IANA timezone.
+        // Trick: treat the numbers as UTC, format that UTC instant in the target tz,
+        // compute the offset, then subtract it to get the real UTC timestamp.
+        const utcMs = Date.UTC(year, month, day, hour, minute, second)
+        const parts = new Intl.DateTimeFormat('en-US', {
+          timeZone: timezone,
+          year: 'numeric', month: '2-digit', day: '2-digit',
+          hour: '2-digit', minute: '2-digit', second: '2-digit',
+          hour12: false,
+        }).formatToParts(new Date(utcMs))
+        const p = {}
+        parts.forEach(({ type, value }) => { p[type] = value })
+        const tzMs = Date.UTC(
+          parseInt(p.year), parseInt(p.month) - 1, parseInt(p.day),
+          parseInt(p.hour) % 24, parseInt(p.minute), parseInt(p.second)
+        )
+        const date = new Date(utcMs - (tzMs - utcMs))
+        return isNaN(date.getTime()) ? null : date
+      } catch {
+        // Fall through to local-time fallback
+      }
     }
-    return date
+
+    const date = new Date(year, month, day, hour, minute, second)
+    return isNaN(date.getTime()) ? null : date
   } catch {
     return null
   }
@@ -336,7 +364,7 @@ export default function EventOrdering() {
 
       // Run test if pattern exists and streams loaded
       if (cc?.pattern && allStreams.length > 0) {
-        testPattern(cc.pattern, allStreams, cc.return_after_hours || 6, cc.overflow_channel_ids || [])
+        testPattern(cc.pattern, allStreams, cc.return_after_hours || 6, cc.overflow_channel_ids || [], cc.stream_timezone || '')
       } else {
         // No streams — ensure test results are cleared
         setTestResults([])
@@ -358,7 +386,7 @@ export default function EventOrdering() {
   const parseSample = (sample) => {
     if (!sample) { setWords([]); setWordData({}); return }
 
-    const tokens = sample.split(/(\s+|[-:/@|()#]|(?<=\d)(?=[AaPp][Mm]))/)
+    const tokens = sample.split(TOKEN_SPLIT_REGEX)
       .filter(t => t && t.length > 0)
 
     const newWords = []
@@ -475,7 +503,10 @@ export default function EventOrdering() {
       // Add separator between groups
       if (lastIdx >= 0 && group.firstIndex > lastIdx + 1) {
         const between = allWords.filter(([_, d]) => d.index > lastIdx && d.index < group.firstIndex).map(([_, d]) => d.text)
-        const allDelims = between.every(t => /^[-:\/\s@|#()\\]$/.test(t))
+        const allDelims = between.every(t => (
+          t.length === 1
+          && (TOKEN_SEPARATOR_CHARS.includes(t) || t === '\\' || /\s/.test(t))
+        ))
         if (allDelims && between.length > 0) {
           // Use \s* around punctuation to handle optional spaces (e.g. "07:" vs "04 :")
           const hasPunct = between.some(t => !/^\s+$/.test(t))
@@ -518,20 +549,33 @@ export default function EventOrdering() {
     testPattern(pattern, streams, returnAfterHours, overflowChannelIds)
   }
 
-  // ==================== Test Pattern (client-side) ====================
-  const testPattern = (pattern, streamList = null, grace = null, overflowIds = null) => {
+  // ==================== Test Pattern ====================
+  const testPattern = async (pattern, streamList = null, grace = null, overflowIds = null, tz = null) => {
     const ss = streamList || streams
     const graceH = grace ?? returnAfterHours
     const oIds = overflowIds ?? overflowChannelIds
+    const timezone = tz ?? channelTimezone
     if (!pattern || ss.length === 0) { setTestResults([]); setOrderingPreview([]); return }
 
     try {
-      const regex = new RegExp(pattern, 'i')
-      const results = ss.slice(0, 200).map(s => {
-        const match = s.name.match(regex)
-        return { name: s.name, matched: !!match, groups: match?.groups || null, channelId: s.channelId }
+      // Backend test results (uses parser if configured)
+      const selectedParser = config?.channels?.[selectedChannelId]?.parser
+      const testRes = await eventOrderingAPI.testPattern({
+        pattern,
+        channel_id: selectedChannelId ? parseInt(selectedChannelId) : undefined,
+        timezone: channelTimezone,
+        stream_names: ss.slice(0, 200).map(s => s.name),
+        ...(selectedParser ? { parser: selectedParser } : {}),
       })
+      const results = (testRes.data?.results || []).map((r, idx) => ({
+        name: r.stream_name,
+        matched: !!r.matched,
+        groups: r.groups || null,
+        channelId: ss[idx]?.channelId,
+      }))
       setTestResults(results)
+
+      const regex = new RegExp(pattern, 'i')
 
       // Ordering preview
       const now = new Date()
@@ -541,7 +585,7 @@ export default function EventOrdering() {
         let orderNum = 999
         if (match?.groups) {
           if (match.groups.order) orderNum = parseInt(match.groups.order) || 999
-          eventTime = parseGroupsToDate(match.groups)
+          eventTime = parseGroupsToDate(match.groups, timezone || null)
         }
         return { name: s.name, eventTime, orderNum, originalIndex: idx, channelId: s.channelId }
       })

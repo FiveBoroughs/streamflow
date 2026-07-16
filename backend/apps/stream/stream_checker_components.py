@@ -637,6 +637,15 @@ class StreamCheckQueue:
                 'total_completed': self.stats['total_completed'],
                 'total_failed': self.stats['total_failed']
             }
+
+    def clear_in_progress(self) -> List[int]:
+        """Clear stale in-progress bookkeeping and return affected channel IDs."""
+        with self.lock:
+            stale_channel_ids = list(self.in_progress)
+            self.in_progress.clear()
+            self.channel_start_times.clear()
+            self.stats['current_channel'] = None
+            return stale_channel_ids
     
     def clear(self):
         """Clear the queue and reset stats."""

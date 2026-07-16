@@ -97,6 +97,7 @@ class TestStreamCheckingMode(unittest.TestCase):
             service.check_queue.add_channel(1, priority=10)
             # Simulate getting the channel (moves to in_progress)
             channel_id = service.check_queue.get_next_channel(timeout=0.1)
+            service.checking = True
             
             # Now stream_checking_mode should be True (in_progress > 0)
             status = service.get_status()
@@ -104,10 +105,25 @@ class TestStreamCheckingMode(unittest.TestCase):
             
             # Mark as completed
             service.check_queue.mark_completed(channel_id)
+            service.checking = False
             
             # stream_checking_mode should be False again
             status = service.get_status()
             self.assertFalse(status['stream_checking_mode'])
+
+    def test_stale_in_progress_state_is_cleared_when_idle(self):
+        """Test stale in-progress bookkeeping does not keep stream_checking_mode active."""
+        with patch('stream_checker_service.CONFIG_DIR', Path(self.temp_dir)):
+            service = StreamCheckerService()
+            service.running = True
+
+            service.check_queue.add_channel(1, priority=10)
+            service.check_queue.get_next_channel(timeout=0.1)
+
+            status = service.get_status()
+
+            self.assertFalse(status['stream_checking_mode'])
+            self.assertEqual(status['queue']['in_progress'], 0)
     
     def test_stream_checking_mode_false_when_idle(self):
         """Test that stream_checking_mode is False when system is idle."""

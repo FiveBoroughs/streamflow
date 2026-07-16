@@ -18,6 +18,13 @@ frontend/build/
 frontend/node_modules/
 backend/static/
 
+# Browser test/debug artifacts
+.playwright-cli/
+/snap.yml
+/current-state.png
+/nba-renaming.png
+/ordering-*.png
+
 # Development data directory
 data/
 
